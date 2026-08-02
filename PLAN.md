@@ -89,8 +89,7 @@ Credential policy by mode:
 ### Primary path: keyless single-container demo
 
 ```sh
-git clone https://github.com/joseph-robert-f/-headless-blender-character-builder.git \
-  headless-blender-character-builder
+git clone https://github.com/joseph-robert-f/headless-blender-character-builder.git
 cd headless-blender-character-builder
 make demo
 make verify-demo
@@ -890,7 +889,7 @@ These defaults remove implementation blockers for `/goal`. They are binding for 
 
 | Decision | Adopted v0.1 default |
 |---|---|
-| Working project name | **Headless Blender Character Builder**; project/package slug `headless-blender-character-builder`; current GitHub repository slug `-headless-blender-character-builder` |
+| Working project name | **Headless Blender Character Builder**; repository and project/package slug `headless-blender-character-builder` |
 | Source license | One repository under **GPL-3.0-or-later** |
 | Sample-asset license | **CC0-1.0**, called out separately from source code |
 | Default example | `facet-bot`: an original geometric desk-toy robot with a rounded-cube head, capsule torso, cylinder limbs, simple circular eyes, and optional pedestal |

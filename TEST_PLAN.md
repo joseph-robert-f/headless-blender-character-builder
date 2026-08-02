@@ -39,11 +39,11 @@ Known local reviewer environment:
 
 ### Initial GitHub publication (completed)
 
-- [x] Create the public repository at <https://github.com/joseph-robert-f/-headless-blender-character-builder>.
+- [x] Create the public repository at <https://github.com/joseph-robert-f/headless-blender-character-builder>.
 - [x] Confirm the authorized GitHub connector has administrator and push access.
 - [x] Use `main` as the default branch.
 
-The repository slug intentionally includes its leading hyphen: `-headless-blender-character-builder`. The project/package name remains `headless-blender-character-builder` without the leading hyphen. Clone commands should provide `headless-blender-character-builder` as an explicit destination directory so shell commands do not have to operate on a path beginning with `-`. Installing and authenticating the GitHub CLI is optional for this initial publication, but contributors will still need Git or an equivalent GitHub client for normal clone, branch, and pull-request work.
+The repository and project/package slug are both `headless-blender-character-builder`. Installing and authenticating the GitHub CLI is optional for the initial connector-backed publication, but contributors will still need Git or an equivalent GitHub client for normal clone, branch, and pull-request work.
 
 ### Confirm before v0.1 implementation reaches its release gate
 
