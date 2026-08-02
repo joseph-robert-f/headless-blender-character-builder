@@ -1,0 +1,67 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# Generated build and service state
+/build/
+/dist/
+/artifacts/
+/output/
+/outputs/
+/renders/
+/data/
+/logs/
+*.log
+*.sqlite
+*.sqlite3
+
+# Generated 3D and media artifacts
+*.blend
+*.blend[0-9]*
+*.blend@
+*.blend~
+*.glb
+*.gltf
+*.stl
+*.3mf
+*.obj
+*.fbx
+*.mp4
+*.mov
+/codex_*.png
+
+# Local branded prototype sources; preserve locally until generalized
+/create_codex_avatar.py
+/create_turntable_animation.py
+/prove_model_geometry.py
+/verify_codex_avatar.py
+/verify_turntable_animation.py
+
+# Generated and time-sensitive local business research
+/artifact.json
+/character_model_factory_report.html
+/character_model_business_source_notes.md
+/queries/
+
+# Python and tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
