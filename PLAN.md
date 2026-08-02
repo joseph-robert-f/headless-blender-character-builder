@@ -89,8 +89,9 @@ Credential policy by mode:
 ### Primary path: keyless single-container demo
 
 ```sh
-git clone https://github.com/joseph-robert-f/-headless-blender-character-builder.git
-cd PROJECT
+git clone https://github.com/joseph-robert-f/-headless-blender-character-builder.git \
+  headless-blender-character-builder
+cd headless-blender-character-builder
 make demo
 make verify-demo
 ```
