@@ -1,0 +1,17 @@
+{
+  "request_version": "build/v1",
+  "generator": "geometric-character@1.0.0",
+  "spec": {
+    "spec_version": "character/v1",
+    "name": "Path Attack",
+    "style": "geometric",
+    "height_mm": 95,
+    "pose": "standing",
+    "palette": ["#E87532"],
+    "proportions": {"head_scale": 1.2, "limb_scale": 0.95},
+    "output_path": "/tmp/escape.blend"
+  },
+  "output_profile": "complete-v1",
+  "render_profile": "diagnostic-v1",
+  "quality_profile": "geometry-v1"
+}

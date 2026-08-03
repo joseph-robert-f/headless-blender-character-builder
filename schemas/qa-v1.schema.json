@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "qa-v1.schema.json",
+  "title": "Geometry QA report v1",
+  "description": "Detailed mandatory geometry-v1 evidence. Null mandatory evidence requires needs_review.",
+  "$comment": "QualityReport.from_mapping is normative for cross-field status derivation. Runtime mapping: passed -> succeeded/exit 0/success manifest allowed; failed -> failed/exit 11/no success manifest; needs_review -> needs_review/exit 11/no success manifest. Runtime status derivation also compares requested/evaluated height and GLB/STL dimensions per axis using max(0.2 mm, 0.5%).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["qa_version", "status", "measurements", "checks", "notes"],
+  "properties": {
+    "qa_version": {"const": "qa/v1"},
+    "status": {"enum": ["passed", "failed", "needs_review"]},
+    "measurements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested_height_mm",
+        "dimensions_mm",
+        "glb_dimensions_mm",
+        "stl_dimensions_mm",
+        "triangle_count",
+        "object_count",
+        "material_count",
+        "non_manifold_edges",
+        "zero_area_faces",
+        "minimum_wall_mm",
+        "minimum_feature_mm",
+        "connected_shells"
+      ],
+      "properties": {
+        "requested_height_mm": {"type": ["number", "null"], "minimum": 25, "maximum": 250},
+        "dimensions_mm": {"$ref": "#/$defs/nullableDimensions"},
+        "glb_dimensions_mm": {"$ref": "#/$defs/nullableDimensions"},
+        "stl_dimensions_mm": {"$ref": "#/$defs/nullableDimensions"},
+        "triangle_count": {"type": ["integer", "null"], "minimum": 0, "maximum": 10000000},
+        "object_count": {"type": ["integer", "null"], "minimum": 0, "maximum": 10000},
+        "material_count": {"type": ["integer", "null"], "minimum": 0, "maximum": 10000},
+        "non_manifold_edges": {"type": ["integer", "null"], "minimum": 0, "maximum": 100000000},
+        "zero_area_faces": {"type": ["integer", "null"], "minimum": 0, "maximum": 100000000},
+        "minimum_wall_mm": {"type": ["number", "null"], "minimum": 0, "maximum": 1000},
+        "minimum_feature_mm": {"type": ["number", "null"], "minimum": 0, "maximum": 1000},
+        "connected_shells": {"type": ["integer", "null"], "minimum": 0, "maximum": 10000}
+      }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifold",
+        "finite_geometry",
+        "outward_normals",
+        "positive_volume",
+        "height_within_tolerance",
+        "fresh_reload",
+        "glb_reimport",
+        "stl_reimport"
+      ],
+      "properties": {
+        "manifold": {"type": ["boolean", "null"]},
+        "finite_geometry": {"type": ["boolean", "null"]},
+        "outward_normals": {"type": ["boolean", "null"]},
+        "positive_volume": {"type": ["boolean", "null"]},
+        "height_within_tolerance": {"type": ["boolean", "null"]},
+        "fresh_reload": {"type": ["boolean", "null"]},
+        "glb_reimport": {"type": ["boolean", "null"]},
+        "stl_reimport": {"type": ["boolean", "null"]}
+      }
+    },
+    "notes": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[ -~]+$(?![\\s\\S])"}
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "passed"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "measurements": {
+            "properties": {
+              "requested_height_mm": {"type": "number", "minimum": 25, "maximum": 250},
+              "dimensions_mm": {"type": "array"},
+              "glb_dimensions_mm": {"type": "array"},
+              "stl_dimensions_mm": {"type": "array"},
+              "triangle_count": {"type": "integer", "minimum": 4, "maximum": 500000},
+              "object_count": {"type": "integer", "minimum": 1, "maximum": 256},
+              "material_count": {"type": "integer", "minimum": 1, "maximum": 64},
+              "non_manifold_edges": {"const": 0},
+              "zero_area_faces": {"const": 0},
+              "minimum_wall_mm": {"type": "number", "minimum": 1.2},
+              "minimum_feature_mm": {"type": "number", "minimum": 2},
+              "connected_shells": {"const": 1}
+            }
+          },
+          "checks": {
+            "properties": {
+              "manifold": {"const": true},
+              "finite_geometry": {"const": true},
+              "outward_normals": {"const": true},
+              "positive_volume": {"const": true},
+              "height_within_tolerance": {"const": true},
+              "fresh_reload": {"const": true},
+              "glb_reimport": {"const": true},
+              "stl_reimport": {"const": true}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "needs_review"}}, "required": ["status"]},
+      "then": {"properties": {"notes": {"minItems": 1}}}
+    }
+  ],
+  "$defs": {
+    "nullableDimensions": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {"type": "number", "minimum": 0.001, "maximum": 1000}
+        }
+      ]
+    }
+  }
+}
