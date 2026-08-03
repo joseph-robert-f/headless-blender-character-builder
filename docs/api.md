@@ -1,8 +1,21 @@
 # HTTP API v1
 
-Status: implemented in G6; the runnable Docker Compose deployment arrives in G7.
+Status: implemented and exercised end to end by the G7 local Docker Compose gate.
 
 The API is a small asynchronous control surface over the same immutable G4 builder contract. It accepts only `BuildRequest v1` JSON, never arbitrary Python, Blender arguments, paths, URLs, uploads, or provider keys.
+
+## Run locally
+
+The tested path is:
+
+```sh
+make init-env
+make service-up
+make service-smoke
+make service-down
+```
+
+The first command creates a private local bearer token and other scoped credentials in ignored `.env`; it prints no secret and refuses to overwrite an existing file. The API binds to `http://127.0.0.1:8080`. `make service-smoke` performs the equivalent authenticated HTTP workflow below, downloads all nine artifacts into an ignored evidence directory, and independently verifies them. The local stack is for loopback evaluation only; do not publish its ports or treat it as the G8 production deployment.
 
 ## Authentication and response policy
 

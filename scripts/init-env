@@ -40,9 +40,9 @@ database_worker_password=$(random_hex 32)
 database_migrator_password=$(random_hex 32)
 redis_password=$(random_hex 32)
 minio_root_password=$(random_hex 32)
-storage_api_access_key="hbcb_api_$(random_hex 8)"
+storage_api_access_key=hbcb_api
 storage_api_secret_key=$(random_hex 32)
-storage_worker_access_key="hbcb_worker_$(random_hex 8)"
+storage_worker_access_key=hbcb_worker
 storage_worker_secret_key=$(random_hex 32)
 
 {

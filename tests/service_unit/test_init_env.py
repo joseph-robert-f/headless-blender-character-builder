@@ -122,6 +122,8 @@ class InitEnvironmentTests(unittest.TestCase):
                 values["HBCB_STORAGE_API_ACCESS_KEY"],
                 values["HBCB_STORAGE_WORKER_ACCESS_KEY"],
             )
+            self.assertEqual(values["HBCB_STORAGE_API_ACCESS_KEY"], "hbcb_api")
+            self.assertEqual(values["HBCB_STORAGE_WORKER_ACCESS_KEY"], "hbcb_worker")
             api_environment, worker_environment, migrator_environment = role_environments(values)
             self.assertIsInstance(ServiceConfig.from_environment(api_environment), ServiceConfig)
             self.assertIsInstance(WorkerConfig.from_environment(worker_environment), WorkerConfig)

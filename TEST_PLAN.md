@@ -1,6 +1,6 @@
 # Feature Testing and Owner Review Plan
 
-Status: **living verification plan; G0–G6 passed, G7–G9 pending**
+Status: **living verification plan; G0–G7 passed, G8–G9 pending**
 
 Last updated: **August 3, 2026**
 
@@ -21,9 +21,9 @@ Do not call an unimplemented feature blocked, and do not mark a gate passed from
 
 ## 2. Current state
 
-Work packages G0 through G5 have passed. The repository contains strict `BuildRequest`, `CharacterSpec`, QA, and manifest contracts plus a generic `geometric-character@1.0.0` registry/core. Two original requests generate real, materially different Blender geometry with stable structural fingerprints. The trusted builder saves `.blend`, exports display GLB and a raw-millimeter binary STL, renders four PNGs, measures complete geometry QA, verifies the model formats in a second fresh Blender process, and atomically publishes a success manifest last.
+Work packages G0 through G7 have passed. The repository contains strict `BuildRequest`, `CharacterSpec`, QA, and manifest contracts plus a generic `geometric-character@1.0.0` registry/core. Two original requests generate real, materially different Blender geometry with stable structural fingerprints. The trusted builder saves `.blend`, exports display GLB and a raw-millimeter binary STL, renders four PNGs, measures complete geometry QA, verifies the model formats in a second fresh Blender process, and atomically publishes a success manifest last.
 
-The G4 `linux/amd64` image, narrow `builder build|verify` CLI, hardened one-shot Docker runtime, keyless Make targets, native fallback, baked provenance, notices, and SPDX SBOM are implemented and passed from a clean indexed source export. G5 adds Postgres/Redis/versioned-storage foundations and generated scoped configuration. G6 adds the bounded authenticated FastAPI surface, production PostgreSQL repository, fenced concurrency-one worker, stale Redis claim recovery, complete nested-process termination, immutable artifact publication, fixed-region signing, and secret-free structured logs without changing the G4 builder revision. Compose, the VPS package, and release CI remain unimplemented. The excluded hardcoded branded proof of concept is preserved baseline material, not v0.1 acceptance evidence.
+The G4 `linux/amd64` image, narrow `builder build|verify` CLI, hardened one-shot Docker runtime, keyless Make targets, native fallback, baked provenance, notices, and SPDX SBOM are implemented and passed from a clean indexed source export. G5–G6 add Postgres/Redis/versioned-storage foundations, generated scoped configuration, the bounded authenticated FastAPI surface, production repository, fenced concurrency-one worker, stale Redis claim recovery, complete nested-process termination, immutable artifact publication, fixed-region signing, and secret-free structured logs without changing the G4 builder revision. G7 packages those components into a hardened local Compose service with convergent least-privilege initialization and a real HTTP-to-Blender-to-download gate. The VPS package and release CI remain unimplemented. The excluded hardcoded branded proof of concept is preserved baseline material, not v0.1 acceptance evidence.
 
 Known local reviewer environment:
 
@@ -89,7 +89,7 @@ Record milestone summaries in `docs/progress.md` once implementation begins. Nev
 | T0 — repository and documentation | G0 | `PASS` locally | Prove the public scaffold contains only intended, safe files |
 | T1 — schemas, generic engine, and artifacts | G1–G3 | `PASS` | Prove bounded requests create and independently verify real, varied Blender geometry |
 | T2 — keyless container quickstart | G4 | `PASS` | Prove the primary public experience from a clean source tree |
-| T3 — asynchronous service | G5–G7 | `G5–G6 PASS`; G7 `NOT_IMPLEMENTED` | Prove durable API, queue, worker, auth, and artifacts |
+| T3 — asynchronous service | G5–G7 | `PASS` | Prove durable API, queue, worker, auth, and artifacts |
 | T4 — VPS and recovery | G8 | `NOT_IMPLEMENTED` / `CONDITIONAL` | Prove deployability without making live infrastructure mandatory |
 | T5 — release candidate | G9 | `NOT_IMPLEMENTED` | Prove tests, security, licenses, docs, and packaging together |
 
@@ -215,7 +215,7 @@ Human Blender inspection is useful optional evidence: open a copy of `model.blen
 
 ## 9. T3 — asynchronous Compose service
 
-The G5 persistence foundation and G6 API/worker lifecycle passed. End-to-end HTTP/storage/Blender tests become runnable after G7.
+G5–G7 passed. The persistence, API/worker lifecycle, hardened Compose runtime, and end-to-end HTTP/storage/Blender path are implemented.
 
 G5 verification already completed:
 
@@ -231,7 +231,7 @@ Observed G5 proof: 55 focused service tests passed. PostgreSQL 16.9 applied the 
 
 Observed G6 proof: 154 repository tests were discovered; 153 passed locally and the sole Linux-only nested-process test separately passed under the hardened `linux/amd64` image in 2.201 seconds. The authenticated API covers async submission/replay, uniform errors, cancellation, readiness, and exact signed artifacts. The worker covers fenced leases/heartbeats, retries, timeout, dead-letter, cancellation-wins, lease recovery, stale Redis pending-entry recovery, complete process-tree cleanup, and manifest-last versioned publication. A real PostgreSQL gate applied `0001_g5_foundation` plus `0002_g6_outbox_counter`, published exactly nine artifacts, and recovered from dispatch counts above 100.
 
-Remaining G7 end-to-end service gate:
+Passing G7 end-to-end service path:
 
 ```sh
 make init-env
@@ -240,7 +240,7 @@ make service-smoke
 make service-down
 ```
 
-The service gate must prove:
+The service gate proved:
 
 - `/healthz`, private `/readyz`, and bearer-token enforcement;
 - protected endpoints reject absent or invalid credentials;
@@ -249,13 +249,26 @@ The service gate must prove:
 - successful artifacts download and hash correctly;
 - identical idempotency key/request returns the original build;
 - the same key with a different request returns `409`;
-- cancellation, timeout, crash, lease expiry, retry, and dead-letter behavior;
-- API and supervisor restarts preserve durable state;
+- cancellation plus the already-gated timeout/retry lifecycle, live stale-claim recovery, and dead-letter behavior;
+- API restart preserves durable state; G6 process/lease tests and the live Redis claim gate cover interrupted-worker recovery;
 - partial artifacts never appear successful;
 - one-shot and service artifacts retain contract and structural parity;
 - worker concurrency remains one;
 - core Compose starts without `OPENAI_API_KEY` or another provider key;
 - Blender receives no service credential, while the supervisor has only allowlisted internal access and no public-internet egress.
+
+Observed G7 proof on August 3, 2026:
+
+- a new submission returned `202` in `0.071811` seconds, later succeeded, and exposed exactly nine version-pinned artifacts totaling `21,521,731` bytes;
+- the service manifest SHA-256 was `89dfe2713ac4cdd7f3884fd81e559bcec9a7f7e0af692c5509bb05baa9c7c522`;
+- exact replay returned the original build, a conflicting replay returned `409`, a sibling build canceled, and the successful build remained available across API restart;
+- a second fresh Blender process reloaded the downloaded `.blend`, re-imported GLB/STL, and passed the published artifact verifier; direct and service outputs retained the same canonical/structural contract;
+- runtime inspection found one worker, a read-only non-root service boundary, no Docker socket, no provider key, loopback-only host ports, and no public route from the worker network;
+- `G7_REDIS_GATE` recovered a 60,000 ms stale pending entry and produced one dead-letter containing only `build_id`;
+- `G7_IAM_GATE` required five PostgreSQL operations to fail with SQLSTATE `42501` and two MinIO operations to fail with `AccessDenied`;
+- the complete Python regression run discovered 157 tests, passed 156 on macOS, and skipped only the Linux `/proc` case that already passed separately in the release image.
+
+Ignored local evidence is under `build/service-smoke/run.Lw4H0h/`, including direct and service artifact trees plus `g7-service-summary.json`. Credentials, signed URLs, request bodies, and child logs are absent from the summary. `make service-down` preserves the PostgreSQL, Redis, and object-storage volumes.
 
 ## 10. T4 — VPS, slicer, and physical-print tests
 
@@ -270,7 +283,7 @@ Slicer and physical-print trials are separate conditional evidence. They require
 - Confirm secrets never appear in logs, manifests, images, diagnostics, or delivered artifacts.
 - Use a canary service credential to prove Blender does not inherit it.
 - Confirm no Docker socket, SSH agent, device, home directory, repository root, or arbitrary host path is mounted.
-- Confirm one-shot has no network; Compose has no public egress and only allowlisted internal access.
+- Confirm one-shot has no network; the Compose worker has only internal-service access and no public route, while API/MinIO host ports bind only to loopback.
 - Reject Python, shell fragments, paths, URLs, add-ons, environment variables, Blender flags, extra properties, traversal, symlinks, oversized payloads, and decompression abuse.
 - Verify pinned Blender checksum, release image digest, SBOM, dependency/container/license scans, and fork-safe least-privilege CI.
 

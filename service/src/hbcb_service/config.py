@@ -14,6 +14,8 @@ from .errors import ConfigurationError
 
 NAMESPACE_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$")
 ACCESS_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$")
+DATABASE_ROLE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
+DATABASE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,63}$")
 BUCKET_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{1,61}[a-z0-9])$")
 ENDPOINT_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::[0-9]{1,5})?$")
 HEX_SECRET_PATTERN = re.compile(r"^[0-9a-f]{64,256}$")
@@ -262,4 +264,130 @@ class MigratorConfig:
                 require_username=True,
                 path_pattern=re.compile(r"^/[A-Za-z0-9_-]{1,63}$"),
             ),
+        )
+
+
+def _database_role(environment: Mapping[str, str], name: str) -> str:
+    role = _required(environment, name)
+    if DATABASE_ROLE_PATTERN.fullmatch(role) is None:
+        raise ConfigurationError("invalid_database_role", "database role is outside policy")
+    return role
+
+
+@dataclass(frozen=True)
+class DatabaseInitializationConfig:
+    """One-shot local database bootstrap settings.
+
+    The initializer alone receives the admin URL and role passwords.  API and
+    worker processes receive only their own already-scoped connection URLs.
+    """
+
+    deployment_namespace: str
+    database_name: str
+    admin_database_url: SecretValue
+    migrator_database_url: SecretValue
+    admin_username: str
+    api_username: str
+    api_password: SecretValue
+    worker_username: str
+    worker_password: SecretValue
+    migrator_username: str
+    migrator_password: SecretValue
+
+    @classmethod
+    def from_environment(
+        cls, environment: Mapping[str, str]
+    ) -> "DatabaseInitializationConfig":
+        database_name = _required(environment, "POSTGRES_DB")
+        if DATABASE_NAME_PATTERN.fullmatch(database_name) is None:
+            raise ConfigurationError("invalid_database_name", "database name is outside policy")
+        admin_value = _required(environment, "HBCB_DATABASE_ADMIN_URL")
+        migrator_value = _required(environment, "HBCB_DATABASE_MIGRATOR_URL")
+        admin_url = _service_url(
+            admin_value,
+            schemes=("postgresql",),
+            label="admin database",
+            require_username=True,
+            path_pattern=re.compile(r"^/[A-Za-z0-9_-]{1,63}$"),
+        )
+        migrator_url = _service_url(
+            migrator_value,
+            schemes=("postgresql",),
+            label="migrator database",
+            require_username=True,
+            path_pattern=re.compile(r"^/[A-Za-z0-9_-]{1,63}$"),
+        )
+        admin_parts = urlsplit(admin_value)
+        migrator_parts = urlsplit(migrator_value)
+        admin_username = admin_parts.username or ""
+        api_username = _database_role(environment, "HBCB_DATABASE_API_USER")
+        worker_username = _database_role(environment, "HBCB_DATABASE_WORKER_USER")
+        migrator_username = _database_role(environment, "HBCB_DATABASE_MIGRATOR_USER")
+        if DATABASE_ROLE_PATTERN.fullmatch(admin_username) is None:
+            raise ConfigurationError("invalid_database_role", "database role is outside policy")
+        if (
+            admin_parts.hostname,
+            admin_parts.port,
+            admin_parts.path,
+        ) != (
+            migrator_parts.hostname,
+            migrator_parts.port,
+            migrator_parts.path,
+        ):
+            raise ConfigurationError(
+                "database_target_mismatch", "database initialization URLs target different databases"
+            )
+        if admin_parts.path != "/" + database_name:
+            raise ConfigurationError(
+                "database_target_mismatch", "database name does not match initialization URL"
+            )
+        if migrator_parts.username != migrator_username:
+            raise ConfigurationError(
+                "database_role_mismatch", "migrator URL does not use the configured role"
+            )
+        if len({admin_username, api_username, worker_username, migrator_username}) != 4:
+            raise ConfigurationError(
+                "database_role_overlap", "database initialization roles must be distinct"
+            )
+        return cls(
+            deployment_namespace=_namespace(environment),
+            database_name=database_name,
+            admin_database_url=admin_url,
+            migrator_database_url=migrator_url,
+            admin_username=admin_username,
+            api_username=api_username,
+            api_password=SecretValue(
+                _required(environment, "HBCB_DATABASE_API_PASSWORD"),
+                minimum=32,
+                maximum=128,
+            ),
+            worker_username=worker_username,
+            worker_password=SecretValue(
+                _required(environment, "HBCB_DATABASE_WORKER_PASSWORD"),
+                minimum=32,
+                maximum=128,
+            ),
+            migrator_username=migrator_username,
+            migrator_password=SecretValue(
+                _required(environment, "HBCB_DATABASE_MIGRATOR_PASSWORD"),
+                minimum=32,
+                maximum=128,
+            ),
+        )
+
+    def redacted(self) -> Mapping[str, object]:
+        return MappingProxyType(
+            {
+                "deployment_namespace": self.deployment_namespace,
+                "database_name": self.database_name,
+                "admin_username": self.admin_username,
+                "api_username": self.api_username,
+                "worker_username": self.worker_username,
+                "migrator_username": self.migrator_username,
+                "admin_database_url": "<redacted>",
+                "migrator_database_url": "<redacted>",
+                "api_password": "<redacted>",
+                "worker_password": "<redacted>",
+                "migrator_password": "<redacted>",
+            }
         )

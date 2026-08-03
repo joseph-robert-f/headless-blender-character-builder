@@ -13,7 +13,7 @@ Overall status: **in progress**
 | G4 | M2 one-shot container | passed | Clean indexed source built and verified twice in a keyless hardened container; native parity, provenance/SBOM, exit contracts, and 62 clean-source tests passed |
 | G5 | M3 persistence interfaces | passed | Postgres migration/constraints, transactional outbox semantics, Redis build-ID contract, version-bound storage, scoped generated config, 55 service tests, and real PostgreSQL 16.9 gate passed |
 | G6 | M3 API and worker | passed | Auth-first bounded FastAPI, durable fenced worker lifecycle, exact immutable publication, stale-queue/outbox recovery, 154-test repository suite, Linux process-tree gate, and real PostgreSQL 16.9 gate passed |
-| G7 | M3 Compose service | pending | — |
+| G7 | M3 Compose service | passed | Hardened local stack, convergent scoped identities, real HTTP-to-Blender smoke, restart/idempotency/cancellation, Redis recovery, seven IAM denials, and direct/service parity passed |
 | G8 | M4 VPS package | pending | — |
 | G9 | M5 release candidate | pending | — |
 
@@ -374,3 +374,50 @@ Deviation/condition:
 - No source, image, database, artifact, credential, or service was published or deployed remotely.
 
 G6 gate result: **passed**. G7 Compose images, initialization, service Make targets, end-to-end smoke, restart persistence, and builder-contract parity may begin.
+
+### G7 — hardened local Compose service
+
+Files and contracts introduced:
+
+- `compose.yaml` defines pinned PostgreSQL and Redis services, the source-built local S3 fixture, one-shot database/storage initializers, a Blender-free API, the G4-derived concurrency-one worker, and an isolated test profile;
+- `docker/service.Dockerfile` and `docker/service-requirements.lock` create separately identified API, worker, and test images from exact hash-locked wheels while preserving the immutable G4 builder contract;
+- `docker/minio.Dockerfile` source-builds the final MinIO Community security release with pinned Debian snapshot, Go archive, source archive, client binary, hashes, upstream license/notices, and local-only OCI labeling;
+- `service/src/hbcb_service/database_bootstrap.py` plus `initialize_main.py` create and converge distinct migrator/API/worker roles, revoke accumulated/public authority, apply the forward-only migrations, and grant only explicit runtime privileges;
+- `compose/minio-init.sh` and the two fixed policies create a versioned bucket, remove reserved current/legacy identities, recreate distinct API/worker identities, and converge read/API versus read-write-without-delete/worker access without deleting durable objects or versions;
+- `scripts/service-compose`, `scripts/service-smoke`, and the Make targets provide configuration, start, stop, direct/service parity, and black-box service gates; a cached MinIO fixture is reused only after its OCI version/revision, exact Dockerfile recipe identifier, and live binary provenance match;
+- `tests/service_integration/g7_service_smoke.py`, `g7_redis_gate.py`, and `g7_iam_gate.py` exercise the real HTTP/storage/Blender path, runtime isolation, stale Redis claims/dead-lettering, and forbidden database/storage operations;
+- README, API, security, test-plan, and decision-ledger updates document the local path, loopback/internal network split, source-built local fixture, and production boundary; Decisions D-045 through D-047 record the deviations and convergence policy.
+
+Verification executed:
+
+| Command | Result |
+|---|---|
+| `./scripts/service-compose config` with the immutable G4 builder image | exit `0`; resolved Compose configuration accepted without contacting a cloud provider |
+| `make service-up BUILDER_IMAGE=headless-blender-character-builder:g4-37a4c1ed71ac-5ad78018` | exit `0`; verified MinIO fixture reused, both initializers converged, PostgreSQL/Redis/MinIO/API were healthy, and the worker was running |
+| `make service-smoke BUILDER_IMAGE=headless-blender-character-builder:g4-37a4c1ed71ac-5ad78018` | exit `0`; `G7_SERVICE_SMOKE`, fresh `BUILDER_VERIFY`, `G7_REDIS_GATE`, and `G7_IAM_GATE` all passed |
+| `PYTHONPATH=.:service/src PYTHONDONTWRITEBYTECODE=1 /private/tmp/hbcc-g1-schema-venv/bin/python -m unittest discover -s tests -v` | exit `0`; 157 tests discovered, 156 passed on macOS, and the already-passed Linux `/proc` case was the sole skip |
+| exact-recipe label plus networkless/read-only `minio --version` cache gate | exit `0`; Dockerfile Git blob `d66f4c2c1edbcbe13a525a5decd9434790e89e5b`, release `RELEASE.2025-10-15T17-29-55Z`, and commit `9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a` matched |
+| `git diff --check`, Python AST/compilation, POSIX shell syntax, Compose validation, and independent G7 P0/P1 audit | exit `0`; no remaining P0/P1 finding |
+
+Durable evidence:
+
+| Property | Observed result |
+|---|---|
+| Frozen deterministic base | G4 image `sha256:49cb24b22ea569bfe9db3a7ad5532d1270c765439a7c293515b9e833fb655b13`; source revision `4e6f85a64fae06b15fe40787a50becb7aa53d0f96896dca5c26db9314a7e8968`, unchanged |
+| Final local service images | MinIO `sha256:240b20b5b3f01bfeb11d0a9c6ecde62252bac1a4d12dca26f5e0f9d0a46aac78`; API `sha256:41a72196e064a65ecdf7720600cffa14669881c641b4644b3e3e4e4bfea0fc24`; worker `sha256:05e357a38362dc4bb1f3ee45bdfb3824a33ec5f9c0e2d7285daf75ec84dbf638`; test `sha256:fec194dc2631a83c5dbdb2bb08aaf35213e0840bb6cf50bb6dfd580fce69a8dd` |
+| Async service | `202` in `0.071811s`; exact replay reused the build, conflicting replay returned `409`, an in-flight connection race during deliberate API restart was retried within the readiness bound, state persisted, and the sibling build canceled |
+| Published result | 9 artifacts, 21,521,731 bytes, manifest SHA-256 `89dfe2713ac4cdd7f3884fd81e559bcec9a7f7e0af692c5509bb05baa9c7c522`; fresh `.blend`/GLB/STL verification and direct/service structural parity passed |
+| Runtime boundary | one worker; non-root/read-only/capability-dropped services; no Docker socket or provider key; API/MinIO host ports on loopback; worker only on the internal network with no public route |
+| Recovery and least privilege | one 60-second-stale Redis claim recovered and dead-lettered with only `build_id`; five PostgreSQL `42501` denials and two storage `AccessDenied` denials passed |
+
+Ignored evidence remains at `build/service-smoke/run.Lw4H0h/`, with direct/service artifact trees and `g7-service-summary.json`. The summary contains no credentials, endpoints, signed URLs, request bodies, or child output.
+
+Deviation/condition:
+
+- D-045 supersedes the generic MinIO-image assumption for the local fixture. The old registry image predates the final security release, and the replacement distribution is account/license-gated; v0.1 therefore source-builds the final Community release for local evaluation only. G8 must recommend a maintained managed/operator S3 service for production.
+- D-046 uses a dedicated host-ingress bridge for API/MinIO because Docker's internal network does not provide host NAT. Only the worker carries the strict no-public-egress claim.
+- The smoke restarts the API and separately proves the Redis claim-before-lease failure window; the G6 lifecycle and Linux process-tree tests remain the authority for supervisor crash, lease expiry, retry, timeout, and nested-child termination.
+- The successful local stack is not a production exposure: it has no TLS ingress, domain, backup runbook, retention operator, or upgrade/rollback package. Those remain G8.
+- No source, image, release, credential, artifact, or service was pushed, published, or deployed remotely.
+
+G7 gate result: **passed**. G8 VPS Compose overlay, TLS/auth guidance, resource and retention policy, backup/restore, upgrade/rollback, and operator smoke may begin.

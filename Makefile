@@ -11,13 +11,16 @@ REQUEST := $(CURDIR)/examples/requests/facet-bot.json
 BUILD_PARENT := $(CURDIR)/build
 DEMO_OUTPUT := $(BUILD_PARENT)/demo
 
-.PHONY: help image test-image demo verify-demo demo-native verify-demo-native init-env lint test-unit test-blender check
+.PHONY: help image ensure-image test-image demo verify-demo demo-native verify-demo-native init-env service-up service-smoke service-down service-config lint test-unit test-blender check
 
 help:
 	@echo "Headless Blender Character Builder"
 	@echo "  make demo          Build the keyless Docker demo"
 	@echo "  make verify-demo   Reopen and verify the published artifacts"
 	@echo "  make init-env      Generate ignored local-service credentials"
+	@echo "  make service-up    Start the local asynchronous Compose service"
+	@echo "  make service-smoke Exercise the service, restart, and artifacts end to end"
+	@echo "  make service-down  Stop services while preserving durable volumes"
 	@echo "  make test-unit     Run unit/contract/security tests in Docker"
 	@echo "  make test-blender  Run Blender integration gates in Docker"
 	@echo "  make check         Run static, unit, security, and Blender tests"
@@ -25,6 +28,11 @@ help:
 
 image:
 	$(DOCKER) build --file docker/builder.Dockerfile --target builder --tag "$(BUILDER_IMAGE)" --platform "$(PLATFORM)" .
+
+ensure-image:
+	@if ! $(DOCKER) image inspect --platform "$(PLATFORM)" "$(BUILDER_IMAGE)" >/dev/null 2>&1; then \
+	  $(MAKE) image; \
+	fi
 
 test-image:
 	$(DOCKER) build --file docker/builder.Dockerfile --target test --tag "$(TEST_IMAGE)" --platform "$(PLATFORM)" .
@@ -38,7 +46,7 @@ demo: image
 	  if test "$$runtime_uid" = 0; then runtime_uid=65532; fi; \
 	  if test "$$runtime_gid" = 0; then runtime_gid=65532; fi; \
 	  if test "$$host_uid" = 0; then chown "$$runtime_uid:$$runtime_gid" "$(BUILD_PARENT)"; fi; \
-	  image_id=`$(DOCKER) image inspect --format '{{.Id}}' "$(BUILDER_IMAGE)"`; \
+	  image_id=`$(DOCKER) image inspect --platform "$(PLATFORM)" --format '{{.Id}}' "$(BUILDER_IMAGE)"`; \
 	  $(DOCKER) run \
 	    --rm \
 	    --init \
@@ -67,7 +75,7 @@ verify-demo:
 	  runtime_uid=`id -u`; runtime_gid=`id -g`; \
 	  if test "$$runtime_uid" = 0; then runtime_uid=65532; fi; \
 	  if test "$$runtime_gid" = 0; then runtime_gid=65532; fi; \
-	  image_id=`$(DOCKER) image inspect --format '{{.Id}}' "$(BUILDER_IMAGE)"`; \
+	  image_id=`$(DOCKER) image inspect --platform "$(PLATFORM)" --format '{{.Id}}' "$(BUILDER_IMAGE)"`; \
 	  $(DOCKER) run \
 	    --rm \
 	    --init \
@@ -105,6 +113,18 @@ verify-demo-native:
 
 init-env:
 	./scripts/init-env
+
+service-up: ensure-image
+	BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose up
+
+service-smoke:
+	BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-smoke
+
+service-down:
+	BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose down
+
+service-config: ensure-image
+	BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose config
 
 lint: test-image
 	git diff --check
