@@ -68,6 +68,7 @@ class Draft202012RuntimeTests(unittest.TestCase):
             "blender-flags.json",
             "nested-extra-property.json",
             "duplicate-items.json",
+            "mutually-exclusive-tails.json",
             "unsafe-slug.json",
         ):
             instance = json.loads(

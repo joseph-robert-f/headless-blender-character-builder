@@ -27,6 +27,10 @@ The decisions below record the binding defaults from `PLAN.md` Section 17. Contr
 | D-019 | Unit and tolerance contract | Published dimensions use millimeters; height and GLB/STL bounds use `max(0.2 mm, 0.5%)` per applicable axis | Aligns all modes and round-trip verification with `PLAN.md` Section 8 |
 | D-020 | Python and schema validation | Project Python is 3.11+; production contract models remain standard-library-only; `jsonschema==4.26.0` is a test extra | Blender 4.5 bundles Python 3.11 while a real Draft 2020-12 engine remains part of the gate |
 | D-021 | Blender version provenance | Record the exact bounded `bpy.app.version_string`, currently `4.5.12 LTS` | Avoids silently dropping the LTS designation from native and container manifests |
+| D-022 | Generated scene representation | Preserve separate display meshes in `CHARACTER` and derive exactly one hidden printable shell in `PRINT`; total requested height includes the exact display base | Keeps editable evidence distinct from the watertight manufacturing-oriented union |
+| D-023 | Generator determinism evidence | Compare canonical structural reports across two fresh processes per fixture and require a palette-independent geometry signature plus topology differences across fixtures | Proves repeatability and schema-driven geometry without promising byte-identical Blender files |
+| D-024 | Semantic geometry rejection | Reject schema-valid but impossible height/base layouts before factory reset or any scene mutation | Keeps request/policy failures separate from Blender generation side effects |
+| D-025 | Tail component compatibility | `stub-tail` and `swept-tail` are mutually exclusive in both JSON Schema and runtime validation, with a generator preflight guard | Prevents ambiguous double-tail composition and any partial-scene name collision |
 
 ## Recorded execution conditions
 

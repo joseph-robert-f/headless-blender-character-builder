@@ -132,6 +132,7 @@ class BuildRequestContractTests(unittest.TestCase):
             "duplicate-items.json": "duplicate_item",
             "unsafe-slug.json": "invalid_slug",
             "extreme-exponent.json": "invalid_number",
+            "mutually-exclusive-tails.json": "incompatible_components",
         }
         self.assertEqual({path.name for path in REJECTED.glob("*.json")}, set(expected))
         for name, code in expected.items():
@@ -171,6 +172,14 @@ class BuildRequestContractTests(unittest.TestCase):
         request["spec"]["components"].append("backpack")
         with self.assertRaisesRegex(ContractValidationError, "duplicate_item"):
             BuildRequest.from_mapping(request)
+
+    def test_tail_presets_are_mutually_exclusive(self) -> None:
+        request = json.loads((EXAMPLES / "moss-hopper.json").read_text(encoding="utf-8"))
+        request["spec"]["components"].append("stub-tail")
+        with self.assertRaises(ContractValidationError) as caught:
+            BuildRequest.from_mapping(request)
+        self.assertEqual(caught.exception.code, "incompatible_components")
+        self.assertEqual(caught.exception.path, "$.spec.components")
 
     def test_base_conditional_limits_and_normalized_defaults(self) -> None:
         request = json.loads((EXAMPLES / "facet-bot.json").read_text(encoding="utf-8"))

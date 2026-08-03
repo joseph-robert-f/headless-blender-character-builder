@@ -240,6 +240,12 @@ class CharacterSpec:
                     "duplicate_item", "component presets must be unique", f"{path}.components[{index}]"
                 )
             components.append(component)
+        if "stub-tail" in components and "swept-tail" in components:
+            raise ContractValidationError(
+                "incompatible_components",
+                "stub-tail and swept-tail are mutually exclusive",
+                path + ".components",
+            )
 
         base = BaseSpec.from_mapping(value["base"], path + ".base") if "base" in value else BaseSpec.default()
         return cls(

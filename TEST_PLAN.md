@@ -1,6 +1,6 @@
 # Feature Testing and Owner Review Plan
 
-Status: **review draft for the planning/prototype repository**
+Status: **living verification plan; G0–G2 passed, G3–G9 pending**
 
 Last updated: **August 2, 2026**
 
@@ -21,9 +21,9 @@ Do not call an unimplemented feature blocked, and do not mark a gate passed from
 
 ## 2. Current state
 
-The initial public repository is a planning scaffold. It does **not** yet contain the generic generator, schemas, Dockerfiles, Make targets, STL/manifest/QA pipeline, API, Compose stack, VPS package, or CI described in `PLAN.md`.
+Work packages G0 through G2 have passed. The repository contains strict `BuildRequest`, `CharacterSpec`, QA, and manifest contracts plus a generic `geometric-character@1.0.0` registry/core. Two original requests generate real, materially different Blender geometry with stable structural fingerprints and one closed manufacturing-oriented shell in four isolated native-Blender processes.
 
-The local research workspace contains a real native-Blender proof of concept, but its hardcoded branded scripts and generated artifacts are intentionally held out of the first public commit until they are generalized and sanitized. They are baseline implementation material, not v0.1 acceptance evidence.
+G3 and later remain unimplemented: no release artifact runner, saved `.blend`, GLB/STL export, render publication, complete measured QA, Docker/Make quickstart, API, Compose service, VPS package, or CI exists yet. The local research workspace still contains an excluded hardcoded branded proof of concept; it is preserved baseline material, not v0.1 acceptance evidence.
 
 Known local reviewer environment:
 
@@ -47,10 +47,10 @@ The repository and project/package slug are both `headless-blender-character-bui
 
 ### Confirm before v0.1 implementation reaches its release gate
 
-- [ ] Keep the working name **Headless Blender Character Builder**, or provide the final name.
-- [ ] Keep GPL-3.0-or-later for code and CC0-1.0 for original samples, or request a license review.
-- [ ] Approve the neutral original `facet-bot` example.
-- [ ] Decide whether Windows/WSL2 is experimental or explicitly unsupported in v0.1.
+- [x] Keep the working name **Headless Blender Character Builder**.
+- [x] Keep GPL-3.0-or-later for code and CC0-1.0 for original samples.
+- [x] Use the neutral original `facet-bot` example.
+- [x] Treat Windows/WSL2 as experimental and non-release-blocking in v0.1.
 - [ ] Identify an outside clean-room reviewer for the final quickstart, if available.
 
 ### Optional inputs needed only for later tests
@@ -72,20 +72,22 @@ For every executed test, record:
 - manifest, QA, sanitized logs, hashes, and artifact locations;
 - issue link for every failure.
 
-Generated evidence belongs under this ignored path:
+Published build/test evidence normally belongs under this ignored path:
 
 ```text
 build/test-evidence/<commit-or-tree-hash>/<test-id>/
 ```
 
+The explicit native G2 harness is the exception: it requires a caller-owned new temporary directory outside the repository so integration probes cannot pollute or overwrite source. Record that temporary path and the durable result summary in `docs/progress.md`; do not commit the generated JSON.
+
 Record milestone summaries in `docs/progress.md` once implementation begins. Never attach `.env`, credentials, tokens, private references, signed URLs, or unredacted environment dumps.
 
 ## 5. Test sequence
 
-| Stage | PLAN dependency | Initial status | Release purpose |
+| Stage | PLAN dependency | Current status | Release purpose |
 |---|---|---|---|
-| T0 — repository and documentation | G0 | Ready for owner review | Prove the public scaffold contains only intended, safe files |
-| T1 — schemas and generic engine | G1–G3 | `NOT_IMPLEMENTED` | Prove bounded requests create real, varied Blender geometry |
+| T0 — repository and documentation | G0 | `PASS` locally | Prove the public scaffold contains only intended, safe files |
+| T1 — schemas and generic engine | G1–G3 | G1–G2 `PASS`; G3 `NOT_IMPLEMENTED` | Prove bounded requests create real, varied Blender geometry |
 | T2 — keyless container quickstart | G4 | `NOT_IMPLEMENTED` | Prove the primary public experience from a clean source tree |
 | T3 — asynchronous service | G5–G7 | `NOT_IMPLEMENTED` | Prove durable API, queue, worker, auth, and artifacts |
 | T4 — VPS and recovery | G8 | `NOT_IMPLEMENTED` / `CONDITIONAL` | Prove deployability without making live infrastructure mandatory |
@@ -121,7 +123,7 @@ Review every result. Documentation examples may mention prohibited patterns, but
 Verify that README:
 
 - labels the repository planning/prototype status;
-- does not claim Docker, API, Compose, STL, or Make targets already work;
+- reports the current passed milestone without claiming Docker, API, Compose, exported STL, or Make targets already work;
 - links `PLAN.md`, this test plan, security, contribution, and license documents;
 - distinguishes required no-key operation from optional future credentials;
 - states IP, security, and physical-print limitations.
@@ -132,16 +134,26 @@ Verify GPL-3.0-or-later is detected for source and `ASSET_LICENSE.md` states tha
 
 ## 7. T1 — schema, engine, and authenticity tests
 
-These tests become runnable after G1–G3.
+ENG-01 through ENG-03 are runnable and passed after G1–G2. ENG-04 through ENG-06 and the artifact tree remain unavailable until G3.
 
-| ID | Required proof |
-|---|---|
-| ENG-01 | Valid `BuildRequest v1` and nested `CharacterSpec v1` fixtures pass; extra properties and hostile fields fail before Blender starts |
-| ENG-02 | Two materially different requests build from factory startup through the same generator |
-| ENG-03 | Repeated requests retain the same canonical hashes and structural fingerprint without requiring byte-identical `.blend` or PNG files |
-| ENG-04 | Fresh-process `.blend` reload succeeds and enumerates real mesh objects, vertices, faces, materials, transforms, and three-dimensional bounds |
-| ENG-05 | Front, side, and back diagnostics come from the saved scene and reject flat image-card substitutes or external texture dependencies |
-| ENG-06 | GLB and STL re-import into clean scenes and match evaluated `.blend` bounds within the greater of 0.2 mm or 0.5% per axis |
+Current contract and engine commands:
+
+```sh
+python3.11 -m unittest discover -s tests -v
+
+python3 tests/blender_integration/g2_gate.py \
+  --blender /absolute/path/to/blender \
+  --evidence-dir /absolute/path/to/new-temporary-directory
+```
+
+| ID | Status | Required proof |
+|---|---|---|
+| ENG-01 | `PASS` | Valid `BuildRequest v1` and nested `CharacterSpec v1` fixtures pass; extra properties, incompatible presets, and hostile fields fail before Blender starts |
+| ENG-02 | `PASS` | Two materially different requests build from factory startup through the same generator |
+| ENG-03 | `PASS` | Repeated requests retain the same canonical hashes and structural fingerprint without requiring byte-identical `.blend` or PNG files |
+| ENG-04 | `NOT_IMPLEMENTED` | Fresh-process `.blend` reload succeeds and enumerates real mesh objects, vertices, faces, materials, transforms, and three-dimensional bounds |
+| ENG-05 | `NOT_IMPLEMENTED` | Front, side, and back diagnostics come from the saved scene and reject flat image-card substitutes or external texture dependencies |
+| ENG-06 | `NOT_IMPLEMENTED` | GLB and STL re-import into clean scenes and match evaluated `.blend` bounds within the greater of 0.2 mm or 0.5% per axis |
 
 Required artifact tree:
 

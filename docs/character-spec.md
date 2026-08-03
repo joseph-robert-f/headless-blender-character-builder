@@ -1,6 +1,6 @@
 # v0.1 JSON Contracts
 
-Status: implemented and gated in work package G1. Geometry generation begins in G2.
+Status: contracts passed in G1; deterministic geometry generation passed in G2. Artifact publication and full QA begin in G3.
 
 The one-shot builder and later HTTP service accept the same complete `BuildRequest`. Callers choose a reviewed generator and bounded profiles; they do not submit Python, Blender operations, paths, URLs, add-ons, environment variables, or renderer flags.
 
@@ -56,10 +56,36 @@ The complete UTF-8 request is limited to 64 KiB. Every object rejects extra prop
 | `proportions` | Bounded head, body, and limb scales |
 | `material_preset` | `matte`, `satin`, or `glossy` |
 | `eye_preset` | `round`, `visor`, or `sleepy` |
-| `components` | Up to 16 unique values from the schema allowlist |
+| `components` | Up to 16 unique values from the schema allowlist; `stub-tail` and `swept-tail` are mutually exclusive |
 | `base` | `none`, `round`, `square`, or `hexagonal` with bounded millimeter dimensions |
 
 The schemas in [`schemas/`](../schemas/) are the portable structural contracts. The immutable models in [`shared/`](../shared/) add strict decoding and semantic rules.
+
+## Implemented generator behavior
+
+`geometric-character@1.0.0` is a closed registry entry, not a general Blender scripting endpoint. It accepts only an already validated `BuildRequest`, rejects impossible height/base combinations before replacing the active scene, and then starts from Blender factory state. The generated scene has exactly these top-level collections:
+
+```text
+CAMERAS
+CHARACTER
+LIGHTS
+PRINT
+SET
+```
+
+`CHARACTER` contains separately named procedural display meshes with bounded native materials and semantic component metadata. `PRINT` contains exactly one derived `PrintableShell`; the source display meshes remain independently inspectable. Total requested height includes the base, and the base display mesh uses the requested width, depth, and height exactly.
+
+The G2 gate starts four fresh Blender 4.5 processes: both bundled examples twice. It checks finite nonempty source/evaluated meshes, collection placement, object/material/triangle caps, no image-backed materials, semantic component inventories, one connected manifold and consistently wound printable shell, positive signed volume, requested-height tolerance, repeat-stable structural evidence, and cross-example topology differences. It deliberately does not save, export, render, or claim measured printability; those are G3 responsibilities.
+
+Native contributors can run the gate with an empty caller-owned evidence directory outside the repository:
+
+```sh
+python3 tests/blender_integration/g2_gate.py \
+  --blender /absolute/path/to/blender \
+  --evidence-dir /absolute/path/to/new-temporary-directory
+```
+
+The command emits path-free JSON evidence only in the supplied temporary directory. Blender is launched with factory startup, offline mode, automatic embedded-script execution disabled, and a nonzero Python exit code on probe failure.
 
 ## Deterministic hashes
 

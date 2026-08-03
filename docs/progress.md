@@ -8,7 +8,7 @@ Overall status: **in progress**
 |---|---|---|---|
 | G0 | M0 foundation | passed | Baseline verified; defaults, neutral brief, ignores, preservation hashes, and intentional indexed source set audited |
 | G1 | M1 contracts | passed | Four Draft 2020-12 schemas and immutable runtime models; 47 schema/policy tests plus independent final audit passed |
-| G2 | M1 generator | pending | — |
+| G2 | M1 generator | passed | Generic registry/core plus two factory-start fixtures; four-process structural, topology, and determinism gate passed |
 | G3 | M1 artifacts and QA | pending | — |
 | G4 | M2 one-shot container | pending | — |
 | G5 | M3 persistence interfaces | pending | — |
@@ -105,3 +105,57 @@ Deviation/condition:
 - JSON Schema handles portable structure and directly expressible pass constraints. `QualityReport` remains normative for cross-field tolerance arithmetic and exact terminal-status derivation, as recorded in D-017. Both layers have executable tests.
 
 G1 gate result: **passed**. G2 generic scene and generator implementation may begin.
+
+### G2 — deterministic generic Blender generator
+
+Files and contracts introduced:
+
+- `blender/core/` contains millimeter primitives, bounded native materials, factory-scene setup, printable-shell derivation, and canonical structural evidence;
+- `blender/generators/registry.py` exposes the closed `generate_character(BuildRequest) -> GenerationResult` registry API;
+- `blender/generators/geometric_character_v1/` composes the schema controls into separate semantic display components and one voxel-unioned printable shell;
+- `tests/blender_integration/g2_probe.py` inspects real source/evaluated Blender meshes, procedural materials, collections, roles, topology, dimensions, and hashes inside Blender;
+- `tests/blender_integration/g2_gate.py` launches both examples twice in four isolated processes and compares only declared stable evidence;
+- `pyproject.toml` now packages both `shared*` and `blender*` modules;
+- Decisions D-022 through D-025 record the display/print split, structural determinism evidence, pre-scene semantic rejection boundary, and mutually exclusive tail presets.
+
+Implemented scene contract:
+
+- exact top-level collections `CAMERAS`, `CHARACTER`, `LIGHTS`, `PRINT`, and `SET`;
+- material-bearing procedural display meshes only in `CHARACTER` and exactly one hidden `PrintableShell` only in `PRINT`;
+- total requested height includes the base; display base dimensions are exact;
+- deterministic semantic component roles/presets, bounded scene counts, no images, external textures, fonts, paths, network calls, saves, exports, or rendering;
+- schema-valid but impossible height/base layouts are rejected before factory reset or scene mutation.
+
+Verification executed:
+
+| Command | Result |
+|---|---|
+| `PYTHONDONTWRITEBYTECODE=1 /private/tmp/hbcc-g1-schema-venv/bin/python -m unittest discover -s tests -v` | exit `0`; all 48 contract/runtime tests passed |
+| `PYTHONPYCACHEPREFIX=/private/tmp/hbcc-g2-compile-cache /Applications/Blender.app/Contents/Resources/4.5/python/bin/python3.11 -m compileall -q -f blender tests/blender_integration shared` | exit `0`; all G2 and shared Python parsed under Blender's Python 3.11 |
+| `PYTHONDONTWRITEBYTECODE=1 python3 tests/blender_integration/g2_gate.py --blender /Applications/Blender.app/Contents/MacOS/Blender --evidence-dir /private/tmp/hbcc-g2-index-gate.wVkbjR --timeout-seconds 900` | exit `0`; `G2_BLENDER_INTEGRATION: PASS` across four fresh Blender 4.5.12 LTS processes from the final staged source |
+| `cmp -s /private/tmp/hbcc-g2-index-gate.wVkbjR/facet-bot-run-1.json /private/tmp/hbcc-g2-index-gate.wVkbjR/facet-bot-run-2.json` and the equivalent `moss-hopper` comparison | both exited `0`; each fixture's declared stable report was byte-identical across fresh processes |
+
+Deterministic geometry evidence:
+
+| Example | Structural fingerprint | Geometry signature | Character + print triangles | Requested / observed height |
+|---|---|---|---:|---:|
+| `facet-bot` | `3169d1d4ed734038990e9433b8d27a2f61bbd7f48c2ea3a5e43461087c5957cc` | `462e1165793489cb21a22f5c229bbf908778a5f7ca9c6885c38529dc332c9ef9` | 320,672 | 95 / 94.984509 mm |
+| `moss-hopper` | `b520ad9a6dad96e567c14bdc1237f9677f9dc17d9e76643a119c64d23c4b1178` | `aa7932f058e2d9b964bb5e852298d0e95bfac865f24657d2978389724eaddce6` | 318,786 | 125 / 125 mm |
+
+Both print shells have one face-connected and vertex-connected component, zero boundary edges, zero non-manifold edges or vertices, zero non-contiguous edges, zero near-zero-area faces, and positive signed volume. Display bounds are exactly `52 × 52 × 95 mm` and `68 × 58 × 125 mm`; requested versus evaluated base dimensions differ by at most `0.000005 mm`, and printable bounds remain within the Section 8 tolerance. The fixtures differ in topology, object/role inventory, dimensions, pose, style, components, and palette rather than recoloring one hardcoded mesh.
+
+Evidence location:
+
+- `/private/tmp/hbcc-g2-index-gate.wVkbjR/` contains the final four path-free run reports and `g2-summary.json` with explicit base-dimension, face/vertex connectivity, boundary, manifold-vertex, winding, area, and volume evidence;
+- `/private/tmp/hbcc-g2-consistency-final.4jcrX1/` contains an independent exact-source gate rerun whose five reports are byte-identical to the final primary evidence;
+- generated evidence remains outside the publication tree.
+
+Iteration and remaining risk:
+
+- The first full probe correctly rejected detached `moss-hopper` top components. Their reviewed attachment depth was increased, after which both fixtures passed one-shell topology and repeatability checks.
+- Independent generic-domain review found that selecting both tail presets could collide after scene creation. JSON Schema, runtime validation, and generator preflight now reject that pair before Blender mutation; a hostile fixture and regression test cover the rule.
+- The final independent re-audit covered every compatible style/pose/eye/base/component composition for construction/name safety and built real low-poly, heroic, visor, square-base, no-base, horn, round-ear, and stub-tail variants not present in the two release fixtures; no further G2 blocker remained.
+- Print-focused review found that the initial brief described future STL measurements as current facts and that base dimensions, face-connected shells, boundary edges, and manifold vertices were observed but not gate assertions. The brief now labels those measurements as G3 targets, and the strengthened inner/outer gate asserts and emits each G2-measurable property.
+- G2 records construction-time feature minima but does not yet claim measured wall/accessory thickness. G3 must add authoritative geometry measurements, saving, rendering, GLB/STL export, fresh reload, and re-import checks before any build can publish passing QA.
+
+G2 gate result: **passed**. G3 artifact, render, export, and complete QA implementation may begin.

@@ -61,6 +61,12 @@
       "maxItems": 16,
       "uniqueItems": true,
       "default": [],
+      "not": {
+        "allOf": [
+          {"contains": {"const": "stub-tail"}},
+          {"contains": {"const": "swept-tail"}}
+        ]
+      },
       "items": {
         "enum": [
           "antenna-pair",

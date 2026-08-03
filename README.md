@@ -2,7 +2,7 @@
 
 An open-source, self-hostable pipeline for turning a bounded JSON character request into real Blender geometry, portable 3D exports, diagnostic renders, and machine-readable QA.
 
-> **Status: contract layer implemented; generator pending.** The strict v0.1 request, QA, and manifest contracts are tested. The generic Blender generator, Docker quickstart, API, Compose service, and VPS package described below are not implemented yet. Do not treat this repository as production-ready or advertise `make demo` as available until its milestone gate passes.
+> **Status: deterministic generator implemented; artifact pipeline pending.** The strict v0.1 contracts and the generic Blender generator are tested with two original characters in isolated headless processes. Saving, export, rendering, complete QA publication, the Docker quickstart, API, Compose service, and VPS package described below are not implemented yet. Do not treat this repository as production-ready or advertise `make demo` as available until its milestone gate passes.
 
 The planned public contract is deliberately narrow: original geometric, low-poly, or chibi characters compiled from reviewed Blender primitives—not unrestricted text-to-3D, customer-authored Python, exact likenesses, protected-character replication, or guaranteed physical prints.
 
@@ -29,7 +29,9 @@ The secondary path will add an asynchronous self-hosted service through Docker C
 
 ## Repository state
 
-The repository now contains four Draft 2020-12 schemas, pure-standard-library runtime validation/canonicalization, two original example requests, hostile rejection fixtures, and schema/policy tests. The local research workspace also contains a hardcoded Blender proof-of-concept, but it remains excluded from publication because it is branded, writes generated files beside source, and some generated assets contain local filesystem metadata. Reusable geometry code will be generalized through the remaining G2–G4 gates.
+The repository now contains four Draft 2020-12 schemas, pure-standard-library runtime validation/canonicalization, two original example requests, hostile rejection fixtures, and schema/policy tests. Its `geometric-character@1.0.0` registry entry compiles both requests into separate material-bearing display meshes and one closed, connected manufacturing-oriented `PRINT` shell using real procedural Blender geometry. A four-process gate proves factory-start isolation, stable structural fingerprints, materially different topology, bounded scene complexity, procedural-only materials, and requested-height agreement.
+
+The next gate adds saved `.blend`, GLB and millimeter STL artifacts, diagnostic renders, complete geometry QA, and fresh-process reload/re-import checks. The local research workspace also contains a hardcoded Blender proof-of-concept, but it remains excluded from publication because it is branded, writes generated files beside source, and some generated assets contain local filesystem metadata.
 
 ## Safety and limitations
 
