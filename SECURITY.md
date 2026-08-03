@@ -2,7 +2,7 @@
 
 ## Current status
 
-This repository is a planning and prototype scaffold. There is no supported production release, hosted service, or security-maintenance window yet. Do not expose the planned API or worker to untrusted users until the v0.1 security gates in `PLAN.md` pass.
+This repository is an active pre-release implementation. The native deterministic builder has passed G1–G3, including strict input rejection, private staging, atomic success publication, disabled embedded-script auto-execution, offline Blender processes, artifact hashes, and fresh reload/re-import checks. There is still no supported production release, hosted service, or security-maintenance window. Do not expose the planned API or worker to untrusted users until the container, service, and release security gates in `PLAN.md` pass.
 
 ## Reporting a vulnerability
 

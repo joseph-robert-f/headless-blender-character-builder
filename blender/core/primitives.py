@@ -56,6 +56,11 @@ def _finish_object(
     return obj
 
 
+def _tag_primitive(obj: bpy.types.Object, kind: str) -> bpy.types.Object:
+    obj["builder_primitive"] = kind
+    return obj
+
+
 def _apply_scale(obj: bpy.types.Object) -> None:
     _activate_only(obj)
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
@@ -90,14 +95,14 @@ def ellipsoid(
     _apply_scale(obj)
     for polygon in obj.data.polygons:
         polygon.use_smooth = True
-    return _finish_object(
+    return _tag_primitive(_finish_object(
         obj,
         name=name,
         collection=collection,
         material=material,
         print_source=print_source,
         minimum_feature_mm=minimum_feature_mm,
-    )
+    ), "ellipsoid")
 
 
 def ico_ellipsoid(
@@ -125,14 +130,14 @@ def ico_ellipsoid(
     desired = Vector(tuple(mm_to_m(value) for value in dimensions))
     obj.scale = tuple(desired[index] / current[index] for index in range(3))
     _apply_scale(obj)
-    return _finish_object(
+    return _tag_primitive(_finish_object(
         obj,
         name=name,
         collection=collection,
         material=material,
         print_source=print_source,
         minimum_feature_mm=minimum_feature_mm,
-    )
+    ), "ico-ellipsoid")
 
 
 def rounded_box(
@@ -164,14 +169,14 @@ def rounded_box(
         modifier.limit_method = "ANGLE"
         _activate_only(obj)
         bpy.ops.object.modifier_apply(modifier=modifier.name)
-    return _finish_object(
+    return _tag_primitive(_finish_object(
         obj,
         name=name,
         collection=collection,
         material=material,
         print_source=print_source,
         minimum_feature_mm=minimum_feature_mm,
-    )
+    ), "rounded-box")
 
 
 def cylinder(
@@ -198,7 +203,7 @@ def cylinder(
         rotation=tuple(float(value) for value in rotation_euler),
     )
     obj = bpy.context.object
-    return _finish_object(
+    return _tag_primitive(_finish_object(
         obj,
         name=name,
         collection=collection,
@@ -209,7 +214,7 @@ def cylinder(
             if minimum_feature_mm is not None
             else min(radius_mm * 2.0, depth_mm)
         ),
-    )
+    ), "cylinder")
 
 
 def cylinder_dimensions(
@@ -247,14 +252,14 @@ def cylinder_dimensions(
     desired = Vector(tuple(mm_to_m(value) for value in dimensions))
     obj.scale = tuple(desired[index] / current[index] for index in range(3))
     _apply_scale(obj)
-    return _finish_object(
+    return _tag_primitive(_finish_object(
         obj,
         name=name,
         collection=collection,
         material=material,
         print_source=print_source,
         minimum_feature_mm=minimum_feature_mm,
-    )
+    ), "cylinder")
 
 
 def cylinder_between(
@@ -293,7 +298,7 @@ def cylinder_between(
     obj.rotation_mode = "QUATERNION"
     obj.rotation_quaternion = Vector((0.0, 0.0, 1.0)).rotation_difference(direction)
     _apply_scale(obj)
-    return _finish_object(
+    return _tag_primitive(_finish_object(
         obj,
         name=name,
         collection=collection,
@@ -304,7 +309,7 @@ def cylinder_between(
             if minimum_feature_mm is not None
             else radius_mm * 2.0
         ),
-    )
+    ), "cylinder")
 
 
 def cone_between(
@@ -347,7 +352,7 @@ def cone_between(
     obj.rotation_mode = "QUATERNION"
     obj.rotation_quaternion = Vector((0.0, 0.0, 1.0)).rotation_difference(direction)
     _apply_scale(obj)
-    return _finish_object(
+    return _tag_primitive(_finish_object(
         obj,
         name=name,
         collection=collection,
@@ -358,7 +363,7 @@ def cone_between(
             if minimum_feature_mm is not None
             else min(radius_start_mm, radius_end_mm) * 2.0
         ),
-    )
+    ), "frustum")
 
 
 def mesh_bounds_mm(objects: Iterable[bpy.types.Object]) -> tuple[Vector, Vector]:

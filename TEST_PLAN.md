@@ -1,6 +1,6 @@
 # Feature Testing and Owner Review Plan
 
-Status: **living verification plan; G0–G2 passed, G3–G9 pending**
+Status: **living verification plan; G0–G3 passed, G4–G9 pending**
 
 Last updated: **August 2, 2026**
 
@@ -21,9 +21,9 @@ Do not call an unimplemented feature blocked, and do not mark a gate passed from
 
 ## 2. Current state
 
-Work packages G0 through G2 have passed. The repository contains strict `BuildRequest`, `CharacterSpec`, QA, and manifest contracts plus a generic `geometric-character@1.0.0` registry/core. Two original requests generate real, materially different Blender geometry with stable structural fingerprints and one closed manufacturing-oriented shell in four isolated native-Blender processes.
+Work packages G0 through G3 have passed. The repository contains strict `BuildRequest`, `CharacterSpec`, QA, and manifest contracts plus a generic `geometric-character@1.0.0` registry/core. Two original requests generate real, materially different Blender geometry with stable structural fingerprints. The native runner now saves `.blend`, exports display GLB and a raw-millimeter binary STL, renders four PNGs, measures complete geometry QA, verifies the model formats in a second fresh Blender process, and atomically publishes a success manifest last.
 
-G3 and later remain unimplemented: no release artifact runner, saved `.blend`, GLB/STL export, render publication, complete measured QA, Docker/Make quickstart, API, Compose service, VPS package, or CI exists yet. The local research workspace still contains an excluded hardcoded branded proof of concept; it is preserved baseline material, not v0.1 acceptance evidence.
+G4 and later remain unimplemented: no Docker/Make quickstart, API, Compose service, VPS package, or release CI exists yet. The local research workspace still contains an excluded hardcoded branded proof of concept; it is preserved baseline material, not v0.1 acceptance evidence.
 
 Known local reviewer environment:
 
@@ -78,7 +78,7 @@ Published build/test evidence normally belongs under this ignored path:
 build/test-evidence/<commit-or-tree-hash>/<test-id>/
 ```
 
-The explicit native G2 harness is the exception: it requires a caller-owned new temporary directory outside the repository so integration probes cannot pollute or overwrite source. Record that temporary path and the durable result summary in `docs/progress.md`; do not commit the generated JSON.
+The explicit native G2 and G3 harnesses are exceptions: they require caller-owned new temporary directories outside the repository so integration probes and generated artifacts cannot pollute or overwrite source. Record those temporary paths and durable result summaries in `docs/progress.md`; do not commit generated JSON or model artifacts.
 
 Record milestone summaries in `docs/progress.md` once implementation begins. Never attach `.env`, credentials, tokens, private references, signed URLs, or unredacted environment dumps.
 
@@ -87,7 +87,7 @@ Record milestone summaries in `docs/progress.md` once implementation begins. Nev
 | Stage | PLAN dependency | Current status | Release purpose |
 |---|---|---|---|
 | T0 — repository and documentation | G0 | `PASS` locally | Prove the public scaffold contains only intended, safe files |
-| T1 — schemas and generic engine | G1–G3 | G1–G2 `PASS`; G3 `NOT_IMPLEMENTED` | Prove bounded requests create real, varied Blender geometry |
+| T1 — schemas, generic engine, and artifacts | G1–G3 | `PASS` | Prove bounded requests create and independently verify real, varied Blender geometry |
 | T2 — keyless container quickstart | G4 | `NOT_IMPLEMENTED` | Prove the primary public experience from a clean source tree |
 | T3 — asynchronous service | G5–G7 | `NOT_IMPLEMENTED` | Prove durable API, queue, worker, auth, and artifacts |
 | T4 — VPS and recovery | G8 | `NOT_IMPLEMENTED` / `CONDITIONAL` | Prove deployability without making live infrastructure mandatory |
@@ -134,7 +134,7 @@ Verify GPL-3.0-or-later is detected for source and `ASSET_LICENSE.md` states tha
 
 ## 7. T1 — schema, engine, and authenticity tests
 
-ENG-01 through ENG-03 are runnable and passed after G1–G2. ENG-04 through ENG-06 and the artifact tree remain unavailable until G3.
+ENG-01 through ENG-06 are runnable and passed after G1–G3.
 
 Current contract and engine commands:
 
@@ -144,6 +144,10 @@ python3.11 -m unittest discover -s tests -v
 python3 tests/blender_integration/g2_gate.py \
   --blender /absolute/path/to/blender \
   --evidence-dir /absolute/path/to/new-temporary-directory
+
+python3 tests/blender_integration/g3_gate.py \
+  --blender /absolute/path/to/blender \
+  --work-dir /absolute/path/to/dedicated-temporary-directory
 ```
 
 | ID | Status | Required proof |
@@ -151,9 +155,9 @@ python3 tests/blender_integration/g2_gate.py \
 | ENG-01 | `PASS` | Valid `BuildRequest v1` and nested `CharacterSpec v1` fixtures pass; extra properties, incompatible presets, and hostile fields fail before Blender starts |
 | ENG-02 | `PASS` | Two materially different requests build from factory startup through the same generator |
 | ENG-03 | `PASS` | Repeated requests retain the same canonical hashes and structural fingerprint without requiring byte-identical `.blend` or PNG files |
-| ENG-04 | `NOT_IMPLEMENTED` | Fresh-process `.blend` reload succeeds and enumerates real mesh objects, vertices, faces, materials, transforms, and three-dimensional bounds |
-| ENG-05 | `NOT_IMPLEMENTED` | Front, side, and back diagnostics come from the saved scene and reject flat image-card substitutes or external texture dependencies |
-| ENG-06 | `NOT_IMPLEMENTED` | GLB and STL re-import into clean scenes and match evaluated `.blend` bounds within the greater of 0.2 mm or 0.5% per axis |
+| ENG-04 | `PASS` | Fresh-process `.blend` reload succeeds and enumerates real mesh objects, vertices, faces, materials, transforms, and three-dimensional bounds |
+| ENG-05 | `PASS` | Front, side, and back diagnostics come from the saved scene; PNG structure/variation, real geometry, and absence of external texture dependencies are checked |
+| ENG-06 | `PASS` | GLB and STL re-import into clean scenes and match evaluated `.blend` bounds within the greater of 0.2 mm or 0.5% per axis |
 
 Required artifact tree:
 
@@ -180,6 +184,8 @@ Artifact verification must confirm:
 - minimum wall thickness is at least 1.2 mm;
 - freestanding features and connections are at least 2.0 mm;
 - unmeasurable mandatory geometry becomes `needs_review`, not `succeeded`.
+
+Final G3 evidence is under `/private/tmp/hbcc-g3-final-topology.PMFshx/`. Facet Bot published the exact tree twice with matching stable probe SHA-256 `726060b092c8168e0a57477116a4c715e1b6f21d48c6d65fe7ca2be500652ccc`. Its STL has 316,172 triangles, one face-connected closed positive shell, zero non-manifold edges or vertices, and conservative lower bounds of 2.3001 mm wall and 2.3089 mm feature. A synthetic pair of closed tetrahedra touching at one bow-tie vertex proves production QA rejects vertex-pinched shells. Moss Hopper intentionally exits `11` as `needs_review` and publishes nothing because its wall evidence is ambiguous. Invalid CLI, oversized/invalid/unresolvable input, an existing caller-owned output, and a corrupted private STL also followed their fixed failure contracts without publishing success.
 
 ## 8. T2 — zero-key single-container quickstart
 

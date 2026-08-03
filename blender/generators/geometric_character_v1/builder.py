@@ -650,6 +650,16 @@ def _assert_scene_limits(display_objects: Sequence[bpy.types.Object]) -> None:
         raise RuntimeError("generated display scene exceeds the 500,000-triangle limit")
 
 
+def preflight(request: BuildRequest) -> None:
+    """Reject generator-specific semantic impossibilities without scene mutation."""
+
+    if request.generator != GENERATOR:
+        raise ValueError(f"unsupported generator: {request.generator!r}")
+    target_h = float(request.spec.height_mm)
+    voxel_size_mm = _bounded(target_h / 300.0, 0.26, 0.48)
+    _layout(request, voxel_size_mm)
+
+
 def generate(request: BuildRequest) -> GenerationResult:
     """Compile one validated request into display meshes and one print shell."""
 

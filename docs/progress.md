@@ -9,7 +9,7 @@ Overall status: **in progress**
 | G0 | M0 foundation | passed | Baseline verified; defaults, neutral brief, ignores, preservation hashes, and intentional indexed source set audited |
 | G1 | M1 contracts | passed | Four Draft 2020-12 schemas and immutable runtime models; 47 schema/policy tests plus independent final audit passed |
 | G2 | M1 generator | passed | Generic registry/core plus two factory-start fixtures; four-process structural, topology, and determinism gate passed |
-| G3 | M1 artifacts and QA | pending | — |
+| G3 | M1 artifacts and QA | passed | Exact nine-file artifact publication, actual-shell QA, fresh reload/re-import, repeat, and fail-closed paths passed |
 | G4 | M2 one-shot container | pending | — |
 | G5 | M3 persistence interfaces | pending | — |
 | G6 | M3 API and worker | pending | — |
@@ -159,3 +159,79 @@ Iteration and remaining risk:
 - G2 records construction-time feature minima but does not yet claim measured wall/accessory thickness. G3 must add authoritative geometry measurements, saving, rendering, GLB/STL export, fresh reload, and re-import checks before any build can publish passing QA.
 
 G2 gate result: **passed**. G3 artifact, render, export, and complete QA implementation may begin.
+
+### G3 — artifacts, rendering, complete QA, and fresh verification
+
+Files and contracts introduced:
+
+- `blender/runner.py` exposes only `--request PATH --output PATH` after Blender's `--` boundary, validates before scene creation, and maps the fixed application exits;
+- `blender/core/camera.py`, `blender/render/`, and `blender/exporters/` create four fixed 512 px/32-sample renders, save a relative-path `.blend`, export display-only GLB, and export one binary raw-millimeter STL;
+- `blender/qa/geometry.py` measures topology, every final-shell triangle for conservative wall evidence, and actual `PrintableShell` semantic cross-sections for feature evidence;
+- `blender/verifier.py` runs in a second fresh Blender process and independently reloads `.blend` plus re-imports GLB/STL;
+- `tests/blender_integration/g3_gate.py`, `g3_artifact_probe.py`, and `g3_qa_regression.py` validate contracts, hashes, provenance, PNG/GLB/STL framing, dimensions, topology, external-resource absence, repeat stability, failure publication rules, and rejection of vertex-pinched shells;
+- Decisions D-026 through D-030 record atomic publication, actual-shell thickness evidence, palette persistence, diagnostic lighting, and face-connected/manifold-vertex shell semantics.
+
+Implemented artifact contract:
+
+```text
+model.blend
+model.glb
+model.stl
+preview.png
+diagnostics/front.png
+diagnostics/side.png
+diagnostics/back.png
+qa.json
+manifest.json
+```
+
+The output must not already exist. A mode-`0700` sibling stage is atomically renamed only after mandatory QA passes, the child verifier succeeds, `qa.json` validates, and the success manifest is written last. Private verifier evidence is removed before publication. Failure removes staging and never publishes a manifest.
+
+Verification executed:
+
+| Command | Result |
+|---|---|
+| `PYTHONDONTWRITEBYTECODE=1 /private/tmp/hbcc-g1-schema-venv/bin/python -m unittest discover -s tests -v` | exit `0`; all 48 contract/runtime tests passed |
+| `PYTHONDONTWRITEBYTECODE=1 /private/tmp/hbcc-g1-schema-venv/bin/python tests/blender_integration/g3_gate.py --blender /Applications/Blender.app/Contents/MacOS/Blender --work-dir /private/tmp/hbcc-g3-final-topology.PMFshx --timeout-seconds 1800` | exit `0`; `G3_BLENDER_INTEGRATION: PASS` on the final audited source after bounded request reading, explicit exit-contract coverage, and production topology hardening |
+| Native visual review of the four final Facet Bot PNGs | passed; preview/front/side/back are distinct, framed, path-free 512 px geometry renders without intersection-shadow stippling |
+| Independent pre-fix G3 gate at `/private/tmp/hbcc-g3-final.je4GsE` | exit `0` in approximately 82.1 seconds; independently confirmed the same geometry/QA/failure invariants |
+
+Final Facet Bot evidence:
+
+| Property | Observed result |
+|---|---:|
+| Evaluated printable dimensions | `51.9795 × 51.9795 × 94.9845 mm` |
+| Display GLB dimensions | `52 × 52 × 95 mm` |
+| Total evaluated scene triangles | `320,672` |
+| Binary STL triangles | `316,172` |
+| Wall lower bound | `2.3001 mm` |
+| Semantic feature lower bound | `2.3089 mm` |
+| Connected shells / non-manifold edges / non-manifold vertices / zero-area faces | `1 / 0 / 0 / 0` |
+| Stable repeat probe SHA-256 | `726060b092c8168e0a57477116a4c715e1b6f21d48c6d65fe7ca2be500652ccc` |
+| First final-run artifact bytes excluding the self-excluded manifest | `21,496,427` |
+
+Both final Facet runs published exactly nine files. Their stable probe evidence, QA fields, dimensions, topology, GLB/STL structure, and manifest stable fields match; binary hashes are recorded but not promised identical. Fresh `.blend` reload, GLB import, and STL import all passed. The independent binary STL reader proved one face-connected and vertex-connected closed shell, two oppositely oriented uses per edge, finite coordinates, outward-consistent normals, and positive volume.
+
+Fail-closed outcomes:
+
+- the hostile request exits `3` before output creation;
+- an unsupported CLI option exits `2`, and an oversized request is read only to the 64 KiB contract boundary before exiting `3`;
+- a request path whose home expansion cannot resolve exits `4` rather than falling through to an internal-error code;
+- a pre-existing caller-owned output exits `4` without modifying its sentinel file;
+- a synthetic pair of closed tetrahedra sharing one bow-tie vertex retains zero non-manifold edges but is correctly measured as two face-connected shells with a non-manifold vertex, so the production success predicate rejects it;
+- `moss-hopper` measures a passing `2.0719 mm` feature lower bound, but 14 unresolved strict wall candidates plus one ray miss make wall evidence unknown, so it exits `11` as `needs_review` with no output or staging residue;
+- a privately truncated STL fails the child verifier and produces neither verifier success evidence nor a manifest;
+- no private verifier files appear in a successful tree.
+
+Evidence locations:
+
+- `/private/tmp/hbcc-g3-final-topology.PMFshx/` contains the final current-tree two-run artifact trees, independent probes, topology regression, all negative-path fixtures, corruption fixture, and path-free `g3-summary.json`;
+- `/private/tmp/hbcc-g3-final.je4GsE/` contains the independent agent gate evidence;
+- both remain outside the publication tree.
+
+Deviation/condition:
+
+- The G3 gate deliberately treats the materially different Moss Hopper fixture as `needs_review` rather than weakening the wall algorithm or claiming a false pass. G2 remains the proof that both specs generate materially different real geometry; G3 proves success publication with Facet Bot and the required mandatory-unknown no-publication path with Moss Hopper.
+- Thickness numbers are conservative geometry diagnostics with a two-voxel uncertainty deduction. They are not slicer evidence or a physical-print warranty.
+
+G3 gate result: **passed**. G4 pinned builder image, trusted CLI adapter, hardened one-shot runtime, native fallback, and Make targets may begin.

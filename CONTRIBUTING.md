@@ -1,6 +1,6 @@
 # Contributing
 
-This project is currently at the planning/prototype stage. Please read `PLAN.md` and `TEST_PLAN.md` before proposing implementation work.
+This project is currently an active pre-release implementation. Please read `PLAN.md`, `TEST_PLAN.md`, and `docs/progress.md` before proposing implementation work.
 
 ## Before opening a change
 

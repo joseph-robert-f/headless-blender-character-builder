@@ -1,6 +1,6 @@
 # v0.1 JSON Contracts
 
-Status: contracts passed in G1; deterministic geometry generation passed in G2. Artifact publication and full QA begin in G3.
+Status: contracts passed in G1, deterministic geometry generation passed in G2, and native artifact publication plus complete geometry QA passed in G3. Container packaging begins in G4.
 
 The one-shot builder and later HTTP service accept the same complete `BuildRequest`. Callers choose a reviewed generator and bounded profiles; they do not submit Python, Blender operations, paths, URLs, add-ons, environment variables, or renderer flags.
 
@@ -75,7 +75,7 @@ SET
 
 `CHARACTER` contains separately named procedural display meshes with bounded native materials and semantic component metadata. `PRINT` contains exactly one derived `PrintableShell`; the source display meshes remain independently inspectable. Total requested height includes the base, and the base display mesh uses the requested width, depth, and height exactly.
 
-The G2 gate starts four fresh Blender 4.5 processes: both bundled examples twice. It checks finite nonempty source/evaluated meshes, collection placement, object/material/triangle caps, no image-backed materials, semantic component inventories, one connected manifold and consistently wound printable shell, positive signed volume, requested-height tolerance, repeat-stable structural evidence, and cross-example topology differences. It deliberately does not save, export, render, or claim measured printability; those are G3 responsibilities.
+The G2 gate starts four fresh Blender 4.5 processes: both bundled examples twice. It checks finite nonempty source/evaluated meshes, collection placement, object/material/triangle caps, no image-backed materials, semantic component inventories, one connected manifold and consistently wound printable shell, positive signed volume, requested-height tolerance, repeat-stable structural evidence, and cross-example topology differences.
 
 Native contributors can run the gate with an empty caller-owned evidence directory outside the repository:
 
@@ -86,6 +86,30 @@ python3 tests/blender_integration/g2_gate.py \
 ```
 
 The command emits path-free JSON evidence only in the supplied temporary directory. Blender is launched with factory startup, offline mode, automatic embedded-script execution disabled, and a nonzero Python exit code on probe failure.
+
+## Native artifact runner
+
+G3 adds a deliberately narrow public script interface after Blender's `--` boundary:
+
+```sh
+/absolute/path/to/blender \
+  --background --factory-startup --offline-mode --disable-autoexec \
+  --python-exit-code 12 --python blender/runner.py -- \
+  --request examples/requests/facet-bot.json \
+  --output /absolute/path/to/new-output-directory
+```
+
+The output parent must already exist and the output itself must not. The runner accepts no other public arguments. It validates and preflights before scene creation, writes into a mode-`0700` sibling staging directory, saves/exports/renders with fixed profiles, invokes a fresh child Blender process for reload/re-import verification, writes `qa.json`, writes a success-only `manifest.json` last, and atomically renames the complete tree into place. Any failure removes private staging and publishes nothing.
+
+The explicit G3 review gate builds Facet Bot twice and exercises invalid input, `needs_review`, and corrupted-artifact paths:
+
+```sh
+python3 tests/blender_integration/g3_gate.py \
+  --blender /absolute/path/to/blender \
+  --work-dir /absolute/path/to/dedicated-temporary-directory
+```
+
+Facet Bot passes with conservative actual-shell lower bounds of 2.3001 mm for walls and 2.3089 mm for semantic features. Moss Hopper remains a valid generation request but produces `needs_review`: unresolved short wall candidates make the mandatory wall measurement unknown, so exit `11` leaves no output or success manifest.
 
 ## Deterministic hashes
 
@@ -131,7 +155,7 @@ diagnostics/back.png
 qa.json
 ```
 
-`manifest.json` excludes its own hash. Aggregate published artifacts are limited to 2 GiB. G3 will implement cross-artifact hash recomputation, fresh Blender reload, and GLB/STL re-import evidence.
+`manifest.json` excludes its own hash. Aggregate published artifacts are limited to 2 GiB. G3 implements cross-artifact hash recomputation, exact Blender/source provenance, fresh Blender reload, and GLB/STL re-import evidence before success publication.
 
 ## Versioning
 

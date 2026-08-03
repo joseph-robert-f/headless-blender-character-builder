@@ -18,7 +18,16 @@ class MaterialSet:
 def _hex_rgb(color: str) -> tuple[float, float, float]:
     if len(color) != 7 or not color.startswith("#"):
         raise ValueError(f"invalid reviewed color: {color!r}")
-    return tuple(int(color[index : index + 2], 16) / 255.0 for index in (1, 3, 5))
+    srgb = tuple(int(color[index : index + 2], 16) / 255.0 for index in (1, 3, 5))
+    # Hex colours are conventionally encoded in sRGB, while Blender shader
+    # colour inputs are scene-linear.  Convert explicitly so diagnostics match
+    # the reviewed palette instead of rendering bright colours as near-white.
+    return tuple(
+        channel / 12.92
+        if channel <= 0.04045
+        else ((channel + 0.055) / 1.055) ** 2.4
+        for channel in srgb
+    )
 
 
 def _material(
@@ -30,6 +39,10 @@ def _material(
     if name in bpy.data.materials:
         raise ValueError(f"duplicate deterministic material name: {name}")
     material = bpy.data.materials.new(name=name)
+    # The complete reviewed palette is part of the deterministic model even
+    # when a particular composition does not assign every swatch.  Preserve
+    # those datablocks across save/reload so structural provenance is stable.
+    material.use_fake_user = True
     material.use_nodes = True
     material.diffuse_color = (*color, 1.0)
     material.metallic = 0.0
