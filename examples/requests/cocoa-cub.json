@@ -1,0 +1,35 @@
+{
+  "generator": "geometric-character@1.0.0",
+  "print_profile": {
+    "preset": "fdm-0.4-standard"
+  },
+  "request_version": "build/v1",
+  "spec": {
+    "base": {
+      "enabled": true,
+      "height_mm": 3,
+      "margin_mm": 2,
+      "shape": "round"
+    },
+    "features": {
+      "ears": "round",
+      "eyes": "dot",
+      "tail": "stub"
+    },
+    "height_mm": 70,
+    "name": "cocoa-cub",
+    "palette": [
+      "#7A4B2A",
+      "#E9C9A8",
+      "#2A1B12"
+    ],
+    "pose": "standing",
+    "proportions": {
+      "head_scale": 1.8,
+      "leg_length": 0.7,
+      "torso_width": 1.25
+    },
+    "spec_version": "character/v1",
+    "style": "chibi"
+  }
+}

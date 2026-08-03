@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/joseph-robert-f/headless-blender-character-builder/schemas/character-spec-v1.schema.json",
+  "title": "CharacterSpec v1",
+  "description": "Bounded description of one original geometric character. Every value is a declarative parameter; no code, path, URL, or Blender setting is accepted.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["spec_version", "name", "style", "height_mm"],
+  "properties": {
+    "spec_version": {
+      "const": "character/v1"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9 _.-]*$",
+      "description": "Display name. The build derives a filesystem-safe slug from this value."
+    },
+    "style": {
+      "enum": ["geometric", "low_poly", "chibi"],
+      "description": "Bounded preset family. Controls silhouette rounding, bevel width, and default proportions."
+    },
+    "height_mm": {
+      "type": "number",
+      "minimum": 25,
+      "maximum": 250,
+      "description": "Target total height of the printed model in millimetres, including the base when one is enabled."
+    },
+    "pose": {
+      "enum": ["standing", "t_pose", "wide_stance"],
+      "default": "standing"
+    },
+    "palette": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "pattern": "^#[0-9A-Fa-f]{6}$"
+      },
+      "default": ["#E87532", "#FFF3D6", "#2E3138"],
+      "description": "sRGB hex colours. Slot 0 is the body, slot 1 the accent, slot 2 the detail/face colour. Missing slots repeat the last entry."
+    },
+    "proportions": {
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "properties": {
+        "head_scale": {"type": "number", "minimum": 0.5, "maximum": 2.2, "default": 1.0},
+        "torso_width": {"type": "number", "minimum": 0.6, "maximum": 1.8, "default": 1.0},
+        "limb_scale": {"type": "number", "minimum": 0.6, "maximum": 1.6, "default": 1.0},
+        "leg_length": {"type": "number", "minimum": 0.5, "maximum": 1.6, "default": 1.0}
+      }
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "properties": {
+        "eyes": {"enum": ["dot", "visor", "none"], "default": "dot"},
+        "ears": {"enum": ["none", "round", "antenna"], "default": "none"},
+        "horns": {"enum": ["none", "short", "curved"], "default": "none"},
+        "tail": {"enum": ["none", "stub", "long"], "default": "none"},
+        "backpack": {"type": "boolean", "default": false}
+      }
+    },
+    "base": {
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "description": "Optional pedestal. A base increases the first-layer footprint, which usually improves bed adhesion.",
+      "properties": {
+        "enabled": {"type": "boolean", "default": true},
+        "shape": {"enum": ["round", "square"], "default": "round"},
+        "height_mm": {"type": "number", "minimum": 1, "maximum": 20, "default": 4},
+        "margin_mm": {"type": "number", "minimum": 0, "maximum": 20, "default": 3}
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "request_version": "build/v1",
+  "generator": "geometric-character@1.0.0",
+  "spec": {"spec_version": "character/v1", "name": "x", "style": "geometric", "height_mm": 50,
+           "palette": ["red", "#GGGGGG"]}
+}

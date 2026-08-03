@@ -1,0 +1,5 @@
+{
+  "request_version": "build/v1",
+  "generator": "geometric-character@1.0.0",
+  "spec": {"spec_version": "character/v1", "style": "geometric"}
+}

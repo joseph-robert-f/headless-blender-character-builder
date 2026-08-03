@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/joseph-robert-f/headless-blender-character-builder/schemas/manifest-v1.schema.json",
+  "title": "Build manifest v1",
+  "description": "Written last and only when a build completes, so its presence marks an output directory as finished. Hashes every artifact except itself.",
+  "type": "object",
+  "required": [
+    "manifest_version",
+    "status",
+    "generator",
+    "request",
+    "execution",
+    "model",
+    "qa",
+    "artifacts"
+  ],
+  "properties": {
+    "manifest_version": {"const": "manifest/v1"},
+    "status": {
+      "enum": ["succeeded", "needs_review"],
+      "description": "needs_review means the artifacts were published but a required print check failed."
+    },
+    "generator": {
+      "type": "object",
+      "required": ["id", "version"],
+      "properties": {
+        "id": {"type": "string"},
+        "version": {"type": "string"},
+        "toolkit_version": {"type": "string"}
+      }
+    },
+    "request": {
+      "type": "object",
+      "required": ["request_sha256", "resolved_sha256", "spec_sha256", "resolved", "print_profile"],
+      "properties": {
+        "request_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Hash of the document exactly as submitted."
+        },
+        "resolved_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Hash after schema defaults are filled. Determines the geometry."
+        },
+        "spec_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "resolved": {"type": "object"},
+        "print_profile": {"type": "object"}
+      }
+    },
+    "execution": {
+      "type": "object",
+      "required": ["mode", "blender_version", "created_at", "duration_seconds"],
+      "properties": {
+        "mode": {"enum": ["native", "container"]},
+        "blender_version": {"type": "string"},
+        "python_version": {"type": "string"},
+        "platform": {"type": "string"},
+        "project_revision": {"type": ["string", "null"]},
+        "worker_image_reference": {"type": ["string", "null"]},
+        "worker_image_digest": {"type": ["string", "null"]},
+        "created_at": {"type": "string"},
+        "duration_seconds": {"type": "number", "minimum": 0}
+      }
+    },
+    "model": {
+      "type": "object",
+      "required": ["name", "slug", "dimensions_mm", "triangles"],
+      "properties": {
+        "name": {"type": "string"},
+        "slug": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+        "dimensions_mm": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {"type": "number", "exclusiveMinimum": 0}
+        },
+        "requested_height_mm": {"type": "number"},
+        "vertices": {"type": "integer", "minimum": 0},
+        "triangles": {"type": "integer", "minimum": 1},
+        "materials": {"type": "array", "items": {"type": "string"}},
+        "parts_before_union": {"type": "integer", "minimum": 1}
+      }
+    },
+    "qa": {
+      "type": "object",
+      "required": ["passed", "watertight", "manifold", "connected_shells"],
+      "properties": {
+        "passed": {"type": "boolean"},
+        "strict": {"type": "boolean"},
+        "failed_checks": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "watertight": {"type": "boolean"},
+        "manifold": {"type": "boolean"},
+        "connected_shells": {"type": "integer", "minimum": 0},
+        "positive_volume": {"type": "boolean"},
+        "minimum_thickness_mm": {"type": ["number", "null"]},
+        "solid_volume_cm3": {"type": "number"},
+        "estimated_solid_mass_g": {"type": "number"},
+        "unsupported_overhang_area_mm2": {"type": "number"},
+        "bed_contact_area_mm2": {"type": "number"}
+      }
+    },
+    "adjustments": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Changes the generator made on the caller's behalf, such as thickening a limb to meet the minimum feature size."
+    },
+    "artifacts": {
+      "type": "object",
+      "description": "Relative path to hash and size. manifest.json is excluded; a file cannot contain its own hash.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["sha256", "bytes"],
+        "properties": {
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "bytes": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  }
+}

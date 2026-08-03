@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "headless-blender-character-builder"
+version = "0.1.0"
+description = "Generate printable 3D characters from JSON with headless Blender"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+keywords = ["blender", "3d-printing", "stl", "procedural", "headless"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Manufacturing",
+  "Programming Language :: Python :: 3",
+  "Topic :: Multimedia :: Graphics :: 3D Modeling",
+]
+
+# Deliberately empty. The toolkit is stdlib-only so that the exact same modules
+# run inside Blender's bundled Python, which cannot install packages.
+dependencies = []
+
+[project.optional-dependencies]
+# `pip install .[bundled-blender]` for machines without a Blender application.
+bundled-blender = ["bpy>=4.2"]
+dev = ["ruff>=0.5", "jsonschema>=4.0"]
+
+[project.scripts]
+hbcb = "hbcb.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/joseph-robert-f/headless-blender-character-builder"
+Issues = "https://github.com/joseph-robert-f/headless-blender-character-builder/issues"
+
+[tool.setuptools]
+packages = ["hbcb", "blender"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+hbcb = ["../schemas/*.json"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+  # Line length is handled by the formatter.
+  "E501",
+  # Calls in argument defaults are idiomatic in the Blender API surface here.
+  "B008",
+  # This codebase uses %-formatting throughout, deliberately and consistently.
+  # The same modules run under Blender's bundled Python across several
+  # releases, and % avoids any question of f-string parsing differences.
+  "UP031",
+  "UP032",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"blender/__init__.py" = ["F401"]

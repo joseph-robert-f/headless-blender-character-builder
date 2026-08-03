@@ -1,0 +1,33 @@
+{
+  "generator": "geometric-character@1.0.0",
+  "print_profile": {
+    "preset": "fdm-0.4-standard"
+  },
+  "request_version": "build/v1",
+  "spec": {
+    "base": {
+      "enabled": true,
+      "height_mm": 4,
+      "margin_mm": 3,
+      "shape": "round"
+    },
+    "features": {
+      "ears": "antenna",
+      "eyes": "dot"
+    },
+    "height_mm": 95,
+    "name": "facet-bot",
+    "palette": [
+      "#E87532",
+      "#FFF3D6",
+      "#2E3138"
+    ],
+    "pose": "standing",
+    "proportions": {
+      "head_scale": 1.2,
+      "limb_scale": 0.95
+    },
+    "spec_version": "character/v1",
+    "style": "geometric"
+  }
+}

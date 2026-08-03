@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/joseph-robert-f/headless-blender-character-builder/schemas/qa-v1.schema.json",
+  "title": "Print QA report v1",
+  "description": "Geometric print-readiness measurements. Diagnostic evidence about the mesh, not a guarantee that a physical print will succeed.",
+  "type": "object",
+  "required": ["qa_version", "print_profile", "measurements", "verdict"],
+  "properties": {
+    "qa_version": {"const": "qa/v1"},
+    "print_profile": {
+      "type": "object",
+      "description": "The fully resolved printer constraints these results were judged against."
+    },
+    "measurements": {
+      "type": "object",
+      "required": ["dimensions_mm", "topology", "volume", "thickness", "overhangs"],
+      "properties": {
+        "dimensions_mm": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {"type": "number"}
+        },
+        "topology": {
+          "type": "object",
+          "required": [
+            "vertices",
+            "edges",
+            "faces",
+            "triangles",
+            "boundary_edges",
+            "non_manifold_edges",
+            "connected_shells"
+          ],
+          "properties": {
+            "vertices": {"type": "integer", "minimum": 0},
+            "edges": {"type": "integer", "minimum": 0},
+            "faces": {"type": "integer", "minimum": 0},
+            "triangles": {"type": "integer", "minimum": 0},
+            "boundary_edges": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Edges with one adjacent face. Any non-zero value means the mesh has a hole."
+            },
+            "non_manifold_edges": {"type": "integer", "minimum": 0},
+            "non_manifold_vertices": {"type": "integer", "minimum": 0},
+            "degenerate_faces": {"type": "integer", "minimum": 0},
+            "degenerate_area_mm2": {"type": "number", "minimum": 0},
+            "connected_shells": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Separate bodies. A printable model should be exactly one."
+            },
+            "surface_area_mm2": {"type": "number", "minimum": 0}
+          }
+        },
+        "volume": {
+          "type": "object",
+          "required": ["signed_volume_mm3", "positive_volume", "solid_volume_cm3"],
+          "properties": {
+            "signed_volume_mm3": {
+              "type": "number",
+              "description": "Negative means the normals point inward and the solid is inside out."
+            },
+            "positive_volume": {"type": "boolean"},
+            "solid_volume_cm3": {"type": "number", "minimum": 0},
+            "estimated_solid_mass_g": {"type": "number", "minimum": 0},
+            "material_density_g_cm3": {"type": "number"},
+            "note": {"type": "string"}
+          }
+        },
+        "thickness": {
+          "type": "object",
+          "description": "Solid thickness sampled by casting a ray inward from each face. For a strut this is the strut diameter.",
+          "required": ["samples", "min_mm", "p01_mm"],
+          "properties": {
+            "samples": {"type": "integer", "minimum": 0},
+            "escaped_rays": {"type": "integer", "minimum": 0},
+            "min_mm": {"type": ["number", "null"]},
+            "p01_mm": {
+              "type": ["number", "null"],
+              "description": "1st percentile. The pass/fail check uses this rather than the raw minimum so one sliver face cannot condemn a sound model."
+            },
+            "p05_mm": {"type": ["number", "null"]},
+            "median_mm": {"type": ["number", "null"]}
+          }
+        },
+        "overhangs": {
+          "type": "object",
+          "required": ["max_overhang_deg", "unsupported_area_mm2"],
+          "properties": {
+            "max_overhang_deg": {"type": "number"},
+            "steepest_overhang_deg": {"type": "number"},
+            "unsupported_area_mm2": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Downward-facing area steeper than the profile allows, excluding faces resting on the build plate."
+            },
+            "downward_area_mm2": {"type": "number", "minimum": 0},
+            "bed_contact_area_mm2": {"type": "number", "minimum": 0}
+          }
+        }
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "required": ["checks", "failed", "warnings", "passed"],
+      "properties": {
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "passed", "required", "detail"],
+            "properties": {
+              "name": {"type": "string"},
+              "passed": {"type": "boolean"},
+              "required": {
+                "type": "boolean",
+                "description": "Only required checks can fail a build; the rest are warnings."
+              },
+              "detail": {"type": "string"}
+            }
+          }
+        },
+        "failed": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "passed": {"type": "boolean"},
+        "strict": {"type": "boolean"}
+      }
+    },
+    "adjustments": {"type": "array", "items": {"type": "string"}}
+  }
+}

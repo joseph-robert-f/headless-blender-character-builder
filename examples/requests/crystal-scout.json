@@ -1,0 +1,35 @@
+{
+  "generator": "geometric-character@1.0.0",
+  "print_profile": {
+    "preset": "fdm-0.4-standard"
+  },
+  "request_version": "build/v1",
+  "spec": {
+    "base": {
+      "enabled": true,
+      "height_mm": 4,
+      "margin_mm": 4,
+      "shape": "square"
+    },
+    "features": {
+      "backpack": true,
+      "ears": "antenna",
+      "eyes": "visor"
+    },
+    "height_mm": 120,
+    "name": "crystal-scout",
+    "palette": [
+      "#3E7CB1",
+      "#D8E2E9",
+      "#1B2A33"
+    ],
+    "pose": "wide_stance",
+    "proportions": {
+      "head_scale": 0.9,
+      "leg_length": 1.25,
+      "torso_width": 0.85
+    },
+    "spec_version": "character/v1",
+    "style": "low_poly"
+  }
+}

@@ -21,7 +21,15 @@ Do not call an unimplemented feature blocked, and do not mark a gate passed from
 
 ## 2. Current state
 
-The initial public repository is a planning scaffold. It does **not** yet contain the generic generator, schemas, Dockerfiles, Make targets, STL/manifest/QA pipeline, API, Compose stack, VPS package, or CI described in `PLAN.md`.
+> **Updated.** The repository is no longer a planning scaffold. The generator,
+> schemas, Dockerfile, Make targets, STL/manifest/QA pipeline, and CI now
+> exist and are tested; the API, Compose stack, and VPS package do not and have
+> been deferred out of v0.1. The executable status of every claim is recorded in
+> [docs/REVIEW.md](docs/REVIEW.md#verification-status), which supersedes the
+> `NOT_IMPLEMENTED` statuses below for the builder. The remaining text in this
+> document describes the review process for the deferred service work.
+
+Historical note, from the initial publication: the repository was a planning scaffold. It did **not** contain the generic generator, schemas, Dockerfiles, Make targets, STL/manifest/QA pipeline, API, Compose stack, VPS package, or CI described in `PLAN.md`.
 
 The local research workspace contains a real native-Blender proof of concept, but its hardcoded branded scripts and generated artifacts are intentionally held out of the first public commit until they are generalized and sanitized. They are baseline implementation material, not v0.1 acceptance evidence.
 

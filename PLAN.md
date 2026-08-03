@@ -1,8 +1,22 @@
 # Open-Source Headless Blender Character Builder
 
-Status: **Execution-ready v0.1 build plan**
+Status: **partially implemented; scope revised**
 
 Last updated: **July 31, 2026**
+
+> **Read [docs/REVIEW.md](docs/REVIEW.md) first.** The deterministic builder
+> described here (milestones M0–M2, work packages G0–G4) is implemented and
+> tested. The asynchronous service (M3–M5, G5–G8: FastAPI, Postgres, Redis,
+> MinIO, Compose, the VPS package) has been **deferred out of v0.1** so that a
+> usable release does not sit behind infrastructure that produces no geometry.
+> Its design below is unchanged and remains the intended direction.
+>
+> Where this document and the implementation disagree, the implementation and
+> the `schemas/` directory are authoritative. Known divergences, all
+> deliberate: the request carries a `print_profile` that drives generation as
+> well as QA, rather than fixed 1.2 mm / 2.0 mm constants; `CharacterSpec` has
+> no `seed` field, because the generator makes no random choices; and there are
+> two additional output profiles (`print-only-v1`, `advisory-v1`).
 
 This document is the authoritative scope for the first public implementation. A future `/goal` run should execute the release-blocking milestones **M0 through M5 in order**, use the defaults in Section 17 unless the user explicitly overrides them, and leave the repository in a locally verified, publication-ready state. Post-v0.1 work is context, not part of that completion target.
 

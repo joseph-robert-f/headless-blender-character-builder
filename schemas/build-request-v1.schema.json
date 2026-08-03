@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/joseph-robert-f/headless-blender-character-builder/schemas/build-request-v1.schema.json",
+  "title": "BuildRequest v1",
+  "description": "Complete, self-contained build input accepted by the CLI and by any future HTTP service. Extra properties are rejected everywhere.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request_version", "generator", "spec"],
+  "properties": {
+    "request_version": {
+      "const": "build/v1"
+    },
+    "generator": {
+      "enum": ["geometric-character@1.0.0"],
+      "description": "Closed enum of trusted, reviewed generators. Callers cannot supply code."
+    },
+    "spec": {
+      "$ref": "character-spec-v1.schema.json"
+    },
+    "print_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "description": "Printer constraints. These drive both generation minimums and pass/fail QA thresholds, so a model built for a 0.4 mm FDM nozzle is validated against 0.4 mm FDM rules.",
+      "properties": {
+        "preset": {
+          "enum": ["fdm-0.4-standard", "fdm-0.6-draft", "fdm-0.2-fine", "resin-standard", "custom"],
+          "default": "fdm-0.4-standard"
+        },
+        "technology": {"enum": ["fdm", "resin"]},
+        "nozzle_mm": {"type": "number", "minimum": 0.1, "maximum": 1.2},
+        "layer_height_mm": {"type": "number", "minimum": 0.01, "maximum": 0.6},
+        "min_wall_mm": {"type": "number", "minimum": 0.2, "maximum": 5.0},
+        "min_feature_mm": {"type": "number", "minimum": 0.3, "maximum": 10.0},
+        "max_overhang_deg": {"type": "number", "minimum": 20, "maximum": 80},
+        "material_density_g_cm3": {"type": "number", "minimum": 0.5, "maximum": 5.0}
+      }
+    },
+    "output_profile": {
+      "enum": ["complete-v1", "print-only-v1"],
+      "default": "complete-v1",
+      "description": "complete-v1 publishes the full artifact tree. print-only-v1 skips renders for fast headless batches."
+    },
+    "render_profile": {
+      "enum": ["diagnostic-v1", "none"],
+      "default": "diagnostic-v1"
+    },
+    "quality_profile": {
+      "enum": ["geometry-v1", "advisory-v1"],
+      "default": "geometry-v1",
+      "description": "geometry-v1 fails the build when a required print check fails. advisory-v1 records the same measurements but only warns."
+    }
+  }
+}
