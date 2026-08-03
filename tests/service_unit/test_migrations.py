@@ -56,11 +56,16 @@ class MigrationCatalogTests(unittest.TestCase):
         migrations = load_migrations()
         self.assertEqual(
             [migration.version for migration in migrations],
-            ["0001_g5_foundation", "0002_g6_outbox_counter"],
+            [
+                "0001_g5_foundation",
+                "0002_g6_outbox_counter",
+                "0003_g8_retention",
+            ],
         )
         self.assertTrue(all(len(migration.sha256) == 64 for migration in migrations))
         self.assertIn("CREATE TABLE hbcb.builds", migrations[0].sql)
         self.assertIn("ALTER COLUMN dispatch_count TYPE bigint", migrations[1].sql)
+        self.assertIn("CREATE TABLE hbcb.artifact_deletion_queue", migrations[2].sql)
 
     def test_schema_contains_all_durable_models_and_release_constraints(self) -> None:
         sql = load_migrations()[0].sql
@@ -109,7 +114,11 @@ class MigrationRunnerTests(unittest.TestCase):
         first = apply_postgres_migrations(connection)
         self.assertEqual(
             first.applied,
-            ("0001_g5_foundation", "0002_g6_outbox_counter"),
+            (
+                "0001_g5_foundation",
+                "0002_g6_outbox_counter",
+                "0003_g8_retention",
+            ),
         )
         self.assertFalse(first.already_current)
         self.assertEqual(connection.commits, 1)
@@ -122,7 +131,7 @@ class MigrationRunnerTests(unittest.TestCase):
             for sql, parameters in connection.executions
             if "INSERT INTO hbcb.schema_migrations" in sql
         ]
-        self.assertEqual(len(inserts), 2)
+        self.assertEqual(len(inserts), 3)
 
     def test_recorded_checksum_drift_rolls_back(self) -> None:
         connection = FakeConnection()

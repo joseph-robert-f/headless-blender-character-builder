@@ -29,7 +29,30 @@ WORKER_TABLE_PRIVILEGES = {
     "queue_outbox": ("SELECT", "INSERT", "UPDATE"),
 }
 
+MAINTENANCE_TABLE_PRIVILEGES = {
+    "artifact_deletion_attempts": ("INSERT",),
+    "artifact_deletion_queue": ("SELECT", "INSERT", "UPDATE"),
+    "artifact_restore_remaps": ("INSERT",),
+    "artifacts": ("SELECT",),
+    "builds": ("SELECT", "DELETE"),
+}
+
+# PostgreSQL locking clauses require UPDATE privilege on at least one selected
+# table column.  Retention locks terminal build rows before it queues their
+# exact artifact versions and deletes them.  Grant only an operationally inert
+# timestamp column rather than table-wide UPDATE; status, finish time, request,
+# and identity fields remain non-updatable by the maintenance role.
+MAINTENANCE_COLUMN_PRIVILEGES = {
+    "artifacts": {"version_id": ("UPDATE",)},
+    "builds": {"updated_at": ("UPDATE",)},
+}
+
 RUNTIME_SEQUENCES = ("build_events_id_seq", "queue_outbox_id_seq")
+MAINTENANCE_SEQUENCES = (
+    "artifact_deletion_attempts_id_seq",
+    "artifact_deletion_queue_id_seq",
+    "artifact_restore_remaps_id_seq",
+)
 MIGRATOR_DEFAULT_OBJECTS = ("TABLES", "SEQUENCES")
 
 
@@ -38,6 +61,7 @@ class DatabaseInitializationResult:
     applied_migrations: Tuple[str, ...]
     api_tables: Tuple[str, ...]
     worker_tables: Tuple[str, ...]
+    maintenance_tables: Tuple[str, ...]
 
 
 def _close(connection: Any) -> None:
@@ -53,6 +77,7 @@ def _ensure_roles(connection: Any, config: DatabaseInitializationConfig) -> None
     roles = (
         (config.api_username, config.api_password.reveal()),
         (config.worker_username, config.worker_password.reveal()),
+        (config.maintenance_username, config.maintenance_password.reveal()),
         (config.migrator_username, config.migrator_password.reveal()),
     )
     try:
@@ -91,7 +116,12 @@ def _ensure_roles(connection: Any, config: DatabaseInitializationConfig) -> None
                 sql.Identifier(config.database_name)
             )
         )
-        for username in (config.api_username, config.worker_username, config.migrator_username):
+        for username in (
+            config.api_username,
+            config.worker_username,
+            config.maintenance_username,
+            config.migrator_username,
+        ):
             cursor.execute(
                 sql.SQL("REVOKE ALL PRIVILEGES ON DATABASE {} FROM {}").format(
                     sql.Identifier(config.database_name), sql.Identifier(username)
@@ -153,6 +183,7 @@ def _grant_runtime_privileges(
             sql.SQL("PUBLIC"),
             sql.Identifier(config.api_username),
             sql.Identifier(config.worker_username),
+            sql.Identifier(config.maintenance_username),
         )
         for object_type in MIGRATOR_DEFAULT_OBJECTS:
             for grantee in default_grantees:
@@ -169,7 +200,11 @@ def _grant_runtime_privileges(
         cursor.execute("REVOKE ALL ON SCHEMA hbcb FROM PUBLIC")
         cursor.execute("REVOKE ALL ON ALL TABLES IN SCHEMA hbcb FROM PUBLIC")
         cursor.execute("REVOKE ALL ON ALL SEQUENCES IN SCHEMA hbcb FROM PUBLIC")
-        for role in (config.api_username, config.worker_username):
+        for role in (
+            config.api_username,
+            config.worker_username,
+            config.maintenance_username,
+        ):
             cursor.execute(
                 sql.SQL("REVOKE ALL ON SCHEMA hbcb FROM {}").format(sql.Identifier(role))
             )
@@ -202,6 +237,30 @@ def _grant_runtime_privileges(
                 privileges=privileges,
                 role=config.worker_username,
             )
+        for table, privileges in MAINTENANCE_TABLE_PRIVILEGES.items():
+            _grant_table(
+                cursor,
+                sql,
+                table=table,
+                privileges=privileges,
+                role=config.maintenance_username,
+            )
+        for table, columns in MAINTENANCE_COLUMN_PRIVILEGES.items():
+            for column, privileges in columns.items():
+                privilege_sql = sql.SQL(", ").join(
+                    sql.SQL("{} ({})").format(
+                        sql.SQL(privilege),
+                        sql.Identifier(column),
+                    )
+                    for privilege in privileges
+                )
+                cursor.execute(
+                    sql.SQL("GRANT {} ON TABLE hbcb.{} TO {}").format(
+                        privilege_sql,
+                        sql.Identifier(table),
+                        sql.Identifier(config.maintenance_username),
+                    )
+                )
         for role in (config.api_username, config.worker_username):
             for sequence in RUNTIME_SEQUENCES:
                 cursor.execute(
@@ -209,6 +268,13 @@ def _grant_runtime_privileges(
                         sql.Identifier(sequence), sql.Identifier(role)
                     )
                 )
+        for sequence in MAINTENANCE_SEQUENCES:
+            cursor.execute(
+                sql.SQL("GRANT USAGE ON SEQUENCE hbcb.{} TO {}").format(
+                    sql.Identifier(sequence),
+                    sql.Identifier(config.maintenance_username),
+                )
+            )
         connection.commit()
     except Exception as exc:
         try:
@@ -256,11 +322,15 @@ def initialize_database(
         applied_migrations=migration.applied,
         api_tables=tuple(sorted(API_TABLE_PRIVILEGES)),
         worker_tables=tuple(sorted(WORKER_TABLE_PRIVILEGES)),
+        maintenance_tables=tuple(sorted(MAINTENANCE_TABLE_PRIVILEGES)),
     )
 
 
 __all__ = [
     "API_TABLE_PRIVILEGES",
+    "MAINTENANCE_SEQUENCES",
+    "MAINTENANCE_TABLE_PRIVILEGES",
+    "MAINTENANCE_COLUMN_PRIVILEGES",
     "MIGRATOR_DEFAULT_OBJECTS",
     "WORKER_TABLE_PRIVILEGES",
     "DatabaseInitializationResult",

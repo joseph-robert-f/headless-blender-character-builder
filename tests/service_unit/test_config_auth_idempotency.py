@@ -4,7 +4,7 @@ import json
 import unittest
 
 from hbcb_service.auth import authorize_bearer, validate_service_token
-from hbcb_service.config import SecretValue, ServiceConfig
+from hbcb_service.config import SecretValue, ServiceConfig, WorkerConfig
 from hbcb_service.errors import AuthorizationError, ConfigurationError, IdempotencyConflict, ServiceError
 from hbcb_service.idempotency import (
     RequestFingerprint,
@@ -25,6 +25,9 @@ class ConfigurationTests(unittest.TestCase):
         config = ServiceConfig.from_environment(environment)
         self.assertEqual(config.deployment_namespace, "local")
         self.assertEqual(config.signed_url_ttl_seconds, 300)
+        self.assertFalse(config.storage_internal_secure)
+        self.assertFalse(config.storage_public_secure)
+        self.assertEqual(config.storage_region, "us-east-1")
         rendered = repr(config) + repr(config.redacted()) + str(config.api_token)
         for secret_name in (
             "HBCB_API_TOKEN",
@@ -50,7 +53,9 @@ class ConfigurationTests(unittest.TestCase):
             ("HBCB_STORAGE_INTERNAL_ENDPOINT", "http://minio:9000"),
             ("HBCB_STORAGE_PUBLIC_ENDPOINT", "localhost:0"),
             ("HBCB_STORAGE_BUCKET", "Bad_Bucket"),
-            ("HBCB_STORAGE_SECURE", "yes"),
+            ("HBCB_STORAGE_INTERNAL_SECURE", "yes"),
+            ("HBCB_STORAGE_PUBLIC_SECURE", "TRUE"),
+            ("HBCB_STORAGE_REGION", "US East 1"),
             ("HBCB_SIGNED_URL_TTL_SECONDS", "901"),
         )
         for name, value in cases:
@@ -63,6 +68,35 @@ class ConfigurationTests(unittest.TestCase):
         del environment["HBCB_REDIS_URL"]
         with self.assertRaises(ConfigurationError):
             ServiceConfig.from_environment(environment)
+
+    def test_storage_transport_settings_are_explicit_and_legacy_flag_is_rejected(self) -> None:
+        environment = valid_environment()
+        environment["HBCB_STORAGE_INTERNAL_SECURE"] = "false"
+        environment["HBCB_STORAGE_PUBLIC_SECURE"] = "true"
+        service = ServiceConfig.from_environment(environment)
+        worker = WorkerConfig.from_environment(environment)
+        self.assertFalse(service.storage_internal_secure)
+        self.assertTrue(service.storage_public_secure)
+        self.assertFalse(worker.storage_internal_secure)
+
+        for missing in (
+            "HBCB_STORAGE_INTERNAL_SECURE",
+            "HBCB_STORAGE_PUBLIC_SECURE",
+            "HBCB_STORAGE_REGION",
+        ):
+            with self.subTest(missing=missing):
+                incomplete = valid_environment()
+                del incomplete[missing]
+                with self.assertRaises(ConfigurationError):
+                    ServiceConfig.from_environment(incomplete)
+
+        legacy = valid_environment()
+        legacy["HBCB_STORAGE_SECURE"] = "false"
+        for config_type in (ServiceConfig, WorkerConfig):
+            with self.subTest(config_type=config_type.__name__):
+                with self.assertRaises(ConfigurationError) as captured:
+                    config_type.from_environment(legacy)
+                self.assertEqual(captured.exception.code, "legacy_storage_secure")
 
     def test_secret_value_never_renders_plaintext(self) -> None:
         secret = SecretValue("z" * 64)

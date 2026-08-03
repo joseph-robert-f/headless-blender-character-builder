@@ -11,7 +11,7 @@ from hbcb_service.errors import StateConflict
 from hbcb_service.migrations import load_migrations
 from hbcb_service.queue import RedisStreamsQueue
 from hbcb_service.repository import PostgresRepository
-from hbcb_service.runtime import MINIO_DEFAULT_REGION, ServiceReadiness, service_storage
+from hbcb_service.runtime import ServiceReadiness, service_storage
 from hbcb_service.structured_log import StructuredLogger
 
 try:
@@ -120,7 +120,7 @@ class RuntimeWiringTests(unittest.TestCase):
             repository.submit(facet_request_bytes(), "facet-request-0001")
         self.assertEqual(captured.exception.code, "operation_not_permitted")
 
-    def test_signer_has_fixed_region_and_never_needs_public_endpoint_discovery(self) -> None:
+    def test_storage_clients_use_explicit_transport_security_and_region(self) -> None:
         clients = [mock.Mock(), mock.Mock()]
         with mock.patch("minio.Minio", side_effect=clients) as constructor:
             storage = service_storage(
@@ -128,14 +128,18 @@ class RuntimeWiringTests(unittest.TestCase):
                 public_endpoint="localhost:9000",
                 access_key=SecretValue("hbcb_api_key", minimum=3),
                 secret_key=SecretValue("c" * 64),
-                secure=False,
+                internal_secure=False,
+                public_secure=True,
+                region="us-west-2",
                 namespace="local",
                 bucket="hbcb-artifacts",
             )
         self.assertIsNotNone(storage)
         self.assertEqual(constructor.call_count, 2)
+        self.assertFalse(constructor.call_args_list[0].kwargs["secure"])
+        self.assertTrue(constructor.call_args_list[1].kwargs["secure"])
         for call in constructor.call_args_list:
-            self.assertEqual(call.kwargs["region"], MINIO_DEFAULT_REGION)
+            self.assertEqual(call.kwargs["region"], "us-west-2")
 
 
 class StructuredLoggingTests(unittest.TestCase):

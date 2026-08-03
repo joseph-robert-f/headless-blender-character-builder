@@ -1,0 +1,197 @@
+name: hbcb-g8-recovery
+
+# Disposable, isolated restore target for the G8 recovery gate.  The invoking
+# script always overrides the project name with a unique value, supplies fresh
+# credentials through the subprocess environment, and removes all project
+# volumes on exit.  No service publishes a host port.
+
+x-hardened: &hardened
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
+services:
+  postgres:
+    image: postgres:16.9-bookworm@sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94
+    platform: linux/amd64
+    restart: "no"
+    environment:
+      POSTGRES_DB: ${HBCB_G8_DATABASE_NAME:?set recovery database name}
+      POSTGRES_USER: ${HBCB_G8_DATABASE_ADMIN_USER:?set recovery database administrator}
+      POSTGRES_PASSWORD: ${HBCB_G8_DATABASE_ADMIN_PASSWORD:?set recovery database administrator password}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 5s
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [recovery]
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.0
+
+  redis:
+    image: redis:8.0.1-bookworm@sha256:b3ad79880c88e302deb5e0fed6cee3e90c0031eb90cd936b01ef2f83ff5b3ff2
+    platform: linux/amd64
+    restart: "no"
+    environment:
+      REDIS_PASSWORD: ${HBCB_G8_REDIS_PASSWORD:?set recovery Redis password}
+      HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_G8_DEPLOYMENT_NAMESPACE:?set recovery namespace}
+    entrypoint: ["/bin/sh", "-ec"]
+    user: "999:999"
+    command:
+      - |
+        umask 077
+        printf 'appendonly yes\nappendfsync everysec\nrequirepass %s\n' "$${REDIS_PASSWORD}" > /run/redis/redis.conf
+        exec redis-server /run/redis/redis.conf
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli --no-auth-warning ping | grep -Fx PONG"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 3s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /run/redis:rw,nosuid,nodev,noexec,size=16m,mode=0700,uid=999,gid=999
+    volumes:
+      - redis-data:/data
+    networks: [recovery]
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 0.5
+
+  minio:
+    image: ${HBCB_G8_MINIO_IMAGE:?set exact local MinIO image ID}
+    platform: linux/amd64
+    restart: "no"
+    environment:
+      MINIO_ROOT_USER: ${HBCB_G8_MINIO_ROOT_USER:?set recovery MinIO root user}
+      MINIO_ROOT_PASSWORD: ${HBCB_G8_MINIO_ROOT_PASSWORD:?set recovery MinIO root password}
+      MINIO_BROWSER: "off"
+      MINIO_UPDATE: "off"
+      HBCB_STORAGE_BUCKET: ${HBCB_G8_STORAGE_BUCKET:?set recovery bucket}
+      HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_G8_DEPLOYMENT_NAMESPACE:?set recovery namespace}
+    command: ["server", "/data", "--address", ":9000"]
+    healthcheck:
+      test: ["CMD-SHELL", "mc alias set health http://127.0.0.1:9000 \"$${MINIO_ROOT_USER}\" \"$${MINIO_ROOT_PASSWORD}\" >/dev/null && mc ready health >/dev/null"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 5s
+    <<: *hardened
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777
+      - /work:rw,nosuid,nodev,noexec,size=16m,mode=0700,uid=65532,gid=65532
+    volumes:
+      - minio-data:/data
+    networks: [recovery]
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.0
+
+  minio-init:
+    image: ${HBCB_G8_MINIO_IMAGE:?set exact local MinIO image ID}
+    platform: linux/amd64
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/sh", "/opt/hbcb/minio-init.sh"]
+    environment:
+      MINIO_ROOT_USER: ${HBCB_G8_MINIO_ROOT_USER:?set recovery MinIO root user}
+      MINIO_ROOT_PASSWORD: ${HBCB_G8_MINIO_ROOT_PASSWORD:?set recovery MinIO root password}
+      HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_G8_DEPLOYMENT_NAMESPACE:?set recovery namespace}
+      HBCB_STORAGE_API_ACCESS_KEY: ${HBCB_G8_STORAGE_API_ACCESS_KEY:?set recovery API storage identity}
+      HBCB_STORAGE_API_SECRET_KEY: ${HBCB_G8_STORAGE_API_SECRET_KEY:?set recovery API storage secret}
+      HBCB_STORAGE_WORKER_ACCESS_KEY: ${HBCB_G8_STORAGE_WORKER_ACCESS_KEY:?set recovery worker storage identity}
+      HBCB_STORAGE_WORKER_SECRET_KEY: ${HBCB_G8_STORAGE_WORKER_SECRET_KEY:?set recovery worker storage secret}
+      HBCB_STORAGE_MAINTENANCE_ACCESS_KEY: ${HBCB_G8_STORAGE_MAINTENANCE_ACCESS_KEY:?set recovery maintenance storage identity}
+      HBCB_STORAGE_MAINTENANCE_SECRET_KEY: ${HBCB_G8_STORAGE_MAINTENANCE_SECRET_KEY:?set recovery maintenance storage secret}
+      HBCB_STORAGE_BUCKET: ${HBCB_G8_STORAGE_BUCKET:?set recovery bucket}
+    <<: *hardened
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777
+      - /work:rw,nosuid,nodev,noexec,size=16m,mode=0700,uid=65532,gid=65532
+    volumes:
+      # The drill sets the Compose project directory to the repository root.
+      - ./compose/minio-init.sh:/opt/hbcb/minio-init.sh:ro
+      - ./compose/minio-api-policy.json:/policies/minio-api-policy.json:ro
+      - ./compose/minio-worker-policy.json:/policies/minio-worker-policy.json:ro
+      - ./compose/minio-maintenance-policy.json:/policies/minio-maintenance-policy.json:ro
+    networks: [recovery]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.25
+
+  database-init:
+    image: ${HBCB_G8_SERVICE_IMAGE:?set exact local service image ID}
+    platform: linux/amd64
+    entrypoint: ["/usr/bin/python3", "-m", "hbcb_service.initialize_main"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_G8_DEPLOYMENT_NAMESPACE:?set recovery namespace}
+      POSTGRES_DB: ${HBCB_G8_DATABASE_NAME:?set recovery database name}
+      HBCB_DATABASE_ADMIN_URL: postgresql://${HBCB_G8_DATABASE_ADMIN_USER}:${HBCB_G8_DATABASE_ADMIN_PASSWORD}@postgres:5432/${HBCB_G8_DATABASE_NAME}
+      HBCB_DATABASE_MIGRATOR_URL: postgresql://${HBCB_G8_DATABASE_MIGRATOR_USER}:${HBCB_G8_DATABASE_MIGRATOR_PASSWORD}@postgres:5432/${HBCB_G8_DATABASE_NAME}
+      HBCB_DATABASE_API_USER: ${HBCB_G8_DATABASE_API_USER:?set recovery API database role}
+      HBCB_DATABASE_API_PASSWORD: ${HBCB_G8_DATABASE_API_PASSWORD:?set recovery API database password}
+      HBCB_DATABASE_WORKER_USER: ${HBCB_G8_DATABASE_WORKER_USER:?set recovery worker database role}
+      HBCB_DATABASE_WORKER_PASSWORD: ${HBCB_G8_DATABASE_WORKER_PASSWORD:?set recovery worker database password}
+      HBCB_DATABASE_MAINTENANCE_USER: ${HBCB_G8_DATABASE_MAINTENANCE_USER:?set recovery maintenance database role}
+      HBCB_DATABASE_MAINTENANCE_PASSWORD: ${HBCB_G8_DATABASE_MAINTENANCE_PASSWORD:?set recovery maintenance database password}
+      HBCB_DATABASE_MIGRATOR_USER: ${HBCB_G8_DATABASE_MIGRATOR_USER:?set recovery migrator database role}
+      HBCB_DATABASE_MIGRATOR_PASSWORD: ${HBCB_G8_DATABASE_MIGRATOR_PASSWORD:?set recovery migrator database password}
+    <<: *hardened
+    tmpfs:
+      - /work:rw,nosuid,nodev,noexec,size=64m,mode=0700,uid=65532,gid=65532
+    networks: [recovery]
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.5
+
+  maintenance:
+    profiles: [maintenance]
+    image: ${HBCB_G8_SERVICE_IMAGE:?set exact local service image ID}
+    platform: linux/amd64
+    entrypoint: ["/usr/bin/python3", "-m", "hbcb_service.maintenance_main"]
+    restart: "no"
+    user: "${HBCB_G8_RUNTIME_UID:?set recovery runtime UID}:${HBCB_G8_RUNTIME_GID:?set recovery runtime GID}"
+    environment:
+      HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_G8_DEPLOYMENT_NAMESPACE:?set recovery namespace}
+      HBCB_DATABASE_URL: postgresql://${HBCB_G8_DATABASE_MAINTENANCE_USER}:${HBCB_G8_DATABASE_MAINTENANCE_PASSWORD}@postgres:5432/${HBCB_G8_DATABASE_NAME}
+      HBCB_REDIS_URL: redis://:${HBCB_G8_REDIS_PASSWORD}@redis:6379/0
+      HBCB_STORAGE_INTERNAL_ENDPOINT: minio:9000
+      HBCB_STORAGE_ACCESS_KEY: ${HBCB_G8_STORAGE_MAINTENANCE_ACCESS_KEY:?set recovery maintenance storage identity}
+      HBCB_STORAGE_SECRET_KEY: ${HBCB_G8_STORAGE_MAINTENANCE_SECRET_KEY:?set recovery maintenance storage secret}
+      HBCB_STORAGE_BUCKET: ${HBCB_G8_STORAGE_BUCKET:?set recovery bucket}
+      HBCB_STORAGE_INTERNAL_SECURE: "false"
+      HBCB_STORAGE_REGION: ${HBCB_G8_STORAGE_REGION:?set recovery storage region}
+      HBCB_RETENTION_SUCCEEDED_DAYS: "30"
+      HBCB_RETENTION_OTHER_DAYS: "7"
+      HBCB_ORPHAN_GRACE_DAYS: "7"
+    volumes:
+      - ${HBCB_G8_BACKUP_ROOT:?set private recovery backup root}:/backups
+    <<: *hardened
+    tmpfs:
+      - /work:rw,nosuid,nodev,noexec,size=256m,mode=0700,uid=${HBCB_G8_RUNTIME_UID},gid=${HBCB_G8_RUNTIME_GID}
+    networks: [recovery]
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 1.0
+
+networks:
+  recovery:
+    internal: true
+
+volumes:
+  minio-data:
+  postgres-data:
+  redis-data:

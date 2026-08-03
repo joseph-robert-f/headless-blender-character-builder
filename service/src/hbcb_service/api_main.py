@@ -34,7 +34,9 @@ def create_application(environment: Optional[Mapping[str, str]] = None):
         public_endpoint=config.storage_public_endpoint,
         access_key=config.storage_access_key,
         secret_key=config.storage_secret_key,
-        secure=config.storage_secure,
+        internal_secure=config.storage_internal_secure,
+        public_secure=config.storage_public_secure,
+        region=config.storage_region,
         namespace=config.deployment_namespace,
         bucket=config.storage_bucket,
     )

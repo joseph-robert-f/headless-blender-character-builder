@@ -14,7 +14,7 @@ Overall status: **in progress**
 | G5 | M3 persistence interfaces | passed | Postgres migration/constraints, transactional outbox semantics, Redis build-ID contract, version-bound storage, scoped generated config, 55 service tests, and real PostgreSQL 16.9 gate passed |
 | G6 | M3 API and worker | passed | Auth-first bounded FastAPI, durable fenced worker lifecycle, exact immutable publication, stale-queue/outbox recovery, 154-test repository suite, Linux process-tree gate, and real PostgreSQL 16.9 gate passed |
 | G7 | M3 Compose service | passed | Hardened local stack, convergent scoped identities, real HTTP-to-Blender smoke, restart/idempotency/cancellation, Redis recovery, seven IAM denials, and direct/service parity passed |
-| G8 | M4 VPS package | pending | — |
+| G8 | M4 VPS package | passed | Digest-locked VPS overlay, HTTPS ingress, maintained external S3 boundary, scoped maintenance, fail-closed operator workflow, corrected real-service smoke, and isolated backup/restore/retention recovery gate passed |
 | G9 | M5 release candidate | pending | — |
 
 ## Evidence log
@@ -421,3 +421,48 @@ Deviation/condition:
 - No source, image, release, credential, artifact, or service was pushed, published, or deployed remotely.
 
 G7 gate result: **passed**. G8 VPS Compose overlay, TLS/auth guidance, resource and retention policy, backup/restore, upgrade/rollback, and operator smoke may begin.
+
+### G8 — hardened VPS operations and recovery
+
+Files and contracts introduced:
+
+- `deploy/vps/compose.yaml`, `Caddyfile`, environment examples, and secret guidance define a digest-locked single-host package with automatic HTTPS, bounded resources and logs, authenticated internal readiness, one worker, and no production use of the bundled local MinIO fixture;
+- production storage uses one operator-maintained, versioned S3-compatible service reached through a private operator-created network, with distinct internal object-operation and public signed-download endpoints, TLS controls, and region configuration;
+- `service/src/hbcb_service/maintenance.py`, `maintenance_main.py`, and forward migration `0003_g8_retention` implement PostgreSQL-authoritative retention, durable exact-version deletion work, restore-version remapping, full queued-build reconstruction, bounded backup inventories, and empty-target restore;
+- `scripts/vps` validates digest-pinned release locks, root-owned trust paths and ancestors, one deployment namespace, and private operator state; a persistent nonblocking `fcntl` lock serializes lifecycle, retention, backup, restore, upgrade, and rollback actions;
+- quiesced upgrades persist a target-bound `preparing` → `ready` → `upgrading` handoff before the target may write or migrate; after upgrade starts, only the exact target retry or marker-bound empty-target rollback is accepted;
+- `scripts/operator-smoke` provides an authorization-only public HTTPS probe whose bearer token comes from a protected file and whose evidence excludes tokens and signed URLs;
+- `scripts/g8-recovery-drill` and `tests/deployment/` validate merged Compose topology, Caddy, operator trust and handoff rules, maintenance IAM, source-safe backup, isolated restore, Redis reconstruction, retention, and exact object-version deletion.
+
+Verification executed:
+
+| Command | Result |
+|---|---|
+| Corrected `make service-smoke` against the final G8 local service images | exit `0`; real Blender direct and asynchronous service builds, published-artifact verification, fresh `.blend` reload plus GLB/STL import, Redis recovery, and the final IAM gate passed |
+| `PYTHONPATH=.:service/src PYTHONDONTWRITEBYTECODE=1 /private/tmp/hbcc-g1-schema-venv/bin/python -m unittest discover -s tests/service_unit -v` | exit `0`; 121 tests passed and the established Linux-only `/proc` case was skipped on macOS |
+| G8 deployment unit suite plus `tests/deployment/g8_static_gate.py` | exit `0`; 49 tests and the merged static topology/security gate passed |
+| `tests/deployment/g8_caddy_gate.py` | exit `0`; Caddy `2.11.4` configuration passed in digest-pinned image `sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648` |
+| Independent focused G8 re-audit | exit `0`; 60 database/maintenance/VPS/recovery tests and 13 operator-smoke tests passed, followed by static, AST, clean-checkout-mode, and diff checks with no remaining blocker |
+| Final post-policy `make g8-recovery` | exit `0`; `G8_RECOVERY_GATE: PASS` after quiesced backup, isolated empty-target restore, exact-version retention deletion, source restart, and target cleanup |
+
+Durable evidence:
+
+| Property | Observed result |
+|---|---|
+| Frozen deterministic base | G4 source revision `4e6f85a64fae06b15fe40787a50becb7aa53d0f96896dca5c26db9314a7e8968`, unchanged |
+| Corrected asynchronous service build | `202` in `0.068437s`; 9 artifacts and 21,517,410 bytes; manifest SHA-256 `c80d1f4279e0709d8524b5b3b997e3f081314004e3a7e299d4481e8a2535a966`; exact replay/conflict and cancellation behavior passed |
+| Final maintenance IAM | 10 PostgreSQL denials and 3 storage denials, including forbidden artifact-digest mutation and unversioned object deletion |
+| Final recovery backup | 72 exact-version artifacts totaling 172,159,264 bytes; 16,381-byte database backup with SHA-256 `571aee50e46dc69eabbb54124e3148db1b9428f6d25ba874400876a35f955d34` |
+| Restored target | 72 artifact version IDs remapped, one Redis item reconstructed, one retained build, no host ports, and 9 exact object versions removed by the retention exercise |
+| Source and cleanup invariants | source database unchanged, source services restored, and every disposable target resource removed |
+
+Ignored evidence remains at `build/service-smoke/run.1QHNJX/` and `build/g8-recovery/run.938dbf74540b/`. The recovery summary is path-safe and records no credentials, endpoints, signed URLs, requests, or child output.
+
+Deviation/condition:
+
+- The pinned local MinIO fixture requires an additional UUID-shaped `s3:versionid` condition on `s3:DeleteObject` for its single-object version-delete handler, alongside `s3:DeleteObjectVersion`. The final IAM and recovery gates prove exact-version deletion while unversioned deletion remains denied; production provider IAM must still be validated against that provider.
+- Git stores only an executable bit, not an exact `0555` mode. Clean-checkout gates therefore require executable and non-group/world-writable scripts; deployment instructions install the operator scripts as root-owned `0555` files.
+- Local gates do not claim a live VPS, DNS, ACME issuance, firewall, provider egress/IAM, off-host backup copy, or public smoke. Those actions remain conditional on explicit operator infrastructure and authorization.
+- No source, image, release, credential, artifact, or service was pushed, published, or deployed remotely.
+
+G8 gate result: **passed**. G9 release documentation, governance, CI, notices/SBOMs, preview assets, release artifacts, and clean-checkout release audit may begin.

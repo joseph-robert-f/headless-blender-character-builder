@@ -56,7 +56,8 @@ def create_supervisor(
         config.storage_internal_endpoint,
         config.storage_access_key,
         config.storage_secret_key,
-        secure=config.storage_secure,
+        secure=config.storage_internal_secure,
+        region=config.storage_region,
     )
     storage = MinioArtifactStorage(
         internal,

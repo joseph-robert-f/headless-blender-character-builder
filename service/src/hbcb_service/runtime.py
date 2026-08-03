@@ -11,9 +11,6 @@ from .repository import PostgresRepository
 from .storage import MinioArtifactStorage
 
 
-MINIO_DEFAULT_REGION = "us-east-1"
-
-
 def postgres_connection_factory(database_url: SecretValue) -> Callable[[], Any]:
     dsn = database_url.reveal()
 
@@ -47,6 +44,7 @@ def minio_client(
     secret_key: SecretValue,
     *,
     secure: bool,
+    region: str,
 ) -> Any:
     from minio import Minio
     import urllib3
@@ -61,11 +59,10 @@ def minio_client(
         access_key=access_key.reveal(),
         secret_key=secret_key.reveal(),
         secure=secure,
-        # Pin the local MinIO default so presigning is pure computation.  If
-        # omitted, minio-py first queries GetBucketLocation through the public
-        # URL (localhost from a host-facing signed URL), which is unreachable
-        # from the API container.
-        region=MINIO_DEFAULT_REGION,
+        # Pin the configured bucket region so presigning is pure computation.
+        # If omitted, minio-py first queries GetBucketLocation through the
+        # public endpoint, which need not be reachable from the API process.
+        region=region,
         http_client=http_client,
     )
 
@@ -76,7 +73,9 @@ def service_storage(
     public_endpoint: str,
     access_key: SecretValue,
     secret_key: SecretValue,
-    secure: bool,
+    internal_secure: bool,
+    public_secure: bool,
+    region: str,
     namespace: str,
     bucket: str,
 ) -> MinioArtifactStorage:
@@ -84,13 +83,15 @@ def service_storage(
         internal_endpoint,
         access_key,
         secret_key,
-        secure=secure,
+        secure=internal_secure,
+        region=region,
     )
     signer = minio_client(
         public_endpoint,
         access_key,
         secret_key,
-        secure=secure,
+        secure=public_secure,
+        region=region,
     )
     return MinioArtifactStorage(
         internal,
@@ -164,7 +165,6 @@ class ServiceReadiness:
 
 __all__ = [
     "ServiceReadiness",
-    "MINIO_DEFAULT_REGION",
     "minio_client",
     "postgres_connection_factory",
     "redis_client",

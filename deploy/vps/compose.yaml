@@ -1,0 +1,276 @@
+name: hbcb-vps
+
+# Production overlay for compose.yaml.  It intentionally contains no build
+# contexts and no production object-store implementation.  Operators provide
+# digest-pinned release images, per-role protected env files, and a private
+# Docker network that reaches a maintained, versioned S3-compatible service.
+
+x-vps-logging: &vps-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+x-vps-service: &vps-service
+  restart: unless-stopped
+  logging: *vps-logging
+
+services:
+  postgres:
+    <<: *vps-service
+    environment: !reset {}
+    env_file: !override
+      - path: ${HBCB_VPS_SECRETS_DIR:?set HBCB_VPS_SECRETS_DIR}/postgres.env
+        required: true
+    ports: !reset []
+    networks: !override
+      - db
+    pids_limit: 512
+    mem_limit: 4g
+    cpus: 2.0
+
+  redis:
+    <<: *vps-service
+    environment: !reset {}
+    env_file: !override
+      - path: ${HBCB_VPS_SECRETS_DIR:?set HBCB_VPS_SECRETS_DIR}/redis.env
+        required: true
+    ports: !reset []
+    networks: !override
+      - queue
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.0
+
+  # The bundled MinIO image is a local compatibility fixture only.  The VPS
+  # path never starts it unless an operator deliberately enables the forbidden
+  # production-inapplicable profile for an isolated evaluation.
+  minio:
+    profiles: !override [local-fixture]
+    environment: !override
+      MINIO_ROOT_USER: disabled-local-fixture
+      MINIO_ROOT_PASSWORD: disabled-local-fixture
+    ports: !reset []
+    networks: !override
+      - storage-local
+    logging: *vps-logging
+
+  minio-init:
+    profiles: !override [local-fixture]
+    environment: !override
+      MINIO_ROOT_USER: disabled-local-fixture
+      MINIO_ROOT_PASSWORD: disabled-local-fixture
+      HBCB_DEPLOYMENT_NAMESPACE: disabled
+      HBCB_STORAGE_API_ACCESS_KEY: disabled_api
+      HBCB_STORAGE_API_SECRET_KEY: disabled-local-fixture
+      HBCB_STORAGE_WORKER_ACCESS_KEY: disabled_worker
+      HBCB_STORAGE_WORKER_SECRET_KEY: disabled-local-fixture
+      HBCB_STORAGE_MAINTENANCE_ACCESS_KEY: disabled_maintenance
+      HBCB_STORAGE_MAINTENANCE_SECRET_KEY: disabled-local-fixture-maintenance
+      HBCB_STORAGE_BUCKET: disabled-local-fixture
+    networks: !override
+      - storage-local
+    logging: *vps-logging
+
+  database-init:
+    build: !reset null
+    image: ${HBCB_API_IMAGE:?set digest-pinned HBCB_API_IMAGE}
+    user: "65532:65532"
+    environment: !override
+      HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_DEPLOYMENT_NAMESPACE:?set HBCB_DEPLOYMENT_NAMESPACE}
+      POSTGRES_DB: ${POSTGRES_DB:-hbcb}
+    env_file: !override
+      - path: ${HBCB_VPS_SECRETS_DIR:?set HBCB_VPS_SECRETS_DIR}/database-init.env
+        required: true
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+    networks: !override
+      - db
+    logging: *vps-logging
+
+  api:
+    <<: *vps-service
+    build: !reset null
+    image: ${HBCB_API_IMAGE:?set digest-pinned HBCB_API_IMAGE}
+    user: "65532:65532"
+    environment: !override
+      HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_DEPLOYMENT_NAMESPACE:?set HBCB_DEPLOYMENT_NAMESPACE}
+      HBCB_STORAGE_INTERNAL_ENDPOINT: ${HBCB_STORAGE_INTERNAL_ENDPOINT:?set private S3 endpoint}
+      HBCB_STORAGE_PUBLIC_ENDPOINT: ${HBCB_STORAGE_PUBLIC_ENDPOINT:?set public S3 endpoint}
+      HBCB_STORAGE_INTERNAL_SECURE: ${HBCB_STORAGE_INTERNAL_SECURE:-true}
+      HBCB_STORAGE_PUBLIC_SECURE: ${HBCB_STORAGE_PUBLIC_SECURE:-true}
+      HBCB_STORAGE_REGION: ${HBCB_STORAGE_REGION:?set S3 region}
+      HBCB_STORAGE_BUCKET: ${HBCB_STORAGE_BUCKET:?set artifact bucket}
+      HBCB_SIGNED_URL_TTL_SECONDS: ${HBCB_SIGNED_URL_TTL_SECONDS:-300}
+    env_file: !override
+      - path: ${HBCB_VPS_SECRETS_DIR:?set HBCB_VPS_SECRETS_DIR}/api.env
+        required: true
+    healthcheck:
+      # Production readiness must exercise PostgreSQL, Redis, migration, and
+      # storage checks. The bearer value is read inside the container so it is
+      # never expanded into the Compose model or healthcheck command line.
+      test: !override
+        - CMD
+        - /usr/bin/python3
+        - -c
+        - >-
+          import json,os,urllib.request;
+          request=urllib.request.Request('http://127.0.0.1:8080/readyz',headers={'Authorization':'Bearer '+os.environ['HBCB_API_TOKEN']});
+          assert json.load(urllib.request.urlopen(request,timeout=2)) == {'status':'ready'}
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 5s
+    depends_on: !override
+      database-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports: !reset []
+    networks: !override
+      - api-ingress
+      - db
+      - queue
+      - storage-private
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 2.0
+
+  worker:
+    <<: *vps-service
+    build: !reset null
+    image: ${HBCB_WORKER_IMAGE:?set digest-pinned HBCB_WORKER_IMAGE}
+    user: "65532:65532"
+    environment: !override
+      HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_DEPLOYMENT_NAMESPACE:?set HBCB_DEPLOYMENT_NAMESPACE}
+      HBCB_STORAGE_INTERNAL_ENDPOINT: ${HBCB_STORAGE_INTERNAL_ENDPOINT:?set private S3 endpoint}
+      HBCB_STORAGE_INTERNAL_SECURE: ${HBCB_STORAGE_INTERNAL_SECURE:-true}
+      HBCB_STORAGE_REGION: ${HBCB_STORAGE_REGION:?set S3 region}
+      HBCB_STORAGE_BUCKET: ${HBCB_STORAGE_BUCKET:?set artifact bucket}
+      HBCB_WORKER_IMAGE_REFERENCE: ${HBCB_BUILDER_IMAGE_REFERENCE:?set digest-pinned builder reference}
+      HBCB_WORKER_IMAGE_ID: ${HBCB_BUILDER_IMAGE_ID:?set builder config image ID}
+    env_file: !override
+      - path: ${HBCB_VPS_SECRETS_DIR:?set HBCB_VPS_SECRETS_DIR}/worker.env
+        required: true
+    depends_on: !override
+      database-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports: !reset []
+    networks: !override
+      - db
+      - queue
+      - storage-private
+    pids_limit: 512
+    mem_limit: 4g
+    cpus: 4.0
+    deploy:
+      replicas: 1
+
+  service-test:
+    profiles: !override [local-test]
+    ports: !reset []
+    networks: !override
+      - db
+      - queue
+      - storage-private
+
+  maintenance:
+    profiles: !override [maintenance]
+    build: !reset null
+    image: ${HBCB_API_IMAGE:?set digest-pinned HBCB_API_IMAGE}
+    platform: linux/amd64
+    init: true
+    read_only: true
+    cap_drop: !override [ALL]
+    security_opt: !override [no-new-privileges:true]
+    entrypoint: ["/usr/bin/python3", "-m", "hbcb_service.maintenance_main"]
+    environment: !override
+      HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_DEPLOYMENT_NAMESPACE:?set HBCB_DEPLOYMENT_NAMESPACE}
+      HBCB_STORAGE_INTERNAL_ENDPOINT: ${HBCB_STORAGE_INTERNAL_ENDPOINT:?set private S3 endpoint}
+      HBCB_STORAGE_INTERNAL_SECURE: ${HBCB_STORAGE_INTERNAL_SECURE:-true}
+      HBCB_STORAGE_REGION: ${HBCB_STORAGE_REGION:?set S3 region}
+      HBCB_STORAGE_BUCKET: ${HBCB_STORAGE_BUCKET:?set artifact bucket}
+      HBCB_RETENTION_SUCCEEDED_DAYS: ${HBCB_RETENTION_SUCCEEDED_DAYS:-30}
+      HBCB_RETENTION_OTHER_DAYS: ${HBCB_RETENTION_OTHER_DAYS:-7}
+      HBCB_ORPHAN_GRACE_DAYS: ${HBCB_ORPHAN_GRACE_DAYS:-7}
+    env_file: !override
+      - path: ${HBCB_VPS_SECRETS_DIR:?set HBCB_VPS_SECRETS_DIR}/maintenance.env
+        required: true
+    depends_on: !override
+      database-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    tmpfs: !override
+      - /work:rw,nosuid,nodev,noexec,size=256m,mode=0700,uid=65532,gid=65532
+    networks: !override
+      - db
+      - queue
+      - storage-private
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 1.0
+    user: "65532:65532"
+    restart: "no"
+    logging: *vps-logging
+
+  caddy:
+    <<: *vps-service
+    image: ${HBCB_CADDY_IMAGE:?set digest-pinned HBCB_CADDY_IMAGE}
+    platform: linux/amd64
+    init: true
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    # The official image marks /usr/bin/caddy with cap_net_bind_service.  Linux
+    # refuses to exec that file after the capability is removed from the
+    # bounding set, even though this config listens on high container ports.
+    # Retain only that image-required capability; all others stay dropped.
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    environment:
+      HBCB_API_DOMAIN: ${HBCB_API_DOMAIN:?set API domain}
+      HBCB_ACME_EMAIL: ${HBCB_ACME_EMAIL:?set ACME account email}
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - ./deploy/vps/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${HBCB_VPS_STATE_DIR:?set HBCB_VPS_STATE_DIR}/caddy-data:/data
+      - ${HBCB_VPS_STATE_DIR:?set HBCB_VPS_STATE_DIR}/caddy-config:/config
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777
+    ports:
+      - "80:8080"
+      - "443:8443"
+      - "443:8443/udp"
+    networks:
+      - edge
+      - api-ingress
+    pids_limit: 256
+    mem_limit: 512m
+    cpus: 1.0
+
+networks:
+  edge:
+    driver: bridge
+  api-ingress:
+    internal: true
+  db:
+    internal: true
+  queue:
+    internal: true
+  storage-private:
+    external: true
+    name: ${HBCB_STORAGE_NETWORK:?set private storage network}
+  storage-local:
+    internal: true

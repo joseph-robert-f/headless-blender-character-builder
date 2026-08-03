@@ -3,8 +3,8 @@
 
 The gate runs in the one-shot ``service-test`` container.  Database probes are
 transactional and always rolled back.  Storage probes target a reserved object
-key beneath the configured deployment prefix; they must be rejected by MinIO
-before any object can be created or deleted.
+key beneath the configured deployment prefix and exercise forbidden broad
+operations without creating an object version.
 """
 
 from __future__ import annotations
@@ -37,12 +37,12 @@ def required(name: str) -> str:
     return value
 
 
-def parse_secure(value: str) -> bool:
+def parse_secure(name: str, value: str) -> bool:
     if value == "true":
         return True
     if value == "false":
         return False
-    raise GateFailure("HBCB_STORAGE_SECURE must be exactly true or false")
+    raise GateFailure(f"{name} must be exactly true or false")
 
 
 def expect_database_denied(dsn: str, label: str, statement: str) -> str:
@@ -137,19 +137,26 @@ def expect_storage_denied(label: str, operation: Callable[[], object]) -> None:
 def main() -> None:
     api_database_url = required("HBCB_IAM_DATABASE_API_URL")
     worker_database_url = required("HBCB_IAM_DATABASE_WORKER_URL")
+    maintenance_database_url = required("HBCB_IAM_DATABASE_MAINTENANCE_URL")
     endpoint = required("HBCB_STORAGE_INTERNAL_ENDPOINT")
     bucket = required("HBCB_STORAGE_BUCKET")
     namespace = required("HBCB_DEPLOYMENT_NAMESPACE")
-    secure = parse_secure(required("HBCB_STORAGE_SECURE"))
+    secure = parse_secure(
+        "HBCB_STORAGE_INTERNAL_SECURE",
+        required("HBCB_STORAGE_INTERNAL_SECURE"),
+    )
+    region = required("HBCB_STORAGE_REGION")
     api_access_key = required("HBCB_STORAGE_API_ACCESS_KEY")
     api_secret_key = required("HBCB_STORAGE_API_SECRET_KEY")
     worker_access_key = required("HBCB_STORAGE_WORKER_ACCESS_KEY")
     worker_secret_key = required("HBCB_STORAGE_WORKER_SECRET_KEY")
+    maintenance_access_key = required("HBCB_STORAGE_MAINTENANCE_ACCESS_KEY")
+    maintenance_secret_key = required("HBCB_STORAGE_MAINTENANCE_SECRET_KEY")
 
     if bucket != EXPECTED_BUCKET or namespace != EXPECTED_NAMESPACE:
         raise GateFailure("storage target does not match the fixed G7 local policy scope")
-    if api_access_key == worker_access_key:
-        raise GateFailure("API and worker storage identities are not distinct")
+    if len({api_access_key, worker_access_key, maintenance_access_key}) != 3:
+        raise GateFailure("storage identities are not distinct")
 
     api_role = expect_database_denied(
         api_database_url,
@@ -176,8 +183,33 @@ def main() -> None:
         "worker DELETE builds",
         "DELETE FROM hbcb.builds WHERE false",
     )
-    if api_role == worker_role:
-        raise GateFailure("API and worker database identities are not distinct")
+    maintenance_role = expect_database_denied(
+        maintenance_database_url,
+        "maintenance SELECT idempotency_keys",
+        "SELECT 1 FROM hbcb.idempotency_keys WHERE false",
+    )
+    expect_database_denied(
+        maintenance_database_url,
+        "maintenance SELECT deletion attempts",
+        "SELECT 1 FROM hbcb.artifact_deletion_attempts WHERE false",
+    )
+    expect_database_denied(
+        maintenance_database_url,
+        "maintenance UPDATE build status",
+        "UPDATE hbcb.builds SET status = status WHERE false",
+    )
+    expect_database_denied(
+        maintenance_database_url,
+        "maintenance UPDATE artifact hash",
+        "UPDATE hbcb.artifacts SET sha256 = sha256 WHERE false",
+    )
+    expect_database_denied(
+        maintenance_database_url,
+        "maintenance CREATE TEMP TABLE",
+        "CREATE TEMP TABLE hbcb_g8_maintenance_probe (value integer) ON COMMIT DROP",
+    )
+    if len({api_role, worker_role, maintenance_role}) != 3:
+        raise GateFailure("runtime database identities are not distinct")
 
     try:
         import urllib3
@@ -195,12 +227,16 @@ def main() -> None:
         timeout=urllib3.Timeout(connect=3.0, read=5.0),
         retries=False,
     )
+    maintenance_http = urllib3.PoolManager(
+        timeout=urllib3.Timeout(connect=3.0, read=5.0),
+        retries=False,
+    )
     api_client = Minio(
         endpoint,
         access_key=api_access_key,
         secret_key=api_secret_key,
         secure=secure,
-        region="us-east-1",
+        region=region,
         http_client=api_http,
     )
     worker_client = Minio(
@@ -208,8 +244,16 @@ def main() -> None:
         access_key=worker_access_key,
         secret_key=worker_secret_key,
         secure=secure,
-        region="us-east-1",
+        region=region,
         http_client=worker_http,
+    )
+    maintenance_client = Minio(
+        endpoint,
+        access_key=maintenance_access_key,
+        secret_key=maintenance_secret_key,
+        secure=secure,
+        region=region,
+        http_client=maintenance_http,
     )
     reserved_key = (
         f"{namespace}/v1/builds/{RESERVED_BUILD_ID}/attempts/"
@@ -231,17 +275,22 @@ def main() -> None:
             "worker DeleteObject",
             lambda: worker_client.remove_object(bucket, reserved_key),
         )
+        expect_storage_denied(
+            "maintenance DeleteObject without exact version",
+            lambda: maintenance_client.remove_object(bucket, reserved_key),
+        )
     finally:
         api_http.clear()
         worker_http.clear()
+        maintenance_http.clear()
 
     print(
         json.dumps(
             {
-                "database_denials": 5,
+                "database_denials": 10,
                 "gate": "G7_IAM_GATE",
                 "result": "PASS",
-                "storage_denials": 2,
+                "storage_denials": 3,
             },
             sort_keys=True,
             separators=(",", ":"),

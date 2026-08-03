@@ -8,6 +8,9 @@
 *.pfx
 secrets/
 credentials/
+/deploy/vps/vps.env
+/deploy/vps/release.lock.env
+/backups/
 
 # Generated build and service state
 /build/

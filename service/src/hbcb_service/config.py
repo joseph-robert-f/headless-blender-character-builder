@@ -18,8 +18,10 @@ DATABASE_ROLE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 DATABASE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,63}$")
 BUCKET_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{1,61}[a-z0-9])$")
 ENDPOINT_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::[0-9]{1,5})?$")
+REGION_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 HEX_SECRET_PATTERN = re.compile(r"^[0-9a-f]{64,256}$")
 PLACEHOLDER_MARKERS = ("change-me", "replace-me", "example-secret", "placeholder")
+LEGACY_STORAGE_SECURE = "HBCB_STORAGE_SECURE"
 
 
 class SecretValue:
@@ -107,11 +109,26 @@ def _storage_bucket(environment: Mapping[str, str]) -> str:
     return bucket
 
 
-def _storage_secure(environment: Mapping[str, str]) -> bool:
-    secure_text = _required(environment, "HBCB_STORAGE_SECURE")
+def _reject_legacy_storage_secure(environment: Mapping[str, str]) -> None:
+    if LEGACY_STORAGE_SECURE in environment:
+        raise ConfigurationError(
+            "legacy_storage_secure",
+            "legacy storage secure setting is forbidden; configure each endpoint explicitly",
+        )
+
+
+def _storage_secure(environment: Mapping[str, str], name: str) -> bool:
+    secure_text = _required(environment, name)
     if secure_text not in ("true", "false"):
         raise ConfigurationError("invalid_storage_secure", "storage secure flag must be true or false")
     return secure_text == "true"
+
+
+def _storage_region(environment: Mapping[str, str]) -> str:
+    region = _required(environment, "HBCB_STORAGE_REGION")
+    if REGION_PATTERN.fullmatch(region) is None:
+        raise ConfigurationError("invalid_storage_region", "storage region is outside policy")
+    return region
 
 
 def _storage_credentials(environment: Mapping[str, str]) -> tuple[SecretValue, SecretValue]:
@@ -136,12 +153,15 @@ class ServiceConfig:
     storage_access_key: SecretValue
     storage_secret_key: SecretValue
     storage_bucket: str
-    storage_secure: bool
+    storage_internal_secure: bool
+    storage_public_secure: bool
+    storage_region: str
     signed_url_ttl_seconds: int
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str]) -> "ServiceConfig":
         namespace = _namespace(environment)
+        _reject_legacy_storage_secure(environment)
         api_token_text = validate_service_token(_required(environment, "HBCB_API_TOKEN"))
         idempotency_text = _required(environment, "HBCB_IDEMPOTENCY_SECRET")
         if HEX_SECRET_PATTERN.fullmatch(idempotency_text) is None or len(idempotency_text) % 2:
@@ -154,7 +174,9 @@ class ServiceConfig:
         public_endpoint = _storage_endpoint(environment, "HBCB_STORAGE_PUBLIC_ENDPOINT")
         access_key, secret_key = _storage_credentials(environment)
         bucket = _storage_bucket(environment)
-        secure = _storage_secure(environment)
+        internal_secure = _storage_secure(environment, "HBCB_STORAGE_INTERNAL_SECURE")
+        public_secure = _storage_secure(environment, "HBCB_STORAGE_PUBLIC_SECURE")
+        region = _storage_region(environment)
         ttl_text = _required(environment, "HBCB_SIGNED_URL_TTL_SECONDS")
         if not ttl_text.isascii() or not ttl_text.isdigit():
             raise ConfigurationError("invalid_signed_url_ttl", "signed URL TTL is outside policy")
@@ -185,7 +207,9 @@ class ServiceConfig:
             storage_access_key=access_key,
             storage_secret_key=secret_key,
             storage_bucket=bucket,
-            storage_secure=secure,
+            storage_internal_secure=internal_secure,
+            storage_public_secure=public_secure,
+            storage_region=region,
             signed_url_ttl_seconds=ttl,
         )
 
@@ -196,7 +220,9 @@ class ServiceConfig:
                 "storage_bucket": self.storage_bucket,
                 "storage_internal_endpoint": self.storage_internal_endpoint,
                 "storage_public_endpoint": self.storage_public_endpoint,
-                "storage_secure": self.storage_secure,
+                "storage_internal_secure": self.storage_internal_secure,
+                "storage_public_secure": self.storage_public_secure,
+                "storage_region": self.storage_region,
                 "signed_url_ttl_seconds": self.signed_url_ttl_seconds,
                 "api_token": "<redacted>",
                 "database_url": "<redacted>",
@@ -217,10 +243,12 @@ class WorkerConfig:
     storage_access_key: SecretValue
     storage_secret_key: SecretValue
     storage_bucket: str
-    storage_secure: bool
+    storage_internal_secure: bool
+    storage_region: str
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str]) -> "WorkerConfig":
+        _reject_legacy_storage_secure(environment)
         access_key, secret_key = _storage_credentials(environment)
         return cls(
             deployment_namespace=_namespace(environment),
@@ -244,7 +272,10 @@ class WorkerConfig:
             storage_access_key=access_key,
             storage_secret_key=secret_key,
             storage_bucket=_storage_bucket(environment),
-            storage_secure=_storage_secure(environment),
+            storage_internal_secure=_storage_secure(
+                environment, "HBCB_STORAGE_INTERNAL_SECURE"
+            ),
+            storage_region=_storage_region(environment),
         )
 
 
@@ -291,6 +322,8 @@ class DatabaseInitializationConfig:
     api_password: SecretValue
     worker_username: str
     worker_password: SecretValue
+    maintenance_username: str
+    maintenance_password: SecretValue
     migrator_username: str
     migrator_password: SecretValue
 
@@ -322,6 +355,9 @@ class DatabaseInitializationConfig:
         admin_username = admin_parts.username or ""
         api_username = _database_role(environment, "HBCB_DATABASE_API_USER")
         worker_username = _database_role(environment, "HBCB_DATABASE_WORKER_USER")
+        maintenance_username = _database_role(
+            environment, "HBCB_DATABASE_MAINTENANCE_USER"
+        )
         migrator_username = _database_role(environment, "HBCB_DATABASE_MIGRATOR_USER")
         if DATABASE_ROLE_PATTERN.fullmatch(admin_username) is None:
             raise ConfigurationError("invalid_database_role", "database role is outside policy")
@@ -345,7 +381,15 @@ class DatabaseInitializationConfig:
             raise ConfigurationError(
                 "database_role_mismatch", "migrator URL does not use the configured role"
             )
-        if len({admin_username, api_username, worker_username, migrator_username}) != 4:
+        if len(
+            {
+                admin_username,
+                api_username,
+                worker_username,
+                maintenance_username,
+                migrator_username,
+            }
+        ) != 5:
             raise ConfigurationError(
                 "database_role_overlap", "database initialization roles must be distinct"
             )
@@ -367,6 +411,12 @@ class DatabaseInitializationConfig:
                 minimum=32,
                 maximum=128,
             ),
+            maintenance_username=maintenance_username,
+            maintenance_password=SecretValue(
+                _required(environment, "HBCB_DATABASE_MAINTENANCE_PASSWORD"),
+                minimum=32,
+                maximum=128,
+            ),
             migrator_username=migrator_username,
             migrator_password=SecretValue(
                 _required(environment, "HBCB_DATABASE_MIGRATOR_PASSWORD"),
@@ -383,11 +433,13 @@ class DatabaseInitializationConfig:
                 "admin_username": self.admin_username,
                 "api_username": self.api_username,
                 "worker_username": self.worker_username,
+                "maintenance_username": self.maintenance_username,
                 "migrator_username": self.migrator_username,
                 "admin_database_url": "<redacted>",
                 "migrator_database_url": "<redacted>",
                 "api_password": "<redacted>",
                 "worker_password": "<redacted>",
+                "maintenance_password": "<redacted>",
                 "migrator_password": "<redacted>",
             }
         )

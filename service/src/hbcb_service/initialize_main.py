@@ -19,6 +19,7 @@ def main() -> None:
                 "applied_migrations": list(result.applied_migrations),
                 "api_table_grants": len(result.api_tables),
                 "worker_table_grants": len(result.worker_tables),
+                "maintenance_table_grants": len(result.maintenance_tables),
             },
             sort_keys=True,
             separators=(",", ":"),

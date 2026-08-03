@@ -43,7 +43,9 @@ def valid_environment() -> Dict[str, str]:
         "HBCB_STORAGE_ACCESS_KEY": "hbcb_api_key",
         "HBCB_STORAGE_SECRET_KEY": "c" * 64,
         "HBCB_STORAGE_BUCKET": "hbcb-artifacts",
-        "HBCB_STORAGE_SECURE": "false",
+        "HBCB_STORAGE_INTERNAL_SECURE": "false",
+        "HBCB_STORAGE_PUBLIC_SECURE": "false",
+        "HBCB_STORAGE_REGION": "us-east-1",
         "HBCB_SIGNED_URL_TTL_SECONDS": "300",
     }
 

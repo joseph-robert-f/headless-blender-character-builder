@@ -11,7 +11,7 @@ REQUEST := $(CURDIR)/examples/requests/facet-bot.json
 BUILD_PARENT := $(CURDIR)/build
 DEMO_OUTPUT := $(BUILD_PARENT)/demo
 
-.PHONY: help image ensure-image test-image demo verify-demo demo-native verify-demo-native init-env service-up service-smoke service-down service-config lint test-unit test-blender check
+.PHONY: help image ensure-image test-image demo verify-demo demo-native verify-demo-native init-env service-up service-smoke service-down service-config g8-static g8-caddy g8-recovery g8-gate operator-smoke lint test-unit test-blender check
 
 help:
 	@echo "Headless Blender Character Builder"
@@ -21,6 +21,8 @@ help:
 	@echo "  make service-up    Start the local asynchronous Compose service"
 	@echo "  make service-smoke Exercise the service, restart, and artifacts end to end"
 	@echo "  make service-down  Stop services while preserving durable volumes"
+	@echo "  make g8-gate       Validate VPS config and run the local recovery drill"
+	@echo "  make operator-smoke Conditionally test an authorized public HTTPS target"
 	@echo "  make test-unit     Run unit/contract/security tests in Docker"
 	@echo "  make test-blender  Run Blender integration gates in Docker"
 	@echo "  make check         Run static, unit, security, and Blender tests"
@@ -125,6 +127,26 @@ service-down:
 
 service-config: ensure-image
 	BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose config
+
+g8-static:
+	PYTHONPATH=.:service/src PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m unittest discover -s tests/deployment -p 'test_*.py' -v
+	HBCB_COMPOSE_BIN="$(HBCB_COMPOSE_BIN)" PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/deployment/g8_static_gate.py
+
+g8-caddy:
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/deployment/g8_caddy_gate.py
+
+g8-recovery:
+	HBCB_COMPOSE_BIN="$(HBCB_COMPOSE_BIN)" BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/g8-recovery-drill
+
+g8-gate: ensure-image
+	BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose up
+	BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-smoke
+	$(MAKE) g8-static PYTHON="$(PYTHON)" HBCB_COMPOSE_BIN="$(HBCB_COMPOSE_BIN)"
+	$(MAKE) g8-caddy PYTHON="$(PYTHON)"
+	$(MAKE) g8-recovery BUILDER_IMAGE="$(BUILDER_IMAGE)" HBCB_COMPOSE_BIN="$(HBCB_COMPOSE_BIN)"
+
+operator-smoke:
+	./scripts/operator-smoke
 
 lint: test-image
 	git diff --check

@@ -124,6 +124,8 @@ services:
       HBCB_STORAGE_API_SECRET_KEY: ${HBCB_STORAGE_API_SECRET_KEY}
       HBCB_STORAGE_WORKER_ACCESS_KEY: ${HBCB_STORAGE_WORKER_ACCESS_KEY}
       HBCB_STORAGE_WORKER_SECRET_KEY: ${HBCB_STORAGE_WORKER_SECRET_KEY}
+      HBCB_STORAGE_MAINTENANCE_ACCESS_KEY: ${HBCB_STORAGE_MAINTENANCE_ACCESS_KEY}
+      HBCB_STORAGE_MAINTENANCE_SECRET_KEY: ${HBCB_STORAGE_MAINTENANCE_SECRET_KEY}
       HBCB_STORAGE_BUCKET: ${HBCB_STORAGE_BUCKET}
     <<: *hardened-service
     tmpfs:
@@ -133,6 +135,7 @@ services:
       - ./compose/minio-init.sh:/opt/hbcb/minio-init.sh:ro
       - ./compose/minio-api-policy.json:/policies/minio-api-policy.json:ro
       - ./compose/minio-worker-policy.json:/policies/minio-worker-policy.json:ro
+      - ./compose/minio-maintenance-policy.json:/policies/minio-maintenance-policy.json:ro
     networks:
       - service-internal
     pids_limit: 64
@@ -156,6 +159,8 @@ services:
       HBCB_DATABASE_API_PASSWORD: ${HBCB_DATABASE_API_PASSWORD}
       HBCB_DATABASE_WORKER_USER: ${HBCB_DATABASE_WORKER_USER}
       HBCB_DATABASE_WORKER_PASSWORD: ${HBCB_DATABASE_WORKER_PASSWORD}
+      HBCB_DATABASE_MAINTENANCE_USER: ${HBCB_DATABASE_MAINTENANCE_USER}
+      HBCB_DATABASE_MAINTENANCE_PASSWORD: ${HBCB_DATABASE_MAINTENANCE_PASSWORD}
       HBCB_DATABASE_MIGRATOR_USER: ${HBCB_DATABASE_MIGRATOR_USER}
       HBCB_DATABASE_MIGRATOR_PASSWORD: ${HBCB_DATABASE_MIGRATOR_PASSWORD}
     <<: *hardened-service
@@ -192,7 +197,9 @@ services:
       HBCB_STORAGE_ACCESS_KEY: ${HBCB_STORAGE_API_ACCESS_KEY}
       HBCB_STORAGE_SECRET_KEY: ${HBCB_STORAGE_API_SECRET_KEY}
       HBCB_STORAGE_BUCKET: ${HBCB_STORAGE_BUCKET}
-      HBCB_STORAGE_SECURE: ${HBCB_STORAGE_SECURE}
+      HBCB_STORAGE_INTERNAL_SECURE: ${HBCB_STORAGE_INTERNAL_SECURE}
+      HBCB_STORAGE_PUBLIC_SECURE: ${HBCB_STORAGE_PUBLIC_SECURE}
+      HBCB_STORAGE_REGION: ${HBCB_STORAGE_REGION}
       HBCB_SIGNED_URL_TTL_SECONDS: ${HBCB_SIGNED_URL_TTL_SECONDS}
     healthcheck:
       test: ["CMD", "/usr/bin/python3", "-c", "import json,urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2)) == {'status':'ok'}"]
@@ -234,7 +241,8 @@ services:
       HBCB_STORAGE_ACCESS_KEY: ${HBCB_STORAGE_WORKER_ACCESS_KEY}
       HBCB_STORAGE_SECRET_KEY: ${HBCB_STORAGE_WORKER_SECRET_KEY}
       HBCB_STORAGE_BUCKET: ${HBCB_STORAGE_BUCKET}
-      HBCB_STORAGE_SECURE: ${HBCB_STORAGE_SECURE}
+      HBCB_STORAGE_INTERNAL_SECURE: ${HBCB_STORAGE_INTERNAL_SECURE}
+      HBCB_STORAGE_REGION: ${HBCB_STORAGE_REGION}
       HBCB_WORKER_IMAGE_REFERENCE: ${HBCB_BUILDER_IMAGE_REFERENCE:?run make service-up so the measured reference is recorded}
       HBCB_WORKER_IMAGE_ID: ${HBCB_BUILDER_IMAGE_ID:?run make service-up so provenance is measured}
     <<: *hardened-service
@@ -245,6 +253,44 @@ services:
     pids_limit: 512
     mem_limit: 4g
     cpus: 4.0
+
+  maintenance:
+    profiles: ["maintenance"]
+    build:
+      <<: *service-build
+      target: api
+    image: hbcb-service-api:dev
+    platform: linux/amd64
+    entrypoint: ["/usr/bin/python3", "-m", "hbcb_service.maintenance_main"]
+    depends_on:
+      database-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_DEPLOYMENT_NAMESPACE}
+      HBCB_DATABASE_URL: postgresql://${HBCB_DATABASE_MAINTENANCE_USER}:${HBCB_DATABASE_MAINTENANCE_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      HBCB_REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      HBCB_STORAGE_INTERNAL_ENDPOINT: ${HBCB_STORAGE_INTERNAL_ENDPOINT}
+      HBCB_STORAGE_ACCESS_KEY: ${HBCB_STORAGE_MAINTENANCE_ACCESS_KEY}
+      HBCB_STORAGE_SECRET_KEY: ${HBCB_STORAGE_MAINTENANCE_SECRET_KEY}
+      HBCB_STORAGE_BUCKET: ${HBCB_STORAGE_BUCKET}
+      HBCB_STORAGE_INTERNAL_SECURE: ${HBCB_STORAGE_INTERNAL_SECURE}
+      HBCB_STORAGE_REGION: ${HBCB_STORAGE_REGION}
+      HBCB_RETENTION_SUCCEEDED_DAYS: ${HBCB_RETENTION_SUCCEEDED_DAYS:-30}
+      HBCB_RETENTION_OTHER_DAYS: ${HBCB_RETENTION_OTHER_DAYS:-7}
+      HBCB_ORPHAN_GRACE_DAYS: ${HBCB_ORPHAN_GRACE_DAYS:-7}
+    <<: *hardened-service
+    tmpfs:
+      - /work:rw,nosuid,nodev,noexec,size=256m,mode=0700,uid=65532,gid=65532
+    networks:
+      - service-internal
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 1.0
 
   service-test:
     profiles: ["test"]
@@ -261,13 +307,17 @@ services:
       HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_DEPLOYMENT_NAMESPACE}
       HBCB_IAM_DATABASE_API_URL: postgresql://${HBCB_DATABASE_API_USER}:${HBCB_DATABASE_API_PASSWORD}@postgres:5432/${POSTGRES_DB}
       HBCB_IAM_DATABASE_WORKER_URL: postgresql://${HBCB_DATABASE_WORKER_USER}:${HBCB_DATABASE_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      HBCB_IAM_DATABASE_MAINTENANCE_URL: postgresql://${HBCB_DATABASE_MAINTENANCE_USER}:${HBCB_DATABASE_MAINTENANCE_PASSWORD}@postgres:5432/${POSTGRES_DB}
       HBCB_STORAGE_INTERNAL_ENDPOINT: ${HBCB_STORAGE_INTERNAL_ENDPOINT}
       HBCB_STORAGE_API_ACCESS_KEY: ${HBCB_STORAGE_API_ACCESS_KEY}
       HBCB_STORAGE_API_SECRET_KEY: ${HBCB_STORAGE_API_SECRET_KEY}
       HBCB_STORAGE_WORKER_ACCESS_KEY: ${HBCB_STORAGE_WORKER_ACCESS_KEY}
       HBCB_STORAGE_WORKER_SECRET_KEY: ${HBCB_STORAGE_WORKER_SECRET_KEY}
+      HBCB_STORAGE_MAINTENANCE_ACCESS_KEY: ${HBCB_STORAGE_MAINTENANCE_ACCESS_KEY}
+      HBCB_STORAGE_MAINTENANCE_SECRET_KEY: ${HBCB_STORAGE_MAINTENANCE_SECRET_KEY}
       HBCB_STORAGE_BUCKET: ${HBCB_STORAGE_BUCKET}
-      HBCB_STORAGE_SECURE: ${HBCB_STORAGE_SECURE}
+      HBCB_STORAGE_INTERNAL_SECURE: ${HBCB_STORAGE_INTERNAL_SECURE}
+      HBCB_STORAGE_REGION: ${HBCB_STORAGE_REGION}
     <<: *hardened-service
     tmpfs:
       - /work:rw,nosuid,nodev,noexec,size=128m,mode=0700,uid=65532,gid=65532
