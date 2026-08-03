@@ -6,7 +6,7 @@ Last updated: **August 2, 2026**
 
 ## 1. Purpose and authority
 
-`PLAN.md` defines what v0.1 must build. This document defines how an owner or independent reviewer proves those requirements. If the documents conflict, `PLAN.md` remains authoritative until both are intentionally updated.
+`PLAN.md` defines what to build next. This document defines how an owner or independent reviewer proves those requirements. Where they conflict, the code and `schemas/` are authoritative, then `PLAN.md`. Sections below that refer to milestones G0-G9 describe the original plan, archived at `docs/plan-archive-2026-07.md`.
 
 A test passes only when its documented command actually runs successfully and leaves reviewable evidence. Use these statuses:
 
@@ -29,7 +29,7 @@ Do not call an unimplemented feature blocked, and do not mark a gate passed from
 > `NOT_IMPLEMENTED` statuses below for the builder. The remaining text in this
 > document describes the review process for the deferred service work.
 
-Historical note, from the initial publication: the repository was a planning scaffold. It did **not** contain the generic generator, schemas, Dockerfiles, Make targets, STL/manifest/QA pipeline, API, Compose stack, VPS package, or CI described in `PLAN.md`.
+Historical note, from the initial publication: the repository was a planning scaffold. It did **not** contain the generic generator, schemas, Dockerfiles, Make targets, STL/manifest/QA pipeline, API, Compose stack, VPS package, or CI described in the original plan, now archived at `docs/plan-archive-2026-07.md`.
 
 The local research workspace contains a real native-Blender proof of concept, but its hardcoded branded scripts and generated artifacts are intentionally held out of the first public commit until they are generalized and sanitized. They are baseline implementation material, not v0.1 acceptance evidence.
 

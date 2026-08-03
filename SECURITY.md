@@ -2,7 +2,7 @@
 
 ## Current status
 
-This repository contains an early v0.1 local builder. There is no supported production release, hosted service, or security-maintenance window. There is also no network-facing component: the builder is a command-line tool, and the HTTP API described in `PLAN.md` has not been built. Do not expose any part of this to untrusted users.
+This repository contains an early v0.1 local builder. There is no supported production release, hosted service, or security-maintenance window. There is also no network-facing component: the builder is a command-line tool, and the HTTP API has not been built. Do not expose any part of this to untrusted users.
 
 The builder does not read from the network at any point. `hbcb build` accepts a local JSON file and writes to a local directory; the container runs unprivileged with `--network none` and all capabilities dropped.
 
@@ -20,4 +20,4 @@ Explicitly outside the boundary, and rejected before Blender starts: caller-auth
 
 Request documents are capped at 64 KiB and every numeric field has an explicit range.
 
-See `PLAN.md` for the longer-range threat model, and `docs/REVIEW.md` for what has actually been verified.
+See `docs/plan-archive-2026-07.md` §13 for the longer-range threat model, and `docs/REVIEW.md` for what has actually been verified.

@@ -25,7 +25,7 @@ build/facet-bot/
 ```
 
 > **Status: v0.1, early.** The geometry, exports, QA, and CLI are implemented
-> and tested. The HTTP service described in [PLAN.md](PLAN.md) is not built.
+> and tested. The HTTP service is not built and is deferred; see [PLAN.md](PLAN.md).
 > Read [docs/REVIEW.md](docs/REVIEW.md) for what is verified and what is not —
 > notably, nothing here has been physically printed yet.
 
@@ -256,4 +256,4 @@ Source is GPL-3.0-or-later. Original sample assets use the separate policy in
 - [docs/REVIEW.md](docs/REVIEW.md) — what changed, what is verified, what is next
 - [docs/character-spec.md](docs/character-spec.md) — every field and its range
 - [docs/architecture.md](docs/architecture.md) — how a build actually runs
-- [PLAN.md](PLAN.md) — the original long-range plan, including the unbuilt service
+- [PLAN.md](PLAN.md) — the execution plan for what comes next

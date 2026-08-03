@@ -125,6 +125,6 @@ geometry itself rather than a property of the print setup.
 `hbcb/layout.py`, and a re-import check in `verify.py`. Do not add an export
 without the re-import check.
 
-**An HTTP service** — the unbuilt part of [PLAN.md](../PLAN.md) — would call
+**An HTTP service** — deferred, see [PLAN.md](../PLAN.md) §4 — would call
 `blender/build.py:run` from a queue consumer. Nothing in the builder needs to
 change for that; the storage and state adapters sit outside it.

@@ -6,7 +6,8 @@ does" below.
 ## Summary
 
 The repository was 120 KB of planning documents and zero lines of code. The
-planning was unusually thorough — `PLAN.md` had already settled the artifact
+planning was unusually thorough — the original plan (now archived at
+[`plan-archive-2026-07.md`](plan-archive-2026-07.md)) had already settled the artifact
 contract, exit codes, unit conventions, and security boundary, and most of that
 thinking survives intact in the implementation. The problem was not the quality
 of the plan. It was that the plan's v0.1 was too large to finish, and that
@@ -16,7 +17,7 @@ Three findings drove the changes.
 
 ### 1. Nothing was executable, and the plan's v0.1 was too big to change that
 
-`PLAN.md` §18 made **both** of these release-blocking for v0.1:
+The original plan's §18 made **both** of these release-blocking for v0.1:
 
 - the deterministic Blender builder, and
 - an asynchronous self-hosted service with FastAPI, Postgres, Redis, MinIO,
@@ -36,7 +37,7 @@ interfaces it needs are unchanged — a queue consumer calls the same
 
 ### 2. The plug-and-play story required Docker, which is the wrong default
 
-`PLAN.md` §5 made `make demo` — clone, then `docker build` a Blender image —
+The original plan's §5 made `make demo` — clone, then `docker build` a Blender image —
 the primary path. That is a reproducibility path, not an accessibility path. It
 asks a user who already has Blender installed to download it again inside a
 container, and it puts a multi-gigabyte image build between them and their
@@ -150,7 +151,7 @@ and a 250 mm one.
 
 ## What is deliberately not here
 
-- **The asynchronous service** (`PLAN.md` G5–G8): FastAPI, Postgres, Redis,
+- **The asynchronous service** (archived plan G5–G8): FastAPI, Postgres, Redis,
   MinIO, Compose, VPS package. Cut from v0.1 per finding 1.
 - **The OpenAI planner and MCP adapter**: already post-v0.1 in the plan.
 - **A real slicer in the loop.** The QA here is geometric. Running
@@ -205,5 +206,5 @@ Everything below was run against Blender 4.5.12 LTS on linux-x86_64.
    plausible into evidenced.
 4. Add generators. The registry seam is `blender/generator.py`; a second
    generator is what proves the schema is a contract rather than one scene.
-5. Then, if demand exists, the service from `PLAN.md` G5–G8 — unchanged in
+5. Then, if demand exists, the service from the archived plan G5–G8 — unchanged in
    design, just no longer blocking a usable release.

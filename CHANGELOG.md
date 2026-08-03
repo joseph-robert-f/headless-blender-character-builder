@@ -52,8 +52,9 @@ documents only.
 
 - v0.1 scope narrowed to the deterministic builder. The asynchronous service
   (FastAPI, Postgres, Redis, MinIO, Compose, VPS package) described in
-  `PLAN.md` G5–G8 is deferred; its design is unchanged and it no longer blocks
-  a usable release. Rationale in [docs/REVIEW.md](docs/REVIEW.md).
+  the original plan's G5–G8 is deferred; its design is unchanged and it no
+  longer blocks a usable release. Rationale in [docs/REVIEW.md](docs/REVIEW.md),
+  next steps in [PLAN.md](PLAN.md).
 - The primary quickstart is now "use the Blender you already have" rather than
   a container build.
 
