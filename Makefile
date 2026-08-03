@@ -11,12 +11,13 @@ REQUEST := $(CURDIR)/examples/requests/facet-bot.json
 BUILD_PARENT := $(CURDIR)/build
 DEMO_OUTPUT := $(BUILD_PARENT)/demo
 
-.PHONY: help image test-image demo verify-demo demo-native verify-demo-native lint test-unit test-blender check
+.PHONY: help image test-image demo verify-demo demo-native verify-demo-native init-env lint test-unit test-blender check
 
 help:
 	@echo "Headless Blender Character Builder"
 	@echo "  make demo          Build the keyless Docker demo"
 	@echo "  make verify-demo   Reopen and verify the published artifacts"
+	@echo "  make init-env      Generate ignored local-service credentials"
 	@echo "  make test-unit     Run unit/contract/security tests in Docker"
 	@echo "  make test-blender  Run Blender integration gates in Docker"
 	@echo "  make check         Run static, unit, security, and Blender tests"
@@ -101,6 +102,9 @@ verify-demo-native:
 	  test -d "$(DEMO_OUTPUT)"; \
 	  HBCB_BLENDER_BINARY="$(BLENDER)" "$(PYTHON)" -m builder_cli \
 	    verify --request "$(REQUEST)" --output "$(DEMO_OUTPUT)"
+
+init-env:
+	./scripts/init-env
 
 lint: test-image
 	git diff --check

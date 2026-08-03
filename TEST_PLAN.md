@@ -1,6 +1,6 @@
 # Feature Testing and Owner Review Plan
 
-Status: **living verification plan; G0–G4 passed, G5–G9 pending**
+Status: **living verification plan; G0–G5 passed, G6–G9 pending**
 
 Last updated: **August 3, 2026**
 
@@ -21,9 +21,9 @@ Do not call an unimplemented feature blocked, and do not mark a gate passed from
 
 ## 2. Current state
 
-Work packages G0 through G4 have passed. The repository contains strict `BuildRequest`, `CharacterSpec`, QA, and manifest contracts plus a generic `geometric-character@1.0.0` registry/core. Two original requests generate real, materially different Blender geometry with stable structural fingerprints. The trusted builder saves `.blend`, exports display GLB and a raw-millimeter binary STL, renders four PNGs, measures complete geometry QA, verifies the model formats in a second fresh Blender process, and atomically publishes a success manifest last.
+Work packages G0 through G5 have passed. The repository contains strict `BuildRequest`, `CharacterSpec`, QA, and manifest contracts plus a generic `geometric-character@1.0.0` registry/core. Two original requests generate real, materially different Blender geometry with stable structural fingerprints. The trusted builder saves `.blend`, exports display GLB and a raw-millimeter binary STL, renders four PNGs, measures complete geometry QA, verifies the model formats in a second fresh Blender process, and atomically publishes a success manifest last.
 
-The G4 `linux/amd64` image, narrow `builder build|verify` CLI, hardened one-shot Docker runtime, keyless Make targets, native fallback, baked provenance, notices, and SPDX SBOM are implemented and passed from a clean indexed source export. G5 and later remain unimplemented: no API, Compose service, VPS package, or release CI exists yet. The local research workspace still contains an excluded hardcoded branded proof of concept; it is preserved baseline material, not v0.1 acceptance evidence.
+The G4 `linux/amd64` image, narrow `builder build|verify` CLI, hardened one-shot Docker runtime, keyless Make targets, native fallback, baked provenance, notices, and SPDX SBOM are implemented and passed from a clean indexed source export. G5 adds tested Postgres migrations/models, transactional-outbox and Redis wakeup contracts, version-bound local/MinIO storage, bearer/idempotency policy, and generated scoped local configuration without changing the G4 builder revision. G6 and later remain unimplemented: no API, worker supervisor, Compose service, VPS package, or release CI exists yet. The local research workspace still contains an excluded hardcoded branded proof of concept; it is preserved baseline material, not v0.1 acceptance evidence.
 
 Known local reviewer environment:
 
@@ -89,7 +89,7 @@ Record milestone summaries in `docs/progress.md` once implementation begins. Nev
 | T0 — repository and documentation | G0 | `PASS` locally | Prove the public scaffold contains only intended, safe files |
 | T1 — schemas, generic engine, and artifacts | G1–G3 | `PASS` | Prove bounded requests create and independently verify real, varied Blender geometry |
 | T2 — keyless container quickstart | G4 | `PASS` | Prove the primary public experience from a clean source tree |
-| T3 — asynchronous service | G5–G7 | `NOT_IMPLEMENTED` | Prove durable API, queue, worker, auth, and artifacts |
+| T3 — asynchronous service | G5–G7 | `G5 PASS`; G6–G7 `NOT_IMPLEMENTED` | Prove durable API, queue, worker, auth, and artifacts |
 | T4 — VPS and recovery | G8 | `NOT_IMPLEMENTED` / `CONDITIONAL` | Prove deployability without making live infrastructure mandatory |
 | T5 — release candidate | G9 | `NOT_IMPLEMENTED` | Prove tests, security, licenses, docs, and packaging together |
 
@@ -215,7 +215,21 @@ Human Blender inspection is useful optional evidence: open a copy of `model.blen
 
 ## 9. T3 — asynchronous Compose service
 
-These tests become runnable after G7.
+The G5 persistence foundation passed. End-to-end HTTP/worker tests become runnable after G7.
+
+G5 verification already completed:
+
+```sh
+PYTHONPATH=.:service/src PYTHONDONTWRITEBYTECODE=1 \
+  python3.11 -m unittest discover -s tests/service_unit -v
+
+HBCB_G5_POSTGRES_DSN=<local-test-dsn> PYTHONPATH=.:service/src \
+  python3.11 tests/service_integration/g5_postgres_gate.py
+```
+
+Observed proof: 55 focused service tests passed. PostgreSQL 16.9 applied `0001_g5_foundation` once, treated the second runner invocation as current, exposed all required tables/constraints, and rejected nullable success evidence, invalid terminal/event states, two active attempts, cross-build event attempts, and mismatched artifact content types. Storage tests hash the uploaded and stored bytes, require version IDs, pin signed downloads, reject forged metadata, and prove stored in-memory versions can complete atomic success publication. Generated role mappings parse independently and do not place API credentials in the worker or worker credentials in the API.
+
+Remaining G6/G7 service gate:
 
 ```sh
 make init-env

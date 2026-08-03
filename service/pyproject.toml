@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "headless-blender-character-builder-service"
+version = "0.1.0"
+description = "Durable service adapters for Headless Blender Character Builder."
+requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["hbcb_service*"]
+
+[tool.setuptools.package-data]
+hbcb_service = ["migrations/*.sql"]

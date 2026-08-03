@@ -2,7 +2,7 @@
 
 ## Current status
 
-This repository is an active pre-release implementation. The deterministic builder has passed G1–G4, including strict input rejection, private staging, atomic success publication, disabled embedded-script auto-execution, offline Blender processes, artifact hashes, fresh reload/re-import checks, a pinned non-root image, and a keyless one-shot runtime with no network, a read-only root, dropped capabilities, fixed mounts, and resource limits. There is still no supported production release, hosted service, or security-maintenance window. Do not expose the planned service to untrusted users until its service and release security gates in `PLAN.md` pass.
+This repository is an active pre-release implementation. The deterministic builder has passed G1–G4, including strict input rejection, private staging, atomic success publication, disabled embedded-script auto-execution, offline Blender processes, artifact hashes, fresh reload/re-import checks, a pinned non-root image, and a keyless one-shot runtime with no network, a read-only root, dropped capabilities, fixed mounts, and resource limits. G5 persistence foundations also enforce bearer/idempotency policy, transactional-outbox state, canonical attempt-scoped object keys, exact-body SHA-256 checks, version-pinned artifact URLs, and distinct generated API/worker/migrator credentials. There is still no supported production release, running HTTP service, or security-maintenance window. Do not expose the planned service to untrusted users until its remaining service and release security gates in `PLAN.md` pass.
 
 ## Reporting a vulnerability
 

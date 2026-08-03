@@ -11,7 +11,7 @@ Overall status: **in progress**
 | G2 | M1 generator | passed | Generic registry/core plus two factory-start fixtures; four-process structural, topology, and determinism gate passed |
 | G3 | M1 artifacts and QA | passed | Exact nine-file artifact publication, actual-shell QA, fresh reload/re-import, repeat, and fail-closed paths passed |
 | G4 | M2 one-shot container | passed | Clean indexed source built and verified twice in a keyless hardened container; native parity, provenance/SBOM, exit contracts, and 62 clean-source tests passed |
-| G5 | M3 persistence interfaces | pending | — |
+| G5 | M3 persistence interfaces | passed | Postgres migration/constraints, transactional outbox semantics, Redis build-ID contract, version-bound storage, scoped generated config, 55 service tests, and real PostgreSQL 16.9 gate passed |
 | G6 | M3 API and worker | pending | — |
 | G7 | M3 Compose service | pending | — |
 | G8 | M4 VPS package | pending | — |
@@ -286,3 +286,46 @@ Deviation/condition:
 - No image, release, or source update was pushed remotely.
 
 G4 gate result: **passed**. G5 persistence models, migrations, queue contract, storage interface, MinIO adapter, and generated local configuration may begin.
+
+### G5 — persistence, queue, storage, authorization, and local configuration
+
+Files and contracts introduced:
+
+- `service/src/hbcb_service/` contains immutable build/attempt/artifact/event models, bearer authorization, canonical idempotency fingerprints, role-scoped configuration, a forward-only migration runner, Postgres schema, Redis Streams queue contract, state reference semantics, and local/MinIO-compatible storage adapters;
+- PostgreSQL is authoritative for builds, attempts, events, artifact versions, idempotency keys, and the transactional queue outbox; Redis messages contain exactly one canonical build UUID and are only at-least-once wakeups;
+- artifact keys are generated from the deployment namespace plus build/attempt UUIDs and the fixed nine-path allowlist; storage publication requires versioning, hashes the exact upload stream and the stored version body, stores the version ID, and signs that exact version;
+- invalid object versions are left unreferenced for a separately scoped retention janitor rather than granting the long-lived worker deletion authority;
+- `.env.example`, `scripts/init-env`, and `make init-env` provide placeholder-only documentation and an atomic mode-`0600` generator for distinct API, worker, migrator, Redis, Postgres, and storage credentials, with no provider key;
+- `tests/service_unit/` covers state, idempotency, authorization, configuration, queue, migration, and storage behavior; `tests/service_integration/g5_postgres_gate.py` executes the migration runner twice and runs negative constraints against real PostgreSQL;
+- Decisions D-034 through D-038 record source isolation, authority/outbox policy, version-bound artifacts, opaque builder progress, and per-role secret mapping.
+
+Verification executed:
+
+| Command | Result |
+|---|---|
+| `PYTHONPATH=.:service/src PYTHONDONTWRITEBYTECODE=1 /private/tmp/hbcc-g1-schema-venv/bin/python -m unittest discover -s tests/service_unit -v` | exit `0`; all 55 service state/idempotency/auth/config/queue/migration/storage tests passed |
+| `PYTHONPATH=.:service/src PYTHONDONTWRITEBYTECODE=1 /private/tmp/hbcc-g1-schema-venv/bin/python -m unittest discover -s tests -v` | exit `0`; all 117 repository Python tests passed after the final G5 change |
+| `HBCB_G5_POSTGRES_DSN=<redacted-local-test-dsn> PYTHONPATH=.:service/src /private/tmp/hbcc-g1-schema-venv/bin/python tests/service_integration/g5_postgres_gate.py` | exit `0`; migration applied once, second pass was current, seven durable tables and required constraints were present, and `G5_POSTGRES_CONTRACT: PASS` was reached on PostgreSQL 16.9 |
+| `git diff --check`, Python AST parse of service/test sources, and `sh -n scripts/init-env` | exit `0`; whitespace, Python syntax, and POSIX shell syntax passed |
+| independent adversarial G5 review and focused re-audit | passed after fixes for canonical spec provenance, SQL three-valued NULL checks, cross-build attempt ownership, exact-body/versioned storage evidence, attempt-bound publication, role config mapping, and in-memory version parity |
+
+Durable evidence:
+
+| Property | Observed result |
+|---|---|
+| PostgreSQL image | `postgres:16.9-bookworm`; registry digest `sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94` |
+| Migration | `0001_g5_foundation`; SHA-256 `51f59637237ae5d25534a03d742d595f71700595f233b803c10c8996d4d41696` |
+| Real database | PostgreSQL `16.9 (Debian 16.9-1.pgdg120+1)`; success-evidence NULLs, invalid terminal/event state, second active attempt, cross-build event attempt, and mismatched artifact content type all rejected |
+| Builder isolation | G4 container source revision remains `4e6f85a64fae06b15fe40787a50becb7aa53d0f96896dca5c26db9314a7e8968`; service code lives outside every G4 revision input |
+| Local credentials | atomic new `.env`, mode `0600`, distinct random 64-hex secrets, no overwrite/symlink following, no secret output, and no `OPENAI_API_KEY` |
+
+The concise local gate record is `/private/tmp/hbcb-g5-final-summary.json`; it contains no credentials or signed URLs.
+
+Deviation/condition:
+
+- G5 defines and tests the persistence and adapter contracts but does not expose an HTTP process or run a worker. FastAPI routes, Postgres repository transactions, leases/heartbeats, Blender subprocess supervision, retries, cancellation completion, and structured logs remain G6.
+- The trusted G4 builder reports only a terminal outcome. The service may publish success directly from `running` when it has exact immutable artifact evidence; it must not fabricate `geometry_qa` or `rendering` progress that the builder did not emit.
+- The MinIO-compatible adapter requires bucket versioning and exact version IDs. G7 must initialize a versioned bucket and use scoped credentials; unreferenced failed versions are retention data, never successful artifacts.
+- No image, source update, database, artifact, or credential was published remotely. The PostgreSQL container and credentials used by the gate were synthetic and removed after the test.
+
+G5 gate result: **passed**. G6 FastAPI routes, durable Postgres repository, worker leases/heartbeats, fresh Blender subprocess lifecycle, retry/cancellation/timeout behavior, immutable publication transaction, and structured logs may begin.

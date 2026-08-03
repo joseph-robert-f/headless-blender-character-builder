@@ -1,0 +1,82 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 0 ]; then
+  printf '%s\n' 'INIT_ENV: usage: scripts/init-env' >&2
+  exit 2
+fi
+
+LC_ALL=C
+export LC_ALL
+umask 077
+target=.env
+
+if [ -e "$target" ] || [ -L "$target" ]; then
+  printf '%s\n' 'INIT_ENV: refusing to overwrite existing .env' >&2
+  exit 4
+fi
+
+temporary=$(mktemp ./.env.tmp.XXXXXX)
+cleanup() {
+  rm -f "$temporary"
+}
+trap cleanup EXIT HUP INT TERM
+
+random_hex() {
+  byte_count=$1
+  value=$(od -An -N "$byte_count" -tx1 /dev/urandom | tr -d ' \n')
+  if [ "${#value}" -ne $((byte_count * 2)) ]; then
+    printf '%s\n' 'INIT_ENV: secure random generation failed' >&2
+    exit 12
+  fi
+  printf '%s' "$value"
+}
+
+api_token=$(random_hex 32)
+idempotency_secret=$(random_hex 32)
+postgres_admin_password=$(random_hex 32)
+database_api_password=$(random_hex 32)
+database_worker_password=$(random_hex 32)
+database_migrator_password=$(random_hex 32)
+redis_password=$(random_hex 32)
+minio_root_password=$(random_hex 32)
+storage_api_access_key="hbcb_api_$(random_hex 8)"
+storage_api_secret_key=$(random_hex 32)
+storage_worker_access_key="hbcb_worker_$(random_hex 8)"
+storage_worker_secret_key=$(random_hex 32)
+
+{
+  printf '%s\n' 'HBCB_DEPLOYMENT_NAMESPACE=local'
+  printf 'HBCB_API_TOKEN=%s\n' "$api_token"
+  printf 'HBCB_IDEMPOTENCY_SECRET=%s\n' "$idempotency_secret"
+  printf '%s\n' 'POSTGRES_DB=hbcb'
+  printf '%s\n' 'POSTGRES_USER=hbcb_admin'
+  printf 'POSTGRES_PASSWORD=%s\n' "$postgres_admin_password"
+  printf '%s\n' 'HBCB_DATABASE_API_USER=hbcb_api'
+  printf 'HBCB_DATABASE_API_PASSWORD=%s\n' "$database_api_password"
+  printf '%s\n' 'HBCB_DATABASE_WORKER_USER=hbcb_worker'
+  printf 'HBCB_DATABASE_WORKER_PASSWORD=%s\n' "$database_worker_password"
+  printf '%s\n' 'HBCB_DATABASE_MIGRATOR_USER=hbcb_migrator'
+  printf 'HBCB_DATABASE_MIGRATOR_PASSWORD=%s\n' "$database_migrator_password"
+  printf 'REDIS_PASSWORD=%s\n' "$redis_password"
+  printf '%s\n' 'MINIO_ROOT_USER=hbcb_root'
+  printf 'MINIO_ROOT_PASSWORD=%s\n' "$minio_root_password"
+  printf 'HBCB_STORAGE_API_ACCESS_KEY=%s\n' "$storage_api_access_key"
+  printf 'HBCB_STORAGE_API_SECRET_KEY=%s\n' "$storage_api_secret_key"
+  printf 'HBCB_STORAGE_WORKER_ACCESS_KEY=%s\n' "$storage_worker_access_key"
+  printf 'HBCB_STORAGE_WORKER_SECRET_KEY=%s\n' "$storage_worker_secret_key"
+  printf '%s\n' 'HBCB_STORAGE_BUCKET=hbcb-artifacts'
+  printf '%s\n' 'HBCB_STORAGE_INTERNAL_ENDPOINT=minio:9000'
+  printf '%s\n' 'HBCB_STORAGE_PUBLIC_ENDPOINT=localhost:9000'
+  printf '%s\n' 'HBCB_STORAGE_SECURE=false'
+  printf '%s\n' 'HBCB_SIGNED_URL_TTL_SECONDS=300'
+} > "$temporary"
+
+chmod 0600 "$temporary"
+if ! ln "$temporary" "$target"; then
+  printf '%s\n' 'INIT_ENV: refusing to overwrite existing .env' >&2
+  exit 4
+fi
+rm -f "$temporary"
+trap - EXIT HUP INT TERM
+printf '%s\n' 'INIT_ENV: created .env (mode 0600)'
