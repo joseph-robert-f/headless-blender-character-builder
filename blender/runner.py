@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -29,6 +30,7 @@ from shared.json_contract import (
     decode_json_document,
 )
 from shared.quality_report import QualityReport, derive_qa_status
+from shared.source_revision import source_revision
 
 from blender.core.camera import setup_render_scene
 from blender.core.fingerprint import structural_report
@@ -42,6 +44,17 @@ BLENDER_VERSION = "4.5.12 LTS"
 VERIFIER_TIMEOUT_SECONDS = 300
 VERIFICATION_VERSION = "artifact-verifier/v1"
 EXACT_OUTPUT_TREE = set(REQUIRED_ARTIFACTS) | {"manifest.json"}
+PROVENANCE_ROOT = Path("/opt/builder/provenance")
+CONTAINER_BLENDER = Path("/opt/blender/blender")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+IMAGE_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+IMAGE_REFERENCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/@:+-]{0,254}$")
+PROVENANCE_ENV = (
+    "HBCB_EXECUTION_MODE",
+    "HBCB_WORKER_IMAGE_REFERENCE",
+    "HBCB_WORKER_IMAGE_DIGEST",
+    "HBCB_WORKER_IMAGE_ID",
+)
 
 
 class RunnerFailure(RuntimeError):
@@ -130,20 +143,79 @@ def _hash_file(path: Path) -> str:
 
 
 def _source_revision() -> str:
-    root = Path(__file__).resolve().parents[1]
-    digest = hashlib.sha256()
-    files = sorted(
-        (*root.joinpath("blender").rglob("*.py"), *root.joinpath("shared").rglob("*.py")),
-        key=lambda path: path.relative_to(root).as_posix(),
-    )
-    for path in files:
-        relative = path.relative_to(root).as_posix().encode("utf-8")
-        digest.update(len(relative).to_bytes(4, "big"))
-        digest.update(relative)
-        payload = path.read_bytes()
-        digest.update(len(payload).to_bytes(8, "big"))
-        digest.update(payload)
-    return digest.hexdigest()
+    return source_revision(Path(__file__).resolve().parents[1], include_launcher=False)
+
+
+def _provenance_text(name: str, *, maximum_bytes: int = 512) -> str:
+    path = PROVENANCE_ROOT / name
+    try:
+        if path.is_symlink() or not path.is_file():
+            raise OSError("unsafe provenance file")
+        with path.open("rb") as stream:
+            payload = stream.read(maximum_bytes + 1)
+        if len(payload) > maximum_bytes:
+            raise OSError("oversized provenance file")
+        return payload.decode("utf-8", "strict").strip()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RunnerFailure(12, "container provenance is unavailable") from exc
+
+
+def _execution_metadata() -> Mapping[str, Any]:
+    mode = os.environ.get("HBCB_EXECUTION_MODE")
+    supplied = {name: os.environ[name] for name in PROVENANCE_ENV if name in os.environ}
+    binary_path = Path(bpy.app.binary_path).resolve(strict=True)
+    if mode is None:
+        if supplied:
+            raise RunnerFailure(12, "partial execution provenance")
+        try:
+            revision = _source_revision()
+            binary_sha256 = _hash_file(binary_path)
+        except OSError as exc:
+            raise RunnerFailure(12, "native provenance could not be measured") from exc
+        return {
+            "mode": "native",
+            "project_revision": revision,
+            "blender_version": bpy.app.version_string,
+            "blender_binary_sha256": binary_sha256,
+            "worker_image_reference": None,
+            "worker_image_digest": None,
+            "worker_image_id": None,
+        }
+    if mode != "container":
+        raise RunnerFailure(12, "unsupported execution mode")
+    reference = supplied.get("HBCB_WORKER_IMAGE_REFERENCE")
+    if reference is None or IMAGE_REFERENCE.fullmatch(reference) is None:
+        raise RunnerFailure(12, "invalid container image reference")
+    digest = supplied.get("HBCB_WORKER_IMAGE_DIGEST")
+    image_id = supplied.get("HBCB_WORKER_IMAGE_ID")
+    for candidate in (digest, image_id):
+        if candidate is not None and IMAGE_DIGEST.fullmatch(candidate) is None:
+            raise RunnerFailure(12, "invalid container image digest")
+    revision = _provenance_text("source-tree.sha256")
+    version = _provenance_text("blender-version.txt")
+    binary_record = _provenance_text("blender-binary.sha256")
+    binary_fields = binary_record.split()
+    binary_sha256 = binary_fields[0] if len(binary_fields) == 2 else ""
+    if (
+        SHA256.fullmatch(revision) is None
+        or SHA256.fullmatch(binary_sha256) is None
+        or len(binary_fields) != 2
+        or binary_fields[1] != str(CONTAINER_BLENDER)
+    ):
+        raise RunnerFailure(12, "container provenance digest is invalid")
+    if version != BLENDER_VERSION or bpy.app.version_string != version:
+        raise RunnerFailure(12, "container Blender version provenance mismatch")
+    if binary_path != CONTAINER_BLENDER or _hash_file(binary_path) != binary_sha256:
+        raise RunnerFailure(12, "container Blender binary provenance mismatch")
+    return {
+        "mode": "container",
+        "project_revision": revision,
+        "blender_version": version,
+        "blender_binary_sha256": binary_sha256,
+        "worker_image_reference": reference,
+        "worker_image_digest": digest,
+        "worker_image_id": image_id,
+    }
 
 
 def _write_expected(
@@ -354,6 +426,7 @@ def _manifest(
     request: BuildRequest,
     quality: QualityReport,
     stage: Path,
+    execution: Mapping[str, Any],
 ) -> BuildManifest:
     measurements = quality.measurements
     checks = quality.checks
@@ -369,7 +442,6 @@ def _manifest(
         "glb_reimport": checks["glb_reimport"],
         "stl_reimport": checks["stl_reimport"],
     }
-    binary_path = Path(bpy.app.binary_path)
     return BuildManifest.from_mapping(
         {
             "manifest_version": "manifest/v1",
@@ -377,15 +449,7 @@ def _manifest(
             "spec_sha256": request.spec_sha256,
             "input_sha256": {},
             "generator_version": "1.0.0",
-            "execution": {
-                "mode": "native",
-                "project_revision": _source_revision(),
-                "blender_version": bpy.app.version_string,
-                "blender_binary_sha256": _hash_file(binary_path),
-                "worker_image_reference": None,
-                "worker_image_digest": None,
-                "worker_image_id": None,
-            },
+            "execution": dict(execution),
             "dimensions_mm": list(measurements["dimensions_mm"]),
             "artifacts": _artifact_entries(stage),
             "qa": printable_qa,
@@ -421,6 +485,7 @@ def build(request_path: Path, output: Path) -> None:
     request = _read_request(request_path)
     if bpy.app.version_string != BLENDER_VERSION:
         raise RunnerFailure(10, f"builder requires Blender {BLENDER_VERSION}")
+    execution = _execution_metadata()
     stage = _private_stage(output)
     published = False
     try:
@@ -462,7 +527,7 @@ def build(request_path: Path, output: Path) -> None:
             raise RunnerFailure(4, "could not write qa.json") from exc
         if quality.status != "passed":
             raise RunnerFailure(11, f"mandatory geometry QA status is {quality.status}")
-        manifest = _manifest(request, quality, stage)
+        manifest = _manifest(request, quality, stage, execution)
         # Success manifest is deliberately the final staged artifact written.
         try:
             (stage / "manifest.json").write_bytes(manifest.canonical_bytes + b"\n")

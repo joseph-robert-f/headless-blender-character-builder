@@ -1,0 +1,25 @@
+#!/opt/blender/4.5/python/bin/python3.11
+"""Container entrypoint for ``python -m builder_cli`` parity."""
+
+import sys
+from pathlib import Path
+
+
+SOURCE_ROOT = Path("/opt/builder/source")
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
+
+
+def launch() -> None:
+    try:
+        from builder_cli.__main__ import entrypoint
+    except Exception:
+        # Protect the executable/import boundary with the same redacted
+        # trusted-wrapper failure contract as the Python CLI itself.
+        print("BUILDER: FAIL[12]: internal launcher failure", file=sys.stderr)
+        raise SystemExit(12)
+    entrypoint()
+
+
+if __name__ == "__main__":
+    launch()

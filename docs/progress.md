@@ -1,6 +1,6 @@
 # v0.1 Build Progress
 
-Last updated: 2026-08-02
+Last updated: 2026-08-03
 
 Overall status: **in progress**
 
@@ -10,7 +10,7 @@ Overall status: **in progress**
 | G1 | M1 contracts | passed | Four Draft 2020-12 schemas and immutable runtime models; 47 schema/policy tests plus independent final audit passed |
 | G2 | M1 generator | passed | Generic registry/core plus two factory-start fixtures; four-process structural, topology, and determinism gate passed |
 | G3 | M1 artifacts and QA | passed | Exact nine-file artifact publication, actual-shell QA, fresh reload/re-import, repeat, and fail-closed paths passed |
-| G4 | M2 one-shot container | pending | — |
+| G4 | M2 one-shot container | passed | Clean indexed source built and verified twice in a keyless hardened container; native parity, provenance/SBOM, exit contracts, and 62 clean-source tests passed |
 | G5 | M3 persistence interfaces | pending | — |
 | G6 | M3 API and worker | pending | — |
 | G7 | M3 Compose service | pending | — |
@@ -235,3 +235,54 @@ Deviation/condition:
 - Thickness numbers are conservative geometry diagnostics with a two-voxel uncertainty deduction. They are not slicer evidence or a physical-print warranty.
 
 G3 gate result: **passed**. G4 pinned builder image, trusted CLI adapter, hardened one-shot runtime, native fallback, and Make targets may begin.
+
+### G4 — pinned one-shot container, trusted CLI, and native fallback
+
+Files and contracts introduced:
+
+- `docker/builder.Dockerfile` builds the production `linux/amd64` image from a digest-pinned Debian snapshot and the checksum-verified official Blender 4.5.12 LTS archive; its separate test target adds only hash-locked wheels and tracked test inputs;
+- `scripts/builder` and `builder_cli/` expose only `builder build --request PATH --output PATH` and `builder verify --request PATH --output PATH`, with bounded input/evidence, a fixed Blender argv/environment, process-group timeout handling, redacted unexpected failures, and the application exit contract;
+- `blender/published_verifier.py` freshly loads the published `.blend`, resets and imports GLB/STL, and validates the exact artifact, scene, geometry, topology, hash, provenance, and QA contract;
+- `shared/source_revision.py` produces framed, content-addressed native/container source revisions; the image bakes its source revision, Blender version and binary hash, upstream notices, and an SPDX 2.3 SBOM;
+- `Makefile` provides the keyless `demo`/`verify-demo`, native fallbacks, isolated test-image targets, and the fixed one-shot runtime envelope;
+- `tests/container/` and `tests/security/` verify clean-index builds, Docker command policy, immutable image metadata, canary non-disclosure, exact publication, native parity, fixed exits, repeat stability, and supply-chain evidence;
+- Decisions D-031 through D-033 record the atomic parent mount, image supply-chain policy, and tested resource envelope.
+
+Verification executed:
+
+| Command | Result |
+|---|---|
+| `python3 tests/container/g4_gate.py --work-dir /private/tmp/hbcb-g4-final.ovZDPq --docker docker --make make --git git --blender /Applications/Blender.app/Contents/MacOS/Blender --platform linux/amd64 --timeout-seconds 1800` | exit `0`; `G4_GATE: PASS` from a 94-file `git checkout-index` export |
+| clean-export `make demo` followed by `make verify-demo` | exit `0` twice; each build published exactly nine files and each verification used a fresh Blender process |
+| clean-export `make test-unit` in the hash-locked test image | exit `0`; all 62 contract, policy, launcher, provenance, and runtime tests passed |
+| native `make demo-native` followed by `make verify-demo-native` | exit `0`; no Docker invocation and stable geometry matched both container runs |
+| `git diff --check` and staged-source parse checks | exit `0`; no whitespace or Python syntax errors |
+
+Final container and artifact evidence:
+
+| Property | Observed result |
+|---|---|
+| Production image | `sha256:49cb24b22ea569bfe9db3a7ad5532d1270c765439a7c293515b9e833fb655b13`; 1,094,010,880 bytes; `amd64/linux`; default user `65532:65532` |
+| Test image | `sha256:037dd91b8fd95e5bbb7518cf4cf809ad25715ed22cb3fe3e59b0305621b5c290`; 1,095,280,652 bytes |
+| Baked Blender provenance | `4.5.12 LTS`; binary SHA-256 `33ac108ebce3c271f5357e5c664d0488717263bcf2145c80300edd0b12c31880` |
+| Baked source revision | `4e6f85a64fae06b15fe40787a50becb7aa53d0f96896dca5c26db9314a7e8968` |
+| SPDX 2.3 SBOM | 166 packages; SHA-256 `9ca9b78dcd1d8bc41bcc22c9a38eba271b0a925d1fb91e0e0d9b36dd60ba6dd2` |
+| Runtime | no network; read-only root; all capabilities dropped; no-new-privileges; 512 PIDs; 4 CPUs; 4 GiB RAM; 2 GiB no-exec tmpfs; exactly request and output mounts |
+| Published output | 21,515,028 bytes across the exact nine-file tree; manifest/artifact hashes and fresh `.blend`/GLB/STL checks passed |
+| Repeat and native parity | stable probe SHA-256 `726060b092c8168e0a57477116a4c715e1b6f21d48c6d65fe7ca2be500652ccc` for first container, repeat container, and native fallback |
+| Application exits | black-box `2`, `3`, `4`, `11`, and `12` passed; unit-isolated `10` and `124` mappings passed; failures published no success output |
+
+Evidence location:
+
+- `/private/tmp/hbcb-g4-final.ovZDPq/` contains canary-scanned local command logs, both container artifacts, the native artifact, independent probes, image/provenance evidence, negative-path evidence, and `g4-summary.json`;
+- evidence remains outside the publication tree, while the durable result and immutable identifiers are recorded here.
+
+Deviation/condition:
+
+- The direct-container example now mounts the caller-owned `build/` parent and requests nonexistent `/output/demo`, rather than precreating and mounting `build/demo`. D-031 records why this is required for private sibling staging and atomic publication.
+- The release image is intentionally `linux/amd64`. This gate ran it under Docker Desktop emulation on an Apple Silicon host; native Linux `amd64` remains the release-reference CI path for G9.
+- The first login-free Docker configuration selected Docker's legacy builder. Removing frontend-only `COPY --chmod` syntax made the same pinned Dockerfile portable to that path; checksum-verified `ADD`, the final permissions, image contents, and runtime policy remain enforced.
+- The local Make path records the independently inspected image ID and leaves registry digest null. A later service must inject its separately pinned OCI digest through the reserved supervisor channel.
+- No image, release, or source update was pushed remotely.
+
+G4 gate result: **passed**. G5 persistence models, migrations, queue contract, storage interface, MinIO adapter, and generated local configuration may begin.

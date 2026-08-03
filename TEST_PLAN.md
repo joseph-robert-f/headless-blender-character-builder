@@ -1,8 +1,8 @@
 # Feature Testing and Owner Review Plan
 
-Status: **living verification plan; G0–G3 passed, G4–G9 pending**
+Status: **living verification plan; G0–G4 passed, G5–G9 pending**
 
-Last updated: **August 2, 2026**
+Last updated: **August 3, 2026**
 
 ## 1. Purpose and authority
 
@@ -21,9 +21,9 @@ Do not call an unimplemented feature blocked, and do not mark a gate passed from
 
 ## 2. Current state
 
-Work packages G0 through G3 have passed. The repository contains strict `BuildRequest`, `CharacterSpec`, QA, and manifest contracts plus a generic `geometric-character@1.0.0` registry/core. Two original requests generate real, materially different Blender geometry with stable structural fingerprints. The native runner now saves `.blend`, exports display GLB and a raw-millimeter binary STL, renders four PNGs, measures complete geometry QA, verifies the model formats in a second fresh Blender process, and atomically publishes a success manifest last.
+Work packages G0 through G4 have passed. The repository contains strict `BuildRequest`, `CharacterSpec`, QA, and manifest contracts plus a generic `geometric-character@1.0.0` registry/core. Two original requests generate real, materially different Blender geometry with stable structural fingerprints. The trusted builder saves `.blend`, exports display GLB and a raw-millimeter binary STL, renders four PNGs, measures complete geometry QA, verifies the model formats in a second fresh Blender process, and atomically publishes a success manifest last.
 
-G4 and later remain unimplemented: no Docker/Make quickstart, API, Compose service, VPS package, or release CI exists yet. The local research workspace still contains an excluded hardcoded branded proof of concept; it is preserved baseline material, not v0.1 acceptance evidence.
+The G4 `linux/amd64` image, narrow `builder build|verify` CLI, hardened one-shot Docker runtime, keyless Make targets, native fallback, baked provenance, notices, and SPDX SBOM are implemented and passed from a clean indexed source export. G5 and later remain unimplemented: no API, Compose service, VPS package, or release CI exists yet. The local research workspace still contains an excluded hardcoded branded proof of concept; it is preserved baseline material, not v0.1 acceptance evidence.
 
 Known local reviewer environment:
 
@@ -31,7 +31,7 @@ Known local reviewer environment:
 |---|---|
 | Host | macOS on Apple Silicon (`arm64`) |
 | Blender | 4.5.12 LTS |
-| Docker client | 29.4.0 |
+| Docker client/server | 29.4.0 / 29.4.0; Docker Desktop Linux `arm64` host |
 | Make | GNU Make 3.81 |
 | GitHub CLI | Not installed; the initial publication uses the authorized GitHub connector instead |
 
@@ -88,7 +88,7 @@ Record milestone summaries in `docs/progress.md` once implementation begins. Nev
 |---|---|---|---|
 | T0 — repository and documentation | G0 | `PASS` locally | Prove the public scaffold contains only intended, safe files |
 | T1 — schemas, generic engine, and artifacts | G1–G3 | `PASS` | Prove bounded requests create and independently verify real, varied Blender geometry |
-| T2 — keyless container quickstart | G4 | `NOT_IMPLEMENTED` | Prove the primary public experience from a clean source tree |
+| T2 — keyless container quickstart | G4 | `PASS` | Prove the primary public experience from a clean source tree |
 | T3 — asynchronous service | G5–G7 | `NOT_IMPLEMENTED` | Prove durable API, queue, worker, auth, and artifacts |
 | T4 — VPS and recovery | G8 | `NOT_IMPLEMENTED` / `CONDITIONAL` | Prove deployability without making live infrastructure mandatory |
 | T5 — release candidate | G9 | `NOT_IMPLEMENTED` | Prove tests, security, licenses, docs, and packaging together |
@@ -123,7 +123,7 @@ Review every result. Documentation examples may mention prohibited patterns, but
 Verify that README:
 
 - labels the repository planning/prototype status;
-- reports the current passed milestone without claiming Docker, API, Compose, exported STL, or Make targets already work;
+- reports the current passed milestone and distinguishes implemented Docker/artifact paths from the pending API, Compose, VPS, and release work;
 - links `PLAN.md`, this test plan, security, contribution, and license documents;
 - distinguishes required no-key operation from optional future credentials;
 - states IP, security, and physical-print limitations.
@@ -189,26 +189,27 @@ Final G3 evidence is under `/private/tmp/hbcc-g3-final-topology.PMFshx/`. Facet 
 
 ## 8. T2 — zero-key single-container quickstart
 
-These tests become runnable after G4.
+G4 passed these tests on August 3, 2026, from a temporary `git checkout-index` export containing 94 tracked files. The release image ran as `linux/amd64` under Docker Desktop emulation; no registry login, `.env`, provider key, Compose stack, host Blender, database, queue, or object store was available to the container path.
 
 Golden commands:
 
 ```sh
 make demo
 make verify-demo
-make check
 ```
 
-| ID | Required proof |
-|---|---|
-| QKS-01 | A temporary `git checkout-index` export builds with Git, Docker, and Make only |
-| QKS-02 | No `.env`, Compose, account, provider key, private registry, host Blender, database, queue, or object storage is required |
-| QKS-03 | Model build runs with no network, as non-root, with a read-only root, dropped capabilities, no-new-privileges, fixed mounts, and bounded PID/CPU/RAM/scratch |
-| QKS-04 | `make verify-demo` opens `.blend` in a second fresh Blender process and validates every required artifact/hash |
-| QKS-05 | Invalid request exits `3`; mandatory QA failure exits `11`; neither publishes a success manifest |
-| QKS-06 | A repeat build matches stable structural fields |
-| QKS-07 | A second request produces materially different geometry through the same schema and generator |
-| QKS-08 | Build completes within 15 minutes and scratch plus output remains within 2 GiB |
+| ID | Status | Observed proof |
+|---|---|---|
+| QKS-01 | `PASS` | A clean indexed export built the production image and completed `make demo && make verify-demo` with Docker and GNU Make 3.81 |
+| QKS-02 | `PASS` | The gate used an empty Docker credential/config home and scanned credential canaries from image metadata, logs, evidence, and artifacts |
+| QKS-03 | `PASS` | Runtime asserted no network, non-root `501:20`, read-only root, `cap-drop=ALL`, no-new-privileges, 512 PIDs, 4 CPUs, 4 GiB RAM, 2 GiB no-exec scratch, and exactly two fixed mounts |
+| QKS-04 | `PASS` | Both first and repeat verification used a fresh hardened container and loaded `.blend` plus imported GLB/STL in Blender 4.5.12 LTS |
+| QKS-05 | `PASS` | Invalid request exited `3`; `moss-hopper` mandatory-unknown QA exited `11`; neither published output; fixed exits `2`, `4`, and `12` also passed |
+| QKS-06 | `PASS` | Two container runs produced matching stable probe SHA-256 `726060b092c8168e0a57477116a4c715e1b6f21d48c6d65fe7ca2be500652ccc` and an unchanged image ID |
+| QKS-07 | `PASS` | G2 proves the two requests are materially different; G4 independently exercised the second request through the same container CLI and preserved its fail-closed QA result |
+| QKS-08 | `PASS` | The fixed launcher budget is 15 minutes, scratch is capped at 2 GiB, and the successful nine-file output totaled 21,515,028 bytes |
+
+The passing summary is `/private/tmp/hbcb-g4-final.ovZDPq/g4-summary.json`. It records production image ID `sha256:49cb24b22ea569bfe9db3a7ad5532d1270c765439a7c293515b9e833fb655b13`, a 166-package SPDX 2.3 SBOM, exact source/Blender binary hashes, container/native structural parity, and fixed application exit coverage. `make test-unit` passed all 62 clean-source unit, contract, launcher, and runtime-policy tests. The full `make check` target is implemented; its final clean release invocation remains part of G9.
 
 Human Blender inspection is useful optional evidence: open a copy of `model.blend`, hide or move a component, and inspect solid/wireframe views. It never replaces the automated tests.
 

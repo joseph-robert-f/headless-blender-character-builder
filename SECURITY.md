@@ -2,11 +2,11 @@
 
 ## Current status
 
-This repository is an active pre-release implementation. The native deterministic builder has passed G1–G3, including strict input rejection, private staging, atomic success publication, disabled embedded-script auto-execution, offline Blender processes, artifact hashes, and fresh reload/re-import checks. There is still no supported production release, hosted service, or security-maintenance window. Do not expose the planned API or worker to untrusted users until the container, service, and release security gates in `PLAN.md` pass.
+This repository is an active pre-release implementation. The deterministic builder has passed G1–G4, including strict input rejection, private staging, atomic success publication, disabled embedded-script auto-execution, offline Blender processes, artifact hashes, fresh reload/re-import checks, a pinned non-root image, and a keyless one-shot runtime with no network, a read-only root, dropped capabilities, fixed mounts, and resource limits. There is still no supported production release, hosted service, or security-maintenance window. Do not expose the planned service to untrusted users until its service and release security gates in `PLAN.md` pass.
 
 ## Reporting a vulnerability
 
-After the GitHub repository is created, maintainers should enable GitHub private vulnerability reporting. Use the repository's **Security → Report a vulnerability** flow for suspected vulnerabilities. Do not publish exploit details, secrets, personal data, or signed artifact URLs in a public issue.
+Maintainers should enable GitHub private vulnerability reporting. Use the repository's **Security → Report a vulnerability** flow for suspected vulnerabilities. Do not publish exploit details, secrets, personal data, or signed artifact URLs in a public issue.
 
 If private reporting is not yet enabled, open a minimal public issue requesting a private maintainer contact without including sensitive technical details.
 

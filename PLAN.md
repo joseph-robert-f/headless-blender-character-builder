@@ -2,7 +2,7 @@
 
 Status: **Execution-ready v0.1 build plan**
 
-Last updated: **July 31, 2026**
+Last updated: **August 3, 2026**
 
 This document is the authoritative scope for the first public implementation. A future `/goal` run should execute the release-blocking milestones **M0 through M5 in order**, use the defaults in Section 17 unless the user explicitly overrides them, and leave the repository in a locally verified, publication-ready state. Post-v0.1 work is context, not part of that completion target.
 
@@ -100,27 +100,41 @@ make verify-demo
 The equivalent direct-container contract should remain documented for users who do not use Make:
 
 ```sh
-mkdir -p build/demo
+mkdir -p build
+test ! -e build/demo
+host_uid="$(id -u)"
+runtime_uid="$host_uid"
+runtime_gid="$(id -g)"
+if [ "$runtime_uid" = 0 ]; then runtime_uid=65532; fi
+if [ "$runtime_gid" = 0 ]; then runtime_gid=65532; fi
+if [ "$host_uid" = 0 ]; then chown "$runtime_uid:$runtime_gid" build; fi
 docker build \
   --file docker/builder.Dockerfile \
+  --target builder \
   --tag headless-blender-character-builder:dev \
+  --platform linux/amd64 \
   .
-docker run --rm \
+image_id="$(docker image inspect --format '{{.Id}}' headless-blender-character-builder:dev)"
+docker run --rm --init \
+  --platform linux/amd64 \
   --network none \
   --read-only \
   --cap-drop ALL \
   --security-opt no-new-privileges:true \
   --pids-limit 512 \
   --cpus 4 \
-  --memory 8g \
-  --user "$(id -u):$(id -g)" \
-  --tmpfs /work:rw,nosuid,nodev,size=2g,mode=1777 \
-  --mount type=bind,src="$PWD/examples/requests/facet-bot.json",dst=/input/request.json,readonly \
-  --mount type=bind,src="$PWD/build/demo",dst=/output \
+  --memory 4g \
+  --user "$runtime_uid:$runtime_gid" \
+  --tmpfs /work:rw,nosuid,nodev,noexec,size=2g,mode=1777 \
+  --mount "type=bind,source=$PWD/examples/requests/facet-bot.json,target=/input/request.json,readonly" \
+  --mount "type=bind,source=$PWD/build,target=/output" \
+  --env HBCB_EXECUTION_MODE=container \
+  --env HBCB_WORKER_IMAGE_REFERENCE=headless-blender-character-builder:dev \
+  --env "HBCB_WORKER_IMAGE_ID=$image_id" \
   headless-blender-character-builder:dev \
   build \
   --request /input/request.json \
-  --output /output
+  --output /output/demo
 ```
 
 A successful v0.1 demo must expose:

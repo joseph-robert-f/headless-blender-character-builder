@@ -11,11 +11,14 @@ requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
 dependencies = []
 
+[project.scripts]
+builder = "builder_cli.__main__:entrypoint"
+
 [project.optional-dependencies]
 test = [
   "jsonschema==4.26.0",
 ]
 
 [tool.setuptools.packages.find]
-include = ["blender*", "shared*"]
+include = ["blender*", "builder_cli*", "shared*"]
 exclude = ["tests*"]

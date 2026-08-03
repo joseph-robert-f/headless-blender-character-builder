@@ -1,6 +1,6 @@
 # v0.1 JSON Contracts
 
-Status: contracts passed in G1, deterministic geometry generation passed in G2, and native artifact publication plus complete geometry QA passed in G3. Container packaging begins in G4.
+Status: contracts passed in G1, deterministic geometry generation passed in G2, native artifact publication plus complete geometry QA passed in G3, and the pinned keyless container plus trusted `builder build|verify` wrapper passed in G4.
 
 The one-shot builder and later HTTP service accept the same complete `BuildRequest`. Callers choose a reviewed generator and bounded profiles; they do not submit Python, Blender operations, paths, URLs, add-ons, environment variables, or renderer flags.
 

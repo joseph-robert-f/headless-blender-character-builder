@@ -36,6 +36,9 @@ The decisions below record the binding defaults from `PLAN.md` Section 17. Contr
 | D-028 | Reviewed palette persistence | Convert declared sRGB hex colors to Blender scene-linear inputs and mark every reviewed material with a fake user | Keeps renders faithful and prevents an unused declared swatch from disappearing across save/reload and changing provenance |
 | D-029 | Diagnostic lighting | Use fixed 512 px, 32-sample Eevee views with shadow-free area lights | Removes shadow-map stippling at intentionally overlapping display solids while geometry/topology remain independently verified |
 | D-030 | Printable-shell connectivity | Count shells by face adjacency through shared edges and require zero non-manifold vertices as well as zero non-manifold edges | Rejects bow-tie or vertex-pinched meshes that vertex-only connectivity can misclassify as one printable manifold shell |
+| D-031 | Container output mount | Supersede the precreated `build/demo` sketch in `PLAN.md` Section 5: mount the caller-owned `build/` parent at `/output` and require final `/output/demo` not to exist | Preserves the G3 private sibling-stage plus atomic-rename contract; mounting `build/demo` itself would make atomic publication impossible |
+| D-032 | Builder image supply chain | Pin the Debian base by digest and snapshot date, verify the official Blender 4.5.12 archive checksum, keep production Python dependency-free, hash-lock test wheels, and bake notices plus an SPDX 2.3 SBOM | Makes the keyless image rebuild auditable without trusting floating system or Python dependencies |
+| D-033 | One-shot resource envelope | Limit each build or verifier container to 4 CPUs, 4 GiB RAM, 512 PIDs, and a 2 GiB no-exec scratch tmpfs | Passed the reference artifact under emulation while leaving host overhead within the recommended 8–16 GiB development capacity |
 
 ## Recorded execution conditions
 

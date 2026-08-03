@@ -1,5 +1,7 @@
 .git
 .github
+.agents
+.codex
 .env
 .env.*
 build
@@ -26,6 +28,11 @@ artifact.json
 character_model_factory_report.html
 character_model_business_source_notes.md
 queries
+create_codex_avatar.py
+create_turntable_animation.py
+prove_model_geometry.py
+verify_codex_avatar.py
+verify_turntable_animation.py
 __pycache__
 *.py[cod]
 .pytest_cache
