@@ -22,6 +22,7 @@ SAFE_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 WORKER_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 OBJECT_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,1023}$")
 MAX_PUBLISHED_BYTES = 2 * 1024 * 1024 * 1024
+MAX_DISPATCH_COUNT = (1 << 63) - 1
 
 ARTIFACT_CONTENT_TYPES = MappingProxyType(
     {
@@ -374,6 +375,10 @@ class OutboxRecord:
         require_utc(self.available_at, "available_at")
         if self.dispatched_at is not None:
             require_utc(self.dispatched_at, "dispatched_at")
-        if isinstance(self.dispatch_count, bool) or not isinstance(self.dispatch_count, int) or not 0 <= self.dispatch_count <= 100:
+        if (
+            isinstance(self.dispatch_count, bool)
+            or not isinstance(self.dispatch_count, int)
+            or not 0 <= self.dispatch_count <= MAX_DISPATCH_COUNT
+        ):
             raise ServiceError("invalid_outbox", "outbox dispatch count is outside policy")
         require_safe_code(self.last_error_code, "last_error_code")

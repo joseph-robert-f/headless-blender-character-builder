@@ -24,7 +24,10 @@ def main() -> int:
     with psycopg.connect(dsn) as connection:
         first = apply_postgres_migrations(connection)
         second = apply_postgres_migrations(connection)
-        if first.applied != ("0001_g5_foundation",) or not second.already_current:
+        if first.applied != (
+            "0001_g5_foundation",
+            "0002_g6_outbox_counter",
+        ) or not second.already_current:
             raise RuntimeError("migration application was not forward-only and idempotent")
         with connection.cursor() as cursor:
             cursor.execute("SHOW server_version")

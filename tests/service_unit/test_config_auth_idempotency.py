@@ -41,6 +41,7 @@ class ConfigurationTests(unittest.TestCase):
             ("HBCB_API_TOKEN", "replace-me"),
             ("HBCB_DEPLOYMENT_NAMESPACE", "../escape"),
             ("HBCB_DATABASE_URL", "https://postgres.invalid/db"),
+            ("HBCB_DATABASE_URL", "postgresql+psycopg://user:password@postgres:5432/hbcb"),
             ("HBCB_DATABASE_URL", "postgresql://postgres:5432/hbcb"),
             ("HBCB_DATABASE_URL", "postgresql://user:password@postgres:5432/"),
             ("HBCB_REDIS_URL", "redis://redis:99999/0"),

@@ -166,7 +166,7 @@ class ServiceConfig:
             idempotency_secret=idempotency_secret,
             database_url=_service_url(
                 _required(environment, "HBCB_DATABASE_URL"),
-                schemes=("postgresql", "postgresql+psycopg"),
+                schemes=("postgresql",),
                 label="database",
                 require_username=True,
                 path_pattern=re.compile(r"^/[A-Za-z0-9_-]{1,63}$"),
@@ -224,7 +224,7 @@ class WorkerConfig:
             deployment_namespace=_namespace(environment),
             database_url=_service_url(
                 _required(environment, "HBCB_DATABASE_URL"),
-                schemes=("postgresql", "postgresql+psycopg"),
+                schemes=("postgresql",),
                 label="database",
                 require_username=True,
                 path_pattern=re.compile(r"^/[A-Za-z0-9_-]{1,63}$"),
@@ -257,7 +257,7 @@ class MigratorConfig:
             deployment_namespace=_namespace(environment),
             database_url=_service_url(
                 _required(environment, "HBCB_DATABASE_URL"),
-                schemes=("postgresql", "postgresql+psycopg"),
+                schemes=("postgresql",),
                 label="database",
                 require_username=True,
                 path_pattern=re.compile(r"^/[A-Za-z0-9_-]{1,63}$"),

@@ -8,7 +8,21 @@ version = "0.1.0"
 description = "Durable service adapters for Headless Blender Character Builder."
 requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
-dependencies = []
+dependencies = [
+  "fastapi==0.139.2",
+  "minio==7.2.20",
+  "psycopg[binary]==3.3.4",
+  "redis==8.0.1",
+  "uvicorn==0.51.0",
+]
+
+[project.optional-dependencies]
+test = ["httpx2==2.7.0"]
+
+[project.scripts]
+hbcb-api = "hbcb_service.api_main:main"
+hbcb-migrate = "hbcb_service.migrate_main:main"
+hbcb-worker = "hbcb_service.worker_main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

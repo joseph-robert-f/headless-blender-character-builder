@@ -54,10 +54,13 @@ class FakeConnection:
 class MigrationCatalogTests(unittest.TestCase):
     def test_catalog_is_ordered_utf8_bounded_and_checksum_addressed(self) -> None:
         migrations = load_migrations()
-        self.assertEqual([migration.version for migration in migrations], ["0001_g5_foundation"])
-        migration = migrations[0]
-        self.assertEqual(len(migration.sha256), 64)
-        self.assertIn("CREATE TABLE hbcb.builds", migration.sql)
+        self.assertEqual(
+            [migration.version for migration in migrations],
+            ["0001_g5_foundation", "0002_g6_outbox_counter"],
+        )
+        self.assertTrue(all(len(migration.sha256) == 64 for migration in migrations))
+        self.assertIn("CREATE TABLE hbcb.builds", migrations[0].sql)
+        self.assertIn("ALTER COLUMN dispatch_count TYPE bigint", migrations[1].sql)
 
     def test_schema_contains_all_durable_models_and_release_constraints(self) -> None:
         sql = load_migrations()[0].sql
@@ -104,7 +107,10 @@ class MigrationRunnerTests(unittest.TestCase):
     def test_first_apply_and_idempotent_reapply(self) -> None:
         connection = FakeConnection()
         first = apply_postgres_migrations(connection)
-        self.assertEqual(first.applied, ("0001_g5_foundation",))
+        self.assertEqual(
+            first.applied,
+            ("0001_g5_foundation", "0002_g6_outbox_counter"),
+        )
         self.assertFalse(first.already_current)
         self.assertEqual(connection.commits, 1)
         second = apply_postgres_migrations(connection)
@@ -116,7 +122,7 @@ class MigrationRunnerTests(unittest.TestCase):
             for sql, parameters in connection.executions
             if "INSERT INTO hbcb.schema_migrations" in sql
         ]
-        self.assertEqual(len(inserts), 1)
+        self.assertEqual(len(inserts), 2)
 
     def test_recorded_checksum_drift_rolls_back(self) -> None:
         connection = FakeConnection()

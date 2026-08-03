@@ -7,8 +7,11 @@ and repository added around this interface; Redis is never authoritative.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import re
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import RLock
 from typing import Callable, Dict, Mapping, Optional, Protocol, Sequence, Tuple, Union
 from uuid import UUID, uuid4
@@ -23,6 +26,7 @@ from .idempotency import (
     require_same_request,
 )
 from .models import (
+    MAX_DISPATCH_COUNT,
     REQUIRED_PUBLISHED_ARTIFACTS,
     AttemptRecord,
     AttemptStatus,
@@ -39,10 +43,71 @@ from .models import (
 from .storage import artifact_object_key
 
 
+LEASE_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43,256}$")
+
+
+def _next_dispatch_count(value: int) -> int:
+    return min(value + 1, MAX_DISPATCH_COUNT)
+
+
+def _lease_digest(lease_token: str) -> str:
+    if not isinstance(lease_token, str) or LEASE_TOKEN_PATTERN.fullmatch(lease_token) is None:
+        raise StateConflict("invalid_lease_token", "lease token is outside policy")
+    return hashlib.sha256(lease_token.encode("ascii")).hexdigest()
+
+
+def _lease_duration(lease_seconds: int) -> timedelta:
+    if (
+        isinstance(lease_seconds, bool)
+        or not isinstance(lease_seconds, int)
+        or not 5 <= lease_seconds <= 300
+    ):
+        raise StateConflict("invalid_lease_duration", "lease duration is outside policy")
+    return timedelta(seconds=lease_seconds)
+
+
+def _retry_delay(retry_delay_seconds: int) -> timedelta:
+    if (
+        isinstance(retry_delay_seconds, bool)
+        or not isinstance(retry_delay_seconds, int)
+        or not 0 <= retry_delay_seconds <= 300
+    ):
+        raise StateConflict("invalid_retry_delay", "retry delay is outside policy")
+    return timedelta(seconds=retry_delay_seconds)
+
+
 @dataclass(frozen=True)
 class BuildReservation:
     build: BuildRecord
     created: bool
+
+
+@dataclass(frozen=True)
+class AttemptLease:
+    """One active, fenced worker lease for a logical build."""
+
+    build: BuildRecord
+    attempt: AttemptRecord
+
+
+@dataclass(frozen=True)
+class AttemptHeartbeat:
+    """Lease-renewal result returned to the worker supervisor."""
+
+    build_id: UUID
+    attempt_id: UUID
+    lease_expires_at: datetime
+    cancel_requested: bool
+
+
+@dataclass(frozen=True)
+class AttemptCompletion:
+    """Atomic attempt/build completion result."""
+
+    build: BuildRecord
+    attempt: AttemptRecord
+    requeued: bool
+    exhausted: bool
 
 
 class BuildStateStore(Protocol):
@@ -78,6 +143,51 @@ class BuildStateStore(Protocol):
     def register_running_attempt(self, attempt: AttemptRecord) -> AttemptRecord:
         ...
 
+    def lease_build(
+        self,
+        build_id: UUID,
+        worker_id: str,
+        lease_token: str,
+        *,
+        lease_seconds: int,
+    ) -> Optional[AttemptLease]:
+        ...
+
+    def heartbeat_attempt(
+        self,
+        attempt_id: UUID,
+        lease_token: str,
+        *,
+        lease_seconds: int,
+    ) -> AttemptHeartbeat:
+        ...
+
+    def complete_attempt(
+        self,
+        attempt_id: UUID,
+        lease_token: str,
+        *,
+        status: AttemptStatus,
+        exit_code: Optional[int],
+        reason_code: str,
+        retryable: bool,
+        retry_delay_seconds: int = 0,
+    ) -> AttemptCompletion:
+        ...
+
+    def publish_attempt_success(
+        self,
+        attempt_id: UUID,
+        lease_token: str,
+        artifacts: Sequence[ArtifactRecord],
+    ) -> BuildRecord:
+        ...
+
+    def recover_expired_attempts(
+        self, *, retry_delay_seconds: int = 0, limit: int = 100
+    ) -> Tuple[AttemptCompletion, ...]:
+        ...
+
 
 class InMemoryStateStore:
     """Transactional reference semantics for tests and local diagnostics."""
@@ -88,6 +198,7 @@ class InMemoryStateStore:
         idempotency_secret: bytes,
         now: Callable[[], datetime] = utc_now,
         build_id_factory: Callable[[], UUID] = uuid4,
+        attempt_id_factory: Callable[[], UUID] = uuid4,
         max_attempts: int = 2,
         deployment_namespace: str = "local",
         storage_bucket: str = "hbcb-artifacts",
@@ -103,6 +214,7 @@ class InMemoryStateStore:
         self._secret = idempotency_secret
         self._now = now
         self._build_id_factory = build_id_factory
+        self._attempt_id_factory = attempt_id_factory
         self._max_attempts = max_attempts
         self._deployment_namespace = deployment_namespace
         self._storage_bucket = storage_bucket
@@ -240,6 +352,334 @@ class InMemoryStateStore:
             except (KeyError, TypeError) as exc:
                 raise StateConflict("attempt_not_found", "attempt does not exist") from exc
 
+    def attempts_for(self, build_id: UUID) -> Tuple[AttemptRecord, ...]:
+        with self._lock:
+            if build_id not in self._builds:
+                raise StateConflict("build_not_found", "build does not exist")
+            return tuple(
+                sorted(
+                    (
+                        attempt
+                        for attempt in self._attempts.values()
+                        if attempt.build_id == build_id
+                    ),
+                    key=lambda attempt: attempt.attempt_number,
+                )
+            )
+
+    def lease_build(
+        self,
+        build_id: UUID,
+        worker_id: str,
+        lease_token: str,
+        *,
+        lease_seconds: int,
+    ) -> Optional[AttemptLease]:
+        token_sha256 = _lease_digest(lease_token)
+        duration = _lease_duration(lease_seconds)
+        with self._lock:
+            build = self.get_build(build_id)
+            if build.status is not BuildStatus.QUEUED:
+                return None
+            existing = tuple(
+                attempt
+                for attempt in self._attempts.values()
+                if attempt.build_id == build_id
+            )
+            if any(
+                attempt.status in (AttemptStatus.LEASED, AttemptStatus.RUNNING)
+                for attempt in existing
+            ):
+                raise StateConflict("active_attempt_conflict", "build already has an active attempt")
+            attempt_number = max(
+                (attempt.attempt_number for attempt in existing), default=0
+            ) + 1
+            if attempt_number > build.max_attempts:
+                raise StateConflict("retry_policy_exhausted", "build has no attempts remaining")
+            attempt_id = self._attempt_id_factory()
+            if not isinstance(attempt_id, UUID) or attempt_id in self._attempts:
+                raise StateConflict("attempt_id_collision", "attempt identifier could not be allocated")
+            now = self._now()
+            attempt = AttemptRecord(
+                attempt_id=attempt_id,
+                build_id=build_id,
+                attempt_number=attempt_number,
+                status=AttemptStatus.RUNNING,
+                worker_id=worker_id,
+                lease_token_sha256=token_sha256,
+                lease_expires_at=now + duration,
+                heartbeat_at=now,
+                started_at=now,
+                finished_at=None,
+                exit_code=None,
+                reason_code=None,
+            )
+            updated = replace(
+                build,
+                status=BuildStatus.RUNNING,
+                state_version=build.state_version + 1,
+                updated_at=now,
+            )
+            self._attempts[attempt_id] = attempt
+            self._builds[build_id] = updated
+            self._events[build_id].append(
+                BuildEvent(
+                    build_id=build_id,
+                    sequence=len(self._events[build_id]) + 1,
+                    event_type="attempt_started",
+                    from_status=BuildStatus.QUEUED,
+                    to_status=BuildStatus.RUNNING,
+                    reason_code=None,
+                    created_at=now,
+                    attempt_id=attempt_id,
+                )
+            )
+            return AttemptLease(updated, attempt)
+
+    def heartbeat_attempt(
+        self,
+        attempt_id: UUID,
+        lease_token: str,
+        *,
+        lease_seconds: int,
+    ) -> AttemptHeartbeat:
+        token_sha256 = _lease_digest(lease_token)
+        duration = _lease_duration(lease_seconds)
+        with self._lock:
+            attempt = self.attempt_for(attempt_id)
+            if attempt.status not in (AttemptStatus.LEASED, AttemptStatus.RUNNING):
+                raise StateConflict("lease_not_active", "attempt lease is no longer active")
+            if not hmac.compare_digest(attempt.lease_token_sha256, token_sha256):
+                raise StateConflict("lease_fence_mismatch", "attempt lease fence does not match")
+            now = self._now()
+            if attempt.lease_expires_at <= now:
+                raise StateConflict("lease_expired", "attempt lease has expired")
+            updated = replace(
+                attempt,
+                heartbeat_at=now,
+                lease_expires_at=now + duration,
+            )
+            self._attempts[attempt_id] = updated
+            build = self.get_build(attempt.build_id)
+            return AttemptHeartbeat(
+                build_id=build.build_id,
+                attempt_id=attempt_id,
+                lease_expires_at=updated.lease_expires_at,
+                cancel_requested=build.cancel_requested_at is not None,
+            )
+
+    def complete_attempt(
+        self,
+        attempt_id: UUID,
+        lease_token: str,
+        *,
+        status: AttemptStatus,
+        exit_code: Optional[int],
+        reason_code: str,
+        retryable: bool,
+        retry_delay_seconds: int = 0,
+    ) -> AttemptCompletion:
+        token_sha256 = _lease_digest(lease_token)
+        delay = _retry_delay(retry_delay_seconds)
+        if status not in (
+            AttemptStatus.FAILED,
+            AttemptStatus.NEEDS_REVIEW,
+            AttemptStatus.CANCELED,
+            AttemptStatus.TIMED_OUT,
+        ):
+            raise StateConflict("invalid_attempt_outcome", "attempt outcome is outside policy")
+        require_safe_code(reason_code, "reason_code", required=True)
+        with self._lock:
+            attempt = self.attempt_for(attempt_id)
+            if attempt.status not in (AttemptStatus.LEASED, AttemptStatus.RUNNING):
+                raise StateConflict("lease_not_active", "attempt lease is no longer active")
+            if not hmac.compare_digest(attempt.lease_token_sha256, token_sha256):
+                raise StateConflict("lease_fence_mismatch", "attempt lease fence does not match")
+            now = self._now()
+            if attempt.lease_expires_at <= now:
+                raise StateConflict("lease_expired", "attempt lease has expired")
+            build = self.get_build(attempt.build_id)
+            if build.status is not BuildStatus.RUNNING:
+                raise StateConflict("invalid_attempt", "attempt build is not running")
+            cancel_wins = build.cancel_requested_at is not None
+            if status is AttemptStatus.CANCELED and not cancel_wins:
+                raise StateConflict("cancel_requires_request", "cancellation was not requested")
+            final_attempt_status = AttemptStatus.CANCELED if cancel_wins else status
+            final_reason = "canceled_by_operator" if cancel_wins else reason_code
+            can_retry = (
+                not cancel_wins
+                and status in (AttemptStatus.FAILED, AttemptStatus.TIMED_OUT)
+                and bool(retryable)
+                and attempt.attempt_number < build.max_attempts
+            )
+            if can_retry:
+                target = BuildStatus.QUEUED
+            elif final_attempt_status is AttemptStatus.CANCELED:
+                target = BuildStatus.CANCELED
+            elif final_attempt_status is AttemptStatus.NEEDS_REVIEW:
+                target = BuildStatus.NEEDS_REVIEW
+            else:
+                target = BuildStatus.FAILED
+            terminal = target in TERMINAL_BUILD_STATUSES
+            updated_attempt = replace(
+                attempt,
+                status=final_attempt_status,
+                finished_at=now,
+                exit_code=exit_code,
+                reason_code=final_reason,
+            )
+            updated_build = replace(
+                build,
+                status=target,
+                state_version=build.state_version + 1,
+                terminal_code=final_reason if terminal else None,
+                updated_at=now,
+                finished_at=now if terminal else None,
+            )
+            self._attempts[attempt_id] = updated_attempt
+            self._builds[build.build_id] = updated_build
+            self._events[build.build_id].append(
+                BuildEvent(
+                    build_id=build.build_id,
+                    sequence=len(self._events[build.build_id]) + 1,
+                    event_type="retry_queued" if can_retry else target.value,
+                    from_status=BuildStatus.RUNNING,
+                    to_status=target,
+                    reason_code=final_reason,
+                    created_at=now,
+                    attempt_id=attempt_id,
+                )
+            )
+            if can_retry:
+                self._append_outbox(
+                    build.build_id,
+                    updated_build.state_version,
+                    now + delay,
+                )
+            return AttemptCompletion(
+                build=updated_build,
+                attempt=updated_attempt,
+                requeued=can_retry,
+                exhausted=(
+                    not can_retry
+                    and bool(retryable)
+                    and not cancel_wins
+                    and status in (AttemptStatus.FAILED, AttemptStatus.TIMED_OUT)
+                ),
+            )
+
+    def publish_attempt_success(
+        self,
+        attempt_id: UUID,
+        lease_token: str,
+        artifacts: Sequence[ArtifactRecord],
+    ) -> BuildRecord:
+        token_sha256 = _lease_digest(lease_token)
+        with self._lock:
+            attempt = self.attempt_for(attempt_id)
+            if attempt.status is not AttemptStatus.RUNNING:
+                raise StateConflict("lease_not_active", "attempt lease is no longer active")
+            if not hmac.compare_digest(attempt.lease_token_sha256, token_sha256):
+                raise StateConflict("lease_fence_mismatch", "attempt lease fence does not match")
+            if attempt.lease_expires_at <= self._now():
+                raise StateConflict("lease_expired", "attempt lease has expired")
+            build = self.get_build(attempt.build_id)
+            return self.publish_success(
+                build.build_id,
+                build.state_version,
+                artifacts,
+            )
+
+    def recover_expired_attempts(
+        self, *, retry_delay_seconds: int = 0, limit: int = 100
+    ) -> Tuple[AttemptCompletion, ...]:
+        delay = _retry_delay(retry_delay_seconds)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+            raise StateConflict("invalid_recovery_limit", "recovery limit is outside policy")
+        with self._lock:
+            now = self._now()
+            candidates = sorted(
+                (
+                    attempt
+                    for attempt in self._attempts.values()
+                    if attempt.status in (AttemptStatus.LEASED, AttemptStatus.RUNNING)
+                    and attempt.lease_expires_at <= now
+                ),
+                key=lambda attempt: (attempt.lease_expires_at, attempt.attempt_number),
+            )[:limit]
+            results = []
+            for attempt in candidates:
+                build = self.get_build(attempt.build_id)
+                cancel_wins = build.cancel_requested_at is not None
+                can_retry = (
+                    build.status is BuildStatus.RUNNING
+                    and not cancel_wins
+                    and attempt.attempt_number < build.max_attempts
+                )
+                if build.status is not BuildStatus.RUNNING:
+                    target = build.status
+                elif cancel_wins:
+                    target = BuildStatus.CANCELED
+                elif can_retry:
+                    target = BuildStatus.QUEUED
+                else:
+                    target = BuildStatus.FAILED
+                reason = "canceled_by_operator" if cancel_wins else "worker_lost"
+                updated_attempt = replace(
+                    attempt,
+                    status=AttemptStatus.CANCELED if cancel_wins else AttemptStatus.LOST,
+                    finished_at=now,
+                    reason_code=reason,
+                )
+                if target is build.status:
+                    updated_build = build
+                else:
+                    terminal = target in TERMINAL_BUILD_STATUSES
+                    updated_build = replace(
+                        build,
+                        status=target,
+                        state_version=build.state_version + 1,
+                        terminal_code=reason if terminal else None,
+                        updated_at=now,
+                        finished_at=now if terminal else None,
+                    )
+                    self._builds[build.build_id] = updated_build
+                    self._events[build.build_id].append(
+                        BuildEvent(
+                            build_id=build.build_id,
+                            sequence=len(self._events[build.build_id]) + 1,
+                            event_type="retry_queued" if can_retry else target.value,
+                            from_status=BuildStatus.RUNNING,
+                            to_status=target,
+                            reason_code=reason,
+                            created_at=now,
+                            attempt_id=attempt.attempt_id,
+                        )
+                    )
+                    if can_retry:
+                        self._append_outbox(
+                            build.build_id,
+                            updated_build.state_version,
+                            now + delay,
+                        )
+                self._attempts[attempt.attempt_id] = updated_attempt
+                results.append(
+                    AttemptCompletion(
+                        build=updated_build,
+                        attempt=updated_attempt,
+                        requeued=can_retry,
+                        exhausted=(
+                            build.status is BuildStatus.RUNNING
+                            and not can_retry
+                            and not cancel_wins
+                        ),
+                    )
+                )
+            return tuple(results)
+
+    def ping(self) -> bool:
+        return True
+
     def pending_outbox(self) -> Tuple[OutboxRecord, ...]:
         with self._lock:
             return tuple(
@@ -259,7 +699,7 @@ class InMemoryStateStore:
             updated = replace(
                 current,
                 dispatched_at=self._now(),
-                dispatch_count=current.dispatch_count + 1,
+                dispatch_count=_next_dispatch_count(current.dispatch_count),
                 last_error_code=None,
             )
             self._outbox[outbox_id] = updated
@@ -276,11 +716,63 @@ class InMemoryStateStore:
                 raise StateConflict("outbox_already_dispatched", "outbox record is already dispatched")
             updated = replace(
                 current,
-                dispatch_count=current.dispatch_count + 1,
+                dispatch_count=_next_dispatch_count(current.dispatch_count),
                 last_error_code=reason_code,
             )
             self._outbox[outbox_id] = updated
             return updated
+
+    def dispatch_outbox(
+        self,
+        enqueue: Callable[[UUID], str],
+        *,
+        limit: int = 100,
+        retry_delay_seconds: int = 1,
+    ) -> Tuple[int, int]:
+        if not callable(enqueue):
+            raise StateConflict("invalid_queue_callback", "queue callback is invalid")
+        delay = _retry_delay(retry_delay_seconds)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+            raise StateConflict("invalid_outbox_limit", "outbox limit is outside policy")
+        dispatched = 0
+        failed = 0
+        with self._lock:
+            now = self._now()
+            candidates = [
+                item
+                for _, item in sorted(self._outbox.items())
+                if item.dispatched_at is None and item.available_at <= now
+            ][:limit]
+            for item in candidates:
+                build = self.get_build(item.build_id)
+                if build.status is not BuildStatus.QUEUED:
+                    self._outbox[item.outbox_id] = replace(
+                        item,
+                        dispatched_at=now,
+                        dispatch_count=_next_dispatch_count(item.dispatch_count),
+                        last_error_code=None,
+                    )
+                    dispatched += 1
+                    continue
+                try:
+                    enqueue(item.build_id)
+                except Exception:
+                    self._outbox[item.outbox_id] = replace(
+                        item,
+                        available_at=now + delay,
+                        dispatch_count=_next_dispatch_count(item.dispatch_count),
+                        last_error_code="redis_unavailable",
+                    )
+                    failed += 1
+                    continue
+                self._outbox[item.outbox_id] = replace(
+                    item,
+                    dispatched_at=now,
+                    dispatch_count=_next_dispatch_count(item.dispatch_count),
+                    last_error_code=None,
+                )
+                dispatched += 1
+        return dispatched, failed
 
     def transition(
         self,
@@ -328,6 +820,8 @@ class InMemoryStateStore:
             self._require_version(current, expected_version)
             if current.status in TERMINAL_BUILD_STATUSES:
                 raise StateConflict("terminal_build", "terminal build cannot be canceled")
+            if current.cancel_requested_at is not None:
+                return current
             now = self._now()
             immediate = current.status in (BuildStatus.VALIDATING, BuildStatus.QUEUED)
             target = BuildStatus.CANCELED if immediate else current.status

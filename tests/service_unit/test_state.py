@@ -270,3 +270,27 @@ class OutboxTests(unittest.TestCase):
         self.assertEqual(store.mark_outbox_dispatched(outbox.outbox_id), dispatched)
         with self.assertRaises(StateConflict):
             store.mark_outbox_error(outbox.outbox_id, "another_error")
+
+    def test_dispatch_recovers_after_more_than_one_hundred_queue_failures(self) -> None:
+        store = fixed_store()
+        build_id = store.submit(
+            facet_request_bytes(), "facet-request-0001"
+        ).build.build_id
+
+        def unavailable(_build_id: UUID) -> str:
+            raise RuntimeError("synthetic Redis outage")
+
+        for _attempt in range(101):
+            self.assertEqual(
+                store.dispatch_outbox(unavailable, retry_delay_seconds=0),
+                (0, 1),
+            )
+        pending = store.pending_outbox()
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0].dispatch_count, 101)
+        self.assertEqual(
+            store.dispatch_outbox(lambda _build_id: "1-0", retry_delay_seconds=0),
+            (1, 0),
+        )
+        self.assertEqual(store.pending_outbox(), ())
+        self.assertEqual(store.get_build(build_id).status, BuildStatus.QUEUED)

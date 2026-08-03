@@ -34,6 +34,8 @@ class FakeRedis:
         self.group_calls = []
         self.xadd_calls = []
         self.read_response = []
+        self.autoclaim_response = [b"0-0", [], []]
+        self.autoclaim_calls = []
         self.ack_result = 1
         self.pipeline_commands = []
         self.raise_group = None
@@ -50,6 +52,10 @@ class FakeRedis:
     def xreadgroup(self, *args: object, **kwargs: object) -> object:
         self.read_arguments = (args, kwargs)
         return self.read_response
+
+    def xautoclaim(self, *args: object, **kwargs: object) -> object:
+        self.autoclaim_calls.append((args, kwargs))
+        return self.autoclaim_response
 
     def xack(self, *args: object) -> int:
         self.ack_arguments = args
@@ -104,6 +110,46 @@ class RedisQueueContractTests(unittest.TestCase):
         self.assertEqual(args[:2], ("workers-v1", "worker-1"))
         self.assertEqual(kwargs["count"], 1)
         self.assertEqual(kwargs["block"], 500)
+        self.assertEqual(
+            self.client.autoclaim_calls[0],
+            (
+                (self.queue.stream, "workers-v1", "worker-1", 60_000),
+                {"start_id": "0-0", "count": 1},
+            ),
+        )
+
+    def test_stale_pending_claim_is_recovered_before_new_delivery(self) -> None:
+        entry = (b"6-0", {b"build_id": str(self.build_id).encode("ascii")})
+        self.client.autoclaim_response = [b"0-0", [entry], []]
+        self.client.read_response = [
+            (self.queue.stream, [(b"7-0", {"build_id": str(self.build_id)})])
+        ]
+        recovered = self.queue.claim("replacement-worker", block_ms=0)
+        self.assertEqual(recovered, QueueMessage(self.build_id, "6-0"))
+        self.assertFalse(hasattr(self.client, "read_arguments"))
+
+    def test_crash_before_lease_allows_duplicate_redelivery_after_idle_threshold(self) -> None:
+        entry = (b"8-0", {b"build_id": str(self.build_id).encode("ascii")})
+        self.client.read_response = [(self.queue.stream, [entry])]
+        original = self.queue.claim("crashed-worker", block_ms=0)
+        self.assertEqual(original, QueueMessage(self.build_id, "8-0"))
+        self.client.autoclaim_response = [b"0-0", [entry], []]
+        replay = self.queue.claim("replacement-worker", block_ms=0)
+        self.assertEqual(replay, original)
+
+    def test_malformed_reclaim_responses_fail_closed(self) -> None:
+        malformed = (
+            [],
+            [b"bad", [], []],
+            [b"0-0", "not-entries", []],
+            [b"0-0", [(b"1-0", {b"build_id": str(self.build_id).encode(), b"extra": b"x"})], []],
+            [b"0-0", [], [b"bad"]],
+        )
+        for response in malformed:
+            with self.subTest(response=response):
+                self.client.autoclaim_response = response
+                with self.assertRaises(QueueError):
+                    self.queue.claim("worker-1", block_ms=0)
 
     def test_malformed_extra_cross_namespace_and_noncanonical_messages_fail(self) -> None:
         cases = (

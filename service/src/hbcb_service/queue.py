@@ -20,6 +20,7 @@ from .errors import QueueError
 CONSUMER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 RECEIPT_PATTERN = re.compile(r"^[0-9]+-[0-9]+$")
 GROUP_NAME = "workers-v1"
+STALE_CLAIM_IDLE_MS = 60_000
 
 
 @dataclass(frozen=True)
@@ -108,6 +109,9 @@ class RedisStreamsQueue:
             raise QueueError("invalid_consumer", "queue consumer is outside policy")
         if isinstance(block_ms, bool) or not isinstance(block_ms, int) or not 0 <= block_ms <= 60_000:
             raise QueueError("invalid_block_timeout", "queue block timeout is outside policy")
+        reclaimed = self._reclaim_stale(consumer)
+        if reclaimed is not None:
+            return reclaimed
         try:
             response = self._client.xreadgroup(
                 self.group,
@@ -120,18 +124,58 @@ class RedisStreamsQueue:
             raise QueueError("queue_unavailable", "queue claim failed") from exc
         if not response:
             return None
-        if not isinstance(response, Sequence) or len(response) != 1:
+        if not self._sequence(response) or len(response) != 1:
             raise QueueError("invalid_queue_message", "queue response shape is invalid")
         stream_name, entries = response[0]
-        if _text(stream_name, "stream") != self.stream or not isinstance(entries, Sequence) or len(entries) != 1:
+        if _text(stream_name, "stream") != self.stream or not self._sequence(entries) or len(entries) != 1:
             raise QueueError("invalid_queue_message", "queue response shape is invalid")
-        receipt_raw, fields = entries[0]
+        return self._message(entries[0])
+
+    def _reclaim_stale(self, consumer: str) -> Optional[QueueMessage]:
+        """Recover a claim lost before PostgreSQL leasing became authoritative."""
+
+        try:
+            response = self._client.xautoclaim(
+                self.stream,
+                self.group,
+                consumer,
+                STALE_CLAIM_IDLE_MS,
+                start_id="0-0",
+                count=1,
+            )
+        except Exception as exc:
+            raise QueueError("queue_unavailable", "queue stale-claim recovery failed") from exc
+        if not self._sequence(response) or len(response) not in (2, 3):
+            raise QueueError("invalid_queue_message", "queue reclaim response shape is invalid")
+        self._receipt(response[0])
+        entries = response[1]
+        if not self._sequence(entries) or len(entries) > 1:
+            raise QueueError("invalid_queue_message", "queue reclaim response shape is invalid")
+        if len(response) == 3:
+            deleted = response[2]
+            if not self._sequence(deleted):
+                raise QueueError("invalid_queue_message", "queue reclaim response shape is invalid")
+            for receipt in deleted:
+                self._receipt(receipt)
+        if not entries:
+            return None
+        return self._message(entries[0])
+
+    @staticmethod
+    def _sequence(value: Any) -> bool:
+        return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
+
+    @classmethod
+    def _message(cls, entry: Any) -> QueueMessage:
+        if not cls._sequence(entry) or len(entry) != 2:
+            raise QueueError("invalid_queue_message", "queue entry shape is invalid")
+        receipt_raw, fields = entry
         if not isinstance(fields, Mapping) or len(fields) != 1:
             raise QueueError("invalid_queue_message", "queue payload must contain only build_id")
         key, value = next(iter(fields.items()))
         if _text(key, "field") != "build_id":
             raise QueueError("invalid_queue_message", "queue payload must contain only build_id")
-        return QueueMessage(_canonical_uuid(value), self._receipt(receipt_raw))
+        return QueueMessage(_canonical_uuid(value), cls._receipt(receipt_raw))
 
     def acknowledge(self, message: QueueMessage) -> None:
         self._require_message(message)

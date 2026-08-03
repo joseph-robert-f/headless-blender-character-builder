@@ -12,7 +12,7 @@ Overall status: **in progress**
 | G3 | M1 artifacts and QA | passed | Exact nine-file artifact publication, actual-shell QA, fresh reload/re-import, repeat, and fail-closed paths passed |
 | G4 | M2 one-shot container | passed | Clean indexed source built and verified twice in a keyless hardened container; native parity, provenance/SBOM, exit contracts, and 62 clean-source tests passed |
 | G5 | M3 persistence interfaces | passed | Postgres migration/constraints, transactional outbox semantics, Redis build-ID contract, version-bound storage, scoped generated config, 55 service tests, and real PostgreSQL 16.9 gate passed |
-| G6 | M3 API and worker | pending | — |
+| G6 | M3 API and worker | passed | Auth-first bounded FastAPI, durable fenced worker lifecycle, exact immutable publication, stale-queue/outbox recovery, 154-test repository suite, Linux process-tree gate, and real PostgreSQL 16.9 gate passed |
 | G7 | M3 Compose service | pending | — |
 | G8 | M4 VPS package | pending | — |
 | G9 | M5 release candidate | pending | — |
@@ -329,3 +329,48 @@ Deviation/condition:
 - No image, source update, database, artifact, or credential was published remotely. The PostgreSQL container and credentials used by the gate were synthetic and removed after the test.
 
 G5 gate result: **passed**. G6 FastAPI routes, durable Postgres repository, worker leases/heartbeats, fresh Blender subprocess lifecycle, retry/cancellation/timeout behavior, immutable publication transaction, and structured logs may begin.
+
+### G6 — asynchronous API and worker lifecycle
+
+Files and contracts introduced:
+
+- `service/src/hbcb_service/api.py` and `api_main.py` expose the auth-first `/healthz`, `/readyz`, build submission/status/artifact, and cancellation surface documented in `docs/api.md`;
+- `repository.py` implements transaction-per-operation PostgreSQL authority for submission, HMAC idempotency, leases, fenced heartbeats/completion, cancellation, retry, recovery, exact-nine publication, and one-row-per-call outbox dispatch;
+- `worker.py`, `worker_main.py`, and `launcher.py` implement a concurrency-one supervisor, fresh `builder build` process per attempt, bounded child environment/log tail, cancellation/timeout/lease-loss handling, retry/dead-letter policy, immutable upload verification, and scoped scratch cleanup;
+- Linux supervisor termination freezes and enumerates a bounded `/proc` descendant tree before signaling it, so the immutable G4 wrapper and its separately-sessioned Blender child are both terminated before cleanup;
+- `queue.py` reclaims the Redis claim-before-lease crash window with bounded `XAUTOCLAIM`, while PostgreSQL remains authoritative and safely rejects duplicate leasing;
+- `runtime.py`, `structured_log.py`, and the API/worker/migrator entrypoints provide bounded dependency clients, full private readiness, fixed-region public signing, role separation, and allowlisted secret-free JSON Lines;
+- forward migration `0002_g6_outbox_counter` replaces the original 100-attempt smallint ceiling with a nonnegative bigint, and domain/SQL updates saturate at the bigint maximum;
+- `tests/service_unit/` adds API, lifecycle, runtime/logging, worker, stale-queue, and outbox recovery coverage; `tests/service_integration/g6_postgres_gate.py` executes the production repository against real PostgreSQL.
+
+Verification executed:
+
+| Command | Result |
+|---|---|
+| `PYTHONPATH=.:service/src PYTHONDONTWRITEBYTECODE=1 /private/tmp/hbcc-g1-schema-venv/bin/python -m unittest discover -s tests/service_unit -v` | exit `0`; 92 tests discovered, 91 passed locally, and the one Linux-only `/proc` process-tree case was skipped on macOS |
+| Networkless/read-only/resource-limited `linux/amd64` G4-image run of `FreshSubprocessLauncherTests.test_cancellation_terminates_nested_builder_group_and_cleanup_is_scoped` | exit `0`; passed in `2.201s` with the nested child in another session and ignoring `SIGTERM` |
+| `PYTHONPATH=.:service/src PYTHONDONTWRITEBYTECODE=1 /private/tmp/hbcc-g1-schema-venv/bin/python -m unittest discover -s tests -v` | exit `0`; 154 tests discovered, 153 passed on macOS, with only the separately-passed Linux case skipped |
+| `HBCB_G6_POSTGRES_DSN=<redacted-local-test-dsn> ... tests/service_integration/g6_postgres_gate.py` | exit `0`; `G6_POSTGRES_GATE` passed on PostgreSQL 16.9 with 5 builds, 5 attempts, 21 events, exactly 9 published artifacts, and migrations `0001` plus `0002` |
+| `git diff --check`, Python compilation, POSIX shell syntax, and independent G6 P0/P1 audit | exit `0`; audit signoff approved with no remaining P0/P1 finding |
+
+Durable evidence:
+
+| Property | Observed result |
+|---|---|
+| Frozen builder revision | `4e6f85a64fae06b15fe40787a50becb7aa53d0f96896dca5c26db9314a7e8968`, unchanged from G4 |
+| PostgreSQL image | `postgres:16.9-bookworm`; registry digest `sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94` |
+| Forward migration | `0002_g6_outbox_counter`; SHA-256 `521292f93aed06aa691c466a137d83aff15de9b069c774bf1f03526d2ae22df4` |
+| Outbox outage recovery | dispatch count moved from `100` through a failed `101`st attempt to successful immutable dispatch at `102` |
+| Process cleanup | separately-sessioned, `SIGTERM`-ignoring nested child was force-terminated well below its 30-second fixture sleep |
+| API/runtime safety | authentication precedes parsing; raw 64 KiB streaming cap; generic error envelopes; no-store/request IDs; fixed MinIO region; 3–5 second dependency timeouts; no signed URLs or child logs emitted |
+
+The concise machine-readable record is `/private/tmp/hbcb-g6-final-summary.json`. It contains no credentials, requests, child output, endpoints, or signed URLs. Every disposable PostgreSQL gate container and anonymous volume was removed after its run; the synthetic test data is intentionally nonrecoverable.
+
+Deviation/condition:
+
+- The G4 builder entrypoint and source revision remain immutable. Full process-tree cleanup therefore lives only in the separately identified G6 supervisor layer, as recorded in D-041.
+- G6 proves API and worker components independently plus real PostgreSQL behavior. G7 must still construct scoped roles, a versioned MinIO bucket, real Redis stale-claim behavior, and the complete HTTP-to-Blender-to-download path in Compose.
+- Local MinIO uses its default `us-east-1` signing region. G8 must split internal and public TLS settings before a reverse-proxied HTTPS deployment; this is not needed by the HTTP-only local Compose gate.
+- No source, image, database, artifact, credential, or service was published or deployed remotely.
+
+G6 gate result: **passed**. G7 Compose images, initialization, service Make targets, end-to-end smoke, restart persistence, and builder-contract parity may begin.

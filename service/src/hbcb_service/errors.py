@@ -45,3 +45,7 @@ class QueueError(ServiceError):
 
 class MigrationError(ServiceError):
     pass
+
+
+class WorkerError(ServiceError):
+    pass
