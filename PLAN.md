@@ -200,10 +200,15 @@ Make the printer optional without changing anything for existing requests.
    otherwise set it to `None`. Add `ResolvedRequest.enforces_print`, true only
    for `intent == "print"`.
 3. `blender/generator.py`: `_Builder._thicken` becomes a no-op returning its
-   input when the profile is absent or `enforces_print` is false. Guard
-   `self.min_feature` / `self.min_radius` against a `None` profile — they are
-   also used for neck radius, foot height, eye radius and visor size, so give
-   them a geometry-derived fallback rather than a hardcoded millimetre value.
+   input when the profile is absent or `enforces_print` is false. Set
+   `self.min_feature = self.min_radius = 0.0` when there is no profile.
+   That is safe, and it is worth checking rather than trusting: those two
+   attributes are read at **11 sites** outside `_thicken` (foot height, neck,
+   eye, visor height and depth, ear, antenna ball, horn tip, tail radius, tail
+   tip, backpack depth), and every one of them is a `max()` against a
+   geometry-derived term such as `max(self.min_radius, self.head_w * 0.26)`.
+   With zero, the geometric term simply wins. Do not substitute an arbitrary
+   millimetre fallback — that would reintroduce print bias under another name.
 4. `blender/qa.py`: `measure(obj, print_profile=None)`. Topology, volume,
    dimensions, and thickness are always measured. Overhang analysis needs a
    threshold — when there is no profile, report `steepest_overhang_deg` and
@@ -516,7 +521,7 @@ you update the schema, the tests, and the docs in the same commit.
 | Risk | Package | Mitigation |
 |---|---|---|
 | Making the print profile optional silently changes print geometry | W1 | The gate asserts `facet-bot` topology is byte-identical to today's |
-| `None` profile crashes code that assumes a dict | W1 | `min_feature` is used in five places beyond thickening; grep for `min_feature` and `min_radius` before starting |
+| `None` profile crashes code that assumes a dict | W1 | `min_feature`/`min_radius` are read at **11 sites** beyond `_thicken`. Every one is a `max()` floor against a geometry-derived term, so setting both to `0.0` degrades correctly — see W1 step 3 |
 | Non-union path produces junk hierarchies | W3 | Gate requires human-readable object names, not operand names |
 | UV unwrap is slow or unbounded on dense meshes | W3 | Cap island margin and angle limit; measure runtime in the gate |
 | `single_shell` check silently weakened for everyone | W3 | Keep it required for `intent: print`; assert both branches in tests |
