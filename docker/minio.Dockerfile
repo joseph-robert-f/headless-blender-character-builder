@@ -5,7 +5,7 @@
 # the zero-account local stack does not fall back to the vulnerable September
 # 2025 registry image.  This is a local compatibility fixture, not a production
 # storage recommendation.
-FROM --platform=linux/amd64 debian:bookworm-20260713-slim@sha256:63a496b5d3b99214b39f5ed70eb71a61e590a77979c79cbee4faf991f8c0783e AS minio-build
+FROM --platform=linux/amd64 debian:bookworm-20260713-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS minio-build
 
 ARG DEBIAN_SNAPSHOT=20260714T000000Z
 ARG HBCB_MINIO_RECIPE_ID=unmeasured
@@ -49,7 +49,7 @@ RUN set -eux; \
     cp /src/CREDITS /out/MINIO-CREDITS
 
 
-FROM --platform=linux/amd64 debian:bookworm-20260713-slim@sha256:63a496b5d3b99214b39f5ed70eb71a61e590a77979c79cbee4faf991f8c0783e AS minio
+FROM --platform=linux/amd64 debian:bookworm-20260713-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS minio
 
 ARG DEBIAN_SNAPSHOT=20260714T000000Z
 ARG HBCB_MINIO_RECIPE_ID=unmeasured
