@@ -23,13 +23,14 @@ its loopback bindings or to untrusted users.
 
 ## Reporting a vulnerability
 
-GitHub private vulnerability reporting is a repository setting, not a local
-capability. Maintainers must verify it is enabled before directing reporters to
-the repository's **Security → Report a vulnerability** flow. The local release
-gate does not inspect or change that remote setting.
+Use GitHub's **Security → Report a vulnerability** flow or the direct [private
+report form](https://github.com/joseph-robert-f/headless-blender-character-builder/security/advisories/new).
+Private vulnerability reporting is enabled for this repository. It remains a
+remote repository setting and is not controlled by local build or release
+commands.
 
-If private reporting is not yet available, open only a minimal public issue
-requesting private maintainer contact. Do not include exploit details,
+If that private portal is temporarily unavailable, open only a minimal public
+issue requesting private maintainer contact. Do not include exploit details,
 credentials, personal data, private references, internal endpoints, logs, or
 signed artifact URLs. Current maintainer roles are listed in `MAINTAINERS.md`.
 

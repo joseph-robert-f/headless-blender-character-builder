@@ -13,8 +13,7 @@ body:
         Thanks for helping improve the project. Do not report vulnerabilities,
         credentials, private references, personal data, exploit details, or
         signed artifact URLs here. Follow SECURITY.md for suspected security
-        issues. The labels above are proposed and may be applied only after the
-        public repository is configured.
+        issues.
   - type: dropdown
     id: surface
     attributes:

@@ -3,11 +3,15 @@
 All notable project changes are recorded here. The format follows Keep a
 Changelog, and releases use Semantic Versioning.
 
-## [Unreleased]
+## Unreleased
 
-- No changes yet.
+### Changed
 
-## [0.1.0-rc.1] - 2026-08-03
+- Reorganized public onboarding and documentation navigation, clarified
+  path-specific prerequisites and troubleshooting, and aligned planning/test
+  language with the completed local release candidate.
+
+## [0.1.0-rc.1] (local candidate) - 2026-08-03
 
 ### Added
 
@@ -38,6 +42,3 @@ Changelog, and releases use Semantic Versioning.
   a physical-print guarantee, or certification for safety-critical uses.
 - OpenAI planning, MCP, managed-cloud templates, GPU orchestration, billing,
   and public multi-tenancy remain outside v0.1.
-
-[Unreleased]: https://github.com/joseph-robert-f/headless-blender-character-builder/compare/v0.1.0-rc.1...HEAD
-[0.1.0-rc.1]: https://github.com/joseph-robert-f/headless-blender-character-builder/releases/tag/v0.1.0-rc.1

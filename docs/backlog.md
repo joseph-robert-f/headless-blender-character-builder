@@ -14,10 +14,9 @@ physical-print outcome.
 | Add release-audit failure fixtures | `good first issue`, `security`, `release` | Each fixture proves one prohibited tracked-file or credential pattern fails closed |
 | Clarify one deployment error message | `good first issue`, `deployment` | Preserve exit contract, redact values, add focused test and runbook update |
 
-Starter issues must be created manually when the G9 changes are published.
-Maintainers should copy the relevant row into the repository issue template,
-confirm it still matches current code, and apply only labels that have been
-intentionally created.
+Starter issues are created manually. Maintainers should copy the relevant row
+into the repository issue template, confirm it still matches current code, and
+apply the maintained labels below.
 
 ## Candidate extensions
 
@@ -70,9 +69,9 @@ Blender child, artifacts, or logs.
 - a public unauthenticated demo;
 - production billing or marketplace behavior in this repository.
 
-## Proposed label catalog
+## Issue label catalog
 
 `bug`, `documentation`, `security`, `generator`, `component`, `exporter`, `qa`,
-`deployment`, `release`, `schema`, `good first issue`, `help wanted`, and
-`needs design`. Labels are conditional repository settings and are not created
-by local release tooling.
+`deployment`, `release`, `schema`, `good first issue`, `help wanted`,
+`needs-triage`, and `needs-design`. Repository settings—not local build or
+release tooling—own this catalog.

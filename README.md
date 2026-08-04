@@ -7,28 +7,40 @@ repeatably, and without an AI-provider key.
 
 This preview is not a generated illustration. It is an optimized copy of
 `preview.png` from a passing containerized Blender build. That same build also
-produced a reopenable `.blend`, GLB, a single-shell millimeter STL, three
-diagnostic views, geometry QA, and a hash manifest. The tracked
+produced a reopenable `.blend`, GLB, a single-shell STL whose numeric
+coordinates are millimeters, three diagnostic views, geometry QA, and a hash
+manifest. The tracked
 [asset manifest](docs/assets/manifest.json) records the source render,
 generator, Blender version, build-manifest hash, QA result, transformation, and
 CC0 license.
 
 > **Status: v0.1.0-rc.1 local release candidate.** The deterministic builder,
 > asynchronous local service, VPS reference package, recovery drill, release
-> audit, and clean-index verification are implemented. No image, GitHub
-> Release, or hosted service is published automatically; those remain explicit
-> operator actions.
+> audit, and clean-index verification are implemented. No container image,
+> GitHub Release, or hosted service has been published; each remains an explicit
+> operator action.
 
 The v0.1 contract is intentionally narrow: original geometric characters
 compiled from reviewed Blender primitives. It is not unrestricted prompt-to-3D,
 organic sculpting, protected-character replication, arbitrary Python
 execution, or a physical-print guarantee.
 
+## Choose a path
+
+| Goal | Start here | Additional requirements |
+|---|---|---|
+| Build and inspect a model locally | [Keyless quickstart](#keyless-quickstart) | Git, Docker Engine/Desktop, and GNU Make |
+| Develop the generator with host Blender | [Native contributor path](#use-another-bounded-character-spec) | Python 3.11+ and Blender 4.5.12 LTS |
+| Integrate through authenticated HTTP | [Asynchronous service](#optional-asynchronous-service) | Docker Compose v2 and Python 3.11+ |
+| Prepare a self-hosted deployment | [VPS deployment guide](docs/deployment.md) | A Linux `amd64` host, domain/TLS, external S3, and operator-managed secrets |
+| Propose a change | [Contribution guide](CONTRIBUTING.md) | A scoped issue and DCO sign-off |
+
 ## Keyless quickstart
 
 Bring Git, Docker Engine/Desktop, GNU Make, roughly four CPU cores, 8 GB RAM,
 and 10 GB free disk. You do **not** need a host Blender installation, Docker
-Compose, `.env`, OpenAI key, provider account, or paid service.
+Compose, host Python, `.env`, OpenAI key, provider account, or paid service for
+this one-shot path.
 
 ```sh
 git clone https://github.com/joseph-robert-f/headless-blender-character-builder.git
@@ -37,10 +49,11 @@ make demo
 make verify-demo
 ```
 
-The first build downloads checksum-pinned Blender 4.5.12 LTS and immutable
-Debian packages. Model generation then runs as a non-root process with no
-network, a read-only root filesystem, dropped capabilities, bounded resources,
-and only the request/output mounts it needs.
+The initial image build needs internet access to download checksum-pinned
+Blender 4.5.12 LTS and immutable Debian packages. Model generation and
+verification then run as a non-root process with no network, a read-only root
+filesystem, dropped capabilities, bounded resources, and only the
+request/output mounts they need.
 
 `make demo` publishes this exact tree under `build/demo/`:
 
@@ -56,10 +69,21 @@ qa.json
 manifest.json
 ```
 
-`make verify-demo` launches a second fresh Blender process, reopens the saved
+| Artifact | Purpose |
+|---|---|
+| `model.blend` | Reopenable scene with separate display meshes and `PRINT/PrintableShell` |
+| `model.glb` | Display geometry and materials for viewing or interchange |
+| `model.stl` | Single printable shell; numeric coordinates are millimeters, although STL stores no unit metadata |
+| `preview.png`, `diagnostics/*.png` | Beauty preview plus front, side, and back geometry views |
+| `qa.json` | Measured geometry checks and terminal QA status |
+| `manifest.json` | Request, generator, Blender, execution, byte-count, and SHA-256 provenance for the other eight artifacts |
+
+`make verify-demo` launches another fresh Blender process, reopens the saved
 scene, imports GLB and STL, recomputes geometry and hashes, and verifies the
-manifest. The output directory must be new; move or remove a prior local
-`build/demo/` before rebuilding.
+manifest. The builder never overwrites output; move or remove a prior local
+`build/demo/` before rerunning `make demo`. See
+[troubleshooting](docs/troubleshooting.md) for expected success markers and
+common local setup failures.
 
 ## Proving it is a model
 
@@ -82,19 +106,27 @@ they do not replace slicer, material, printer, support, or physical testing.
 ## Use another bounded character spec
 
 Requests select the versioned generator and declarative parameters—never code,
-paths, URLs, add-ons, or Blender flags. The default is
-[`examples/requests/facet-bot.json`](examples/requests/facet-bot.json).
+paths, URLs, add-ons, or Blender flags. Copy the default request into the
+ignored build directory, edit only the documented bounded fields, and build it:
 
 ```sh
-make demo REQUEST="$PWD/examples/requests/facet-bot.json"
+mkdir -p build/requests
+cp examples/requests/facet-bot.json build/requests/my-character.json
+# Edit build/requests/my-character.json using docs/character-spec.md.
+make demo REQUEST="$PWD/build/requests/my-character.json"
 ```
+
+The unchanged default is
+[`examples/requests/facet-bot.json`](examples/requests/facet-bot.json).
 
 The second example, `moss-hopper`, intentionally demonstrates fail-closed QA:
 its ambiguous wall evidence returns `needs_review` and publishes no successful
 artifact tree. See [the character contract](docs/character-spec.md) before
 authoring a request or generator extension.
 
-Native contributors with Blender 4.5.12 LTS can use the same contract:
+Native contributors with Python 3.11+ and Blender 4.5.12 LTS can use the same
+contract. Native and Docker modes share `build/demo/`, which must not already
+exist:
 
 ```sh
 make demo-native BLENDER=/absolute/path/to/blender
@@ -104,8 +136,11 @@ make verify-demo-native BLENDER=/absolute/path/to/blender
 ## Optional asynchronous service
 
 The secondary path adds an authenticated API, PostgreSQL, Redis, versioned
-S3-compatible local storage, and one Blender worker. It remains deterministic
-and needs no OpenAI key.
+S3-compatible local storage, and one Blender worker. It invokes the same
+repeat-stable builder contract and needs no OpenAI key. It additionally
+requires Docker Compose v2 and host Python 3.11+; the API binds to
+`127.0.0.1:8080`. See [HTTP API v1](docs/api.md) for request and response
+examples.
 
 ```sh
 make init-env
@@ -121,6 +156,15 @@ PostgreSQL and Redis stay private, and the worker has no public-internet route.
 idempotency, cancellation, API restart persistence, Redis stale-claim recovery,
 real Blender output, downloaded hash integrity, fresh artifact verification,
 and least-privilege denial cases.
+
+Canonical request/spec hashes and structural geometry are repeat-stable;
+`.blend` and rendered bytes are not promised to be byte-identical. If trusted
+source code changes while an older local builder tag exists, run `make image`
+before starting the service.
+
+The four-core/8 GB/10 GB quickstart estimate does not cover the complete
+service or release gate, which require additional time, memory, and disk for
+stateful services, test images, recovery targets, and retained evidence.
 
 The local source-built MinIO image is a pinned compatibility fixture, not a
 production recommendation. The [VPS deployment package](docs/deployment.md)
@@ -173,8 +217,9 @@ credentials. See [the release process](docs/release-process.md).
   Blender files.
 - Never expose the local Compose stack beyond loopback or treat its generated
   credentials and MinIO fixture as a production deployment.
-- Report vulnerabilities through GitHub private vulnerability reporting after
-  it is enabled; do not place exploit details or secrets in a public issue.
+- Report vulnerabilities through [GitHub private vulnerability
+  reporting](https://github.com/joseph-robert-f/headless-blender-character-builder/security/advisories/new);
+  do not place exploit details or secrets in a public issue.
 
 See [SECURITY.md](SECURITY.md), [SUPPORT.md](SUPPORT.md), and
 [the threat model](docs/threat-model.md).
@@ -210,13 +255,11 @@ artifacts, or logs.
 
 ## Project documentation
 
+- [Documentation index](docs/README.md) — build, API, operations, security,
+  release, and project-history guides
 - [PLAN.md](PLAN.md) — authoritative v0.1 scope and executed work packages
-- [TEST_PLAN.md](TEST_PLAN.md) — owner/reviewer verification protocol
-- [docs/progress.md](docs/progress.md) — exact gate evidence and deviations
-- [docs/api.md](docs/api.md) — HTTP endpoints and examples
-- [docs/deployment.md](docs/deployment.md) — local/VPS operations and recovery
-- [docs/release-process.md](docs/release-process.md) — local proof and
-  conditional publication
+- [TEST_PLAN.md](TEST_PLAN.md) and [docs/progress.md](docs/progress.md) —
+  verification protocol, exact gate evidence, and deviations
 - [docs/backlog.md](docs/backlog.md) — post-v0.1 extensions and starter issues
 - [CONTRIBUTING.md](CONTRIBUTING.md) and [GOVERNANCE.md](GOVERNANCE.md) — DCO,
   review, and maintainer model

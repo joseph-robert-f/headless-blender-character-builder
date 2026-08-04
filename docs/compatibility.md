@@ -5,7 +5,9 @@
 | Surface | v0.1 status |
 |---|---|
 | Linux `amd64` builder and service images | Release-blocking and supported by the local release gates |
-| Docker Engine with Compose v2 | Required for the documented container and service paths |
+| Current Docker Engine/Desktop with `linux/amd64` support | Required for the one-shot container path; Compose is not required |
+| Docker Compose v2 | Additionally required for the asynchronous service, recovery drill, and full release gate |
+| Python 3.11+ | Required for native use, host-driven service smoke/recovery, and release tooling; not required for the one-shot demo |
 | Native Linux `amd64` | Reference runtime and intended hosted platform |
 | Docker Desktop on Apple Silicon | Tested through `linux/amd64` emulation; slower, but supported for evaluation |
 | Native macOS with Blender 4.5.12 LTS | Contributor fallback for builder/artifact tests, not a service deployment target |
@@ -24,7 +26,9 @@ The quickstart assumes about four CPU cores, 8 GB RAM, and 10 GB free disk.
 Runtime builder limits are four CPUs, 4 GB RAM, 512 PIDs, and 2 GB temporary
 scratch. Docker image builds require network access for pinned upstream
 downloads; actual model generation and verification run with networking
-disabled.
+disabled. The asynchronous stack and complete release gate need additional
+time, memory, and disk for PostgreSQL, Redis, object storage, service images,
+recovery targets, and retained local evidence.
 
 ## Stable versions
 

@@ -14,7 +14,7 @@ body:
         excludes arbitrary Blender code, uploaded files, remote ingestion,
         prompt planning/MCP, GPU orchestration, public multi-tenancy, and print
         guarantees. Such proposals must be labeled as post-v0.1 and include a
-        security-boundary analysis. The labels above are proposed only.
+        security-boundary analysis.
   - type: textarea
     id: problem
     attributes:

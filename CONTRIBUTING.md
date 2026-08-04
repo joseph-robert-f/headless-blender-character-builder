@@ -1,6 +1,9 @@
 # Contributing
 
-This project is currently an active pre-release implementation. Please read `PLAN.md`, `TEST_PLAN.md`, and `docs/progress.md` before proposing implementation work.
+This project is a v0.1 release candidate with a deliberately narrow supported
+scope. Start with the [documentation index](docs/README.md), then review
+`PLAN.md`, `TEST_PLAN.md`, and `docs/progress.md` before proposing contract,
+generator, service, deployment, or security-boundary work.
 
 ## Before opening a change
 

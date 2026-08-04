@@ -119,6 +119,7 @@ alternate Blender execution engines.
 | `deploy/vps/` | Production-oriented Compose overlay, Caddy, and operator examples |
 | `scripts/` | Trusted launchers, smoke/recovery gates, and release tooling |
 | `tests/` | Contract, unit, real-Blender, container, service, deployment, and release gates |
+| `docs/` | Categorized user/operator guides plus scope, evidence, and decision records |
 | `docs/assets/` | Only the optimized, separately licensed static documentation preview |
 
 The binding contracts and historical decisions are in [character-spec.md](character-spec.md),

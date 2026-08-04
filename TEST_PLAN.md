@@ -2,7 +2,7 @@
 
 Status: **living verification plan; G0–G9 passed locally; external publication checks conditional**
 
-Last updated: **August 3, 2026**
+Last updated: **August 4, 2026**
 
 ## 1. Purpose and authority
 
@@ -33,7 +33,6 @@ Known local reviewer environment:
 | Blender | 4.5.12 LTS |
 | Docker client/server | 29.4.0 / 29.4.0; Docker Desktop Linux `arm64` host |
 | Make | GNU Make 3.81 |
-| GitHub CLI | Not installed; the initial publication uses the authorized GitHub connector instead |
 
 ## 3. What I need from the owner
 
@@ -43,7 +42,10 @@ Known local reviewer environment:
 - [x] Confirm the authorized GitHub connector has administrator and push access.
 - [x] Use `main` as the default branch.
 
-The repository and project/package slug are both `headless-blender-character-builder`. Installing and authenticating the GitHub CLI is optional for the initial connector-backed publication, but contributors will still need Git or an equivalent GitHub client for normal clone, branch, and pull-request work.
+The repository and project/package slug are both
+`headless-blender-character-builder`. GitHub CLI is optional; contributors need
+Git or an equivalent GitHub client for normal clone, branch, and pull-request
+work.
 
 ### Confirm before v0.1 implementation reaches its release gate
 
@@ -107,7 +109,10 @@ git ls-files
 git remote -v
 ```
 
-Pass when only the intentional planning/publication files are tracked, no generated model/media or backup is present, and `origin` is the expected GitHub repository.
+Pass when only intentional source, policy, documentation, workflow, test, and
+separately licensed static-asset files are tracked; no generated model output,
+backup, credential, or private evidence is present; and `origin` is the
+expected GitHub repository.
 
 ### PUB-02: local-path and secret scan
 
@@ -122,15 +127,21 @@ Review every result. Documentation examples may mention prohibited patterns, but
 
 Verify that README:
 
-- labels the repository planning/prototype status;
-- reports the current passed milestone and distinguishes implemented Docker/artifact paths from the pending API, Compose, VPS, and release work;
+- labels the repository as a local v0.1 release candidate and distinguishes
+  local proof from conditional hosted publication;
+- describes the implemented one-shot Docker, native, asynchronous service,
+  VPS reference, recovery, and release-check paths without advertising an
+  unpublished container image or hosted service;
 - links `PLAN.md`, this test plan, security, contribution, and license documents;
 - distinguishes required no-key operation from optional future credentials;
 - states IP, security, and physical-print limitations.
 
 ### PUB-04: license and policy files
 
-Verify GPL-3.0-or-later is detected for source and `ASSET_LICENSE.md` states that no sample asset is initially included. Confirm `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `SUPPORT.md` render correctly on GitHub.
+Verify GPL-3.0-or-later is detected for source and `ASSET_LICENSE.md` separately
+licenses the tracked original preview, whose provenance is bound by
+`docs/assets/manifest.json`. Confirm `SECURITY.md`, `CONTRIBUTING.md`,
+`CODE_OF_CONDUCT.md`, and `SUPPORT.md` render correctly on GitHub.
 
 ## 7. T1 — schema, engine, and authenticity tests
 
@@ -313,11 +324,11 @@ generation, normalized local image evidence, deterministic source/sample
 packaging, and SHA-256 checksums without a remote operation.
 
 The ignored final evidence target is `build/release-check/g9-final/`. External
-GitHub-hosted CI, license detection, private vulnerability reporting, registry
-publication/digests, Release publication, and a live VPS remain conditional
-operator checks. Public OCI publication is additionally blocked until the exact
-image corresponding-source delivery and retention gate in
-`docs/release-process.md` is complete.
+GitHub-hosted CI, license detection, registry publication/digests, Release
+publication, and a live VPS remain conditional operator checks. GitHub private
+vulnerability reporting was enabled and verified on August 4, 2026. Public OCI
+publication is additionally blocked until the exact image corresponding-source
+delivery and retention gate in `docs/release-process.md` is complete.
 
 The final intended index passed the complete gate on August 3, 2026. The staged
 rehearsal covered 23 release tests, 64 builder unit/contract/container/security
