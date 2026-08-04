@@ -506,6 +506,20 @@ Final rehearsal observations:
 | Local candidate images | builder `sha256:6f08d85fb952a4663fd3fc5a94f0ee38657622c287c82a28a1b395d91451876c`; API `sha256:3dbe77357a1372867648b7c37fcdc619e4bdc3480202c7a5b367d0bd61f24293`; worker `sha256:044715d173112e4045479a157898f526ae32d54591a0dcf14f0ba2e269c0be0b` |
 | Bundle integrity | all 17 `SHA256SUMS` entries verified; deterministic source archive, sample, image metadata, release metadata, notices, audit, and SBOMs present |
 
+The first exact-commit `g9-final` run exposed one intermittent Blender 4.5.12
+encoding distinction after all ordinary tests passed: two valid `facet-bot` GLBs
+could contain 49 versus 50 accessors because an identical index accessor was
+deduplicated in only one export. Retained artifacts proved that byte length and
+accessor count were the only repeat-policy fields that differed; both files had
+18 meshes, 18 primitives, 3 materials, 3,110 position vertices, and the exact
+same fresh-import semantic fingerprint
+`726060b092c8168e0a57477116a4c715e1b6f21d48c6d65fe7ca2be500652ccc`.
+The repeat policy now excludes accessor-table cardinality alongside encoded byte
+length while continuing to require equal decoded mesh inventories, topology,
+materials, transforms, bounds, QA, manifest fields, verifier expectations, and
+STL structure. Focused policy tests and a retained real-Blender reproduction
+cover both 49- and 50-accessor forms.
+
 The final intended index is rerun under the default ignored evidence path
 `build/release-check/g9-final/`. Its `release-check-summary.json`,
 `release/release-metadata.json`, `release/source-audit.json`, and

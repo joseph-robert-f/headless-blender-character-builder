@@ -1231,7 +1231,6 @@ def _stable_glb_structure(inspection: Mapping[str, Any]) -> Mapping[str, Any]:
     return {
         key: inspection[key]
         for key in (
-            "accessor_count",
             "material_count",
             "mesh_count",
             "position_vertex_count",

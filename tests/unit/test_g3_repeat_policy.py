@@ -16,9 +16,13 @@ class G3RepeatPolicyTests(unittest.TestCase):
             "primitive_count": 18,
         }
 
-    def test_encoded_byte_length_is_not_a_structural_field(self) -> None:
+    def test_encoded_length_and_accessor_dedup_are_not_structural_fields(self) -> None:
         first = self._inspection()
-        second = {**first, "bytes": first["bytes"] + 4}
+        second = {
+            **first,
+            "accessor_count": first["accessor_count"] - 1,
+            "bytes": first["bytes"] + 4,
+        }
         self.assertEqual(_stable_glb_structure(first), _stable_glb_structure(second))
 
     def test_export_structure_changes_remain_release_blocking(self) -> None:
