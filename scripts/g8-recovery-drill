@@ -1,0 +1,1378 @@
+#!/usr/bin/env python3
+"""Destructive-to-a-disposable-target, non-destructive-to-source G8 drill.
+
+The source Compose service is quiesced only long enough to take a coherent
+PostgreSQL data archive and an exact S3 object-version backup.  Everything
+after that point runs in a uniquely named, internal-only Compose project whose
+containers and volumes are removed in ``finally`` handling.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import secrets
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, BinaryIO, Mapping, Optional, Sequence
+from uuid import UUID, uuid4
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE_COMPOSE_FILE = ROOT / "compose.yaml"
+RECOVERY_COMPOSE_FILE = ROOT / "tests" / "deployment" / "g8_recovery_compose.yaml"
+SOURCE_ENV_FILE = ROOT / ".env"
+EVIDENCE_PARENT = ROOT / "build" / "g8-recovery"
+SERVICE_IMAGE_TAG = "hbcb-service-api:dev"
+MINIO_IMAGE_TAG = "hbcb-minio-local:RELEASE.2025-10-15T17-29-55Z"
+MAX_COMMAND_OUTPUT = 16 * 1024 * 1024
+MAX_ENV_BYTES = 64 * 1024
+MAX_DATABASE_BACKUP_BYTES = 4 * 1024 * 1024 * 1024
+HEX_64 = re.compile(r"^[0-9a-f]{64}$")
+ROLE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
+NAMESPACE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$")
+BUCKET = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{1,61}[a-z0-9])$")
+ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
+IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+SOURCE_REQUIRED_ENV = frozenset(
+    {
+        "HBCB_DEPLOYMENT_NAMESPACE",
+        "POSTGRES_DB",
+        "POSTGRES_USER",
+        "HBCB_DATABASE_MAINTENANCE_USER",
+        "HBCB_DATABASE_MAINTENANCE_PASSWORD",
+        "REDIS_PASSWORD",
+        "HBCB_STORAGE_MAINTENANCE_ACCESS_KEY",
+        "HBCB_STORAGE_MAINTENANCE_SECRET_KEY",
+        "HBCB_STORAGE_BUCKET",
+        "HBCB_STORAGE_INTERNAL_ENDPOINT",
+        "HBCB_STORAGE_INTERNAL_SECURE",
+        "HBCB_STORAGE_REGION",
+    }
+)
+
+SOURCE_SNAPSHOT_SQL = r"""
+SELECT jsonb_build_object(
+  'schema_migrations', COALESCE((
+    SELECT jsonb_agg(jsonb_build_object('version', version, 'sha256', sha256)
+                     ORDER BY version)
+    FROM hbcb.schema_migrations
+  ), '[]'::jsonb),
+  'builds', COALESCE((SELECT jsonb_agg(to_jsonb(row_value) ORDER BY id)
+                      FROM hbcb.builds AS row_value), '[]'::jsonb),
+  'idempotency_keys', COALESCE((SELECT jsonb_agg(to_jsonb(row_value)
+                      ORDER BY namespace, key_sha256)
+                      FROM hbcb.idempotency_keys AS row_value), '[]'::jsonb),
+  'build_attempts', COALESCE((SELECT jsonb_agg(to_jsonb(row_value) ORDER BY id)
+                      FROM hbcb.build_attempts AS row_value), '[]'::jsonb),
+  'build_events', COALESCE((SELECT jsonb_agg(to_jsonb(row_value) ORDER BY id)
+                      FROM hbcb.build_events AS row_value), '[]'::jsonb),
+  'artifacts', COALESCE((SELECT jsonb_agg(to_jsonb(row_value)
+                      ORDER BY build_id, relative_path)
+                      FROM hbcb.artifacts AS row_value), '[]'::jsonb),
+  'queue_outbox', COALESCE((SELECT jsonb_agg(to_jsonb(row_value) ORDER BY id)
+                      FROM hbcb.queue_outbox AS row_value), '[]'::jsonb),
+  'artifact_deletion_queue', COALESCE((SELECT jsonb_agg(to_jsonb(row_value) ORDER BY id)
+                      FROM hbcb.artifact_deletion_queue AS row_value), '[]'::jsonb),
+  'artifact_deletion_attempts', COALESCE((SELECT jsonb_agg(to_jsonb(row_value) ORDER BY id)
+                      FROM hbcb.artifact_deletion_attempts AS row_value), '[]'::jsonb),
+  'artifact_restore_remaps', COALESCE((SELECT jsonb_agg(to_jsonb(row_value) ORDER BY id)
+                      FROM hbcb.artifact_restore_remaps AS row_value), '[]'::jsonb)
+)::text;
+"""
+
+
+class GateError(RuntimeError):
+    def __init__(self, code: str) -> None:
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code) is None:
+            code = "invalid_gate_error"
+        super().__init__(code)
+        self.code = code
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    stdout: bytes
+
+
+class CommandRunner:
+    """Secret-silent subprocess runner; captured stderr is never surfaced."""
+
+    def run(
+        self,
+        command: Sequence[str],
+        *,
+        label: str,
+        environment: Optional[Mapping[str, str]] = None,
+        stdin: Optional[BinaryIO] = None,
+        stdout: Optional[BinaryIO] = None,
+        timeout: int = 300,
+        allow_failure: bool = False,
+    ) -> CommandResult:
+        if not command or any(not isinstance(item, str) or not item for item in command):
+            raise GateError("invalid_command")
+        try:
+            completed = subprocess.run(
+                list(command),
+                cwd=ROOT,
+                env=None if environment is None else dict(environment),
+                stdin=stdin,
+                stdout=subprocess.PIPE if stdout is None else stdout,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=timeout,
+            )
+        except (OSError, subprocess.SubprocessError):
+            raise GateError(label + "_unavailable") from None
+        captured = b"" if stdout is not None else completed.stdout
+        if len(captured) > MAX_COMMAND_OUTPUT or len(completed.stderr) > MAX_COMMAND_OUTPUT:
+            raise GateError(label + "_output_too_large")
+        if completed.returncode != 0 and not allow_failure:
+            raise GateError(label + "_failed")
+        return CommandResult(captured)
+
+
+@dataclass
+class DrillContext:
+    runner: CommandRunner
+    compose: tuple[str, ...]
+    source_environment: dict[str, str]
+    source_values: dict[str, str]
+    target_environment: dict[str, str]
+    project_name: str
+    runtime_uid: int
+    runtime_gid: int
+    work_root: Path
+    backup_root: Path
+    service_image: str
+    minio_image: str
+
+    def source_compose(self, *arguments: str, label: str, timeout: int = 300) -> CommandResult:
+        command = self.compose + (
+            "--project-directory",
+            str(ROOT),
+            "--file",
+            str(SOURCE_COMPOSE_FILE),
+            "--env-file",
+            str(SOURCE_ENV_FILE),
+        ) + tuple(arguments)
+        return self.runner.run(
+            command,
+            label=label,
+            environment=self.source_environment,
+            timeout=timeout,
+        )
+
+    def target_compose(
+        self,
+        *arguments: str,
+        label: str,
+        timeout: int = 300,
+        stdin: Optional[BinaryIO] = None,
+        allow_failure: bool = False,
+    ) -> CommandResult:
+        command = self.compose + (
+            "--project-name",
+            self.project_name,
+            "--project-directory",
+            str(ROOT),
+            "--file",
+            str(RECOVERY_COMPOSE_FILE),
+            "--profile",
+            "maintenance",
+        ) + tuple(arguments)
+        return self.runner.run(
+            command,
+            label=label,
+            environment=self.target_environment,
+            stdin=stdin,
+            timeout=timeout,
+            allow_failure=allow_failure,
+        )
+
+
+def _safe_mode(path: Path, *, directory: bool) -> os.stat_result:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        raise GateError("private_path_unavailable") from None
+    expected = stat.S_ISDIR if directory else stat.S_ISREG
+    if path.is_symlink() or not expected(metadata.st_mode) or metadata.st_mode & 0o077:
+        raise GateError("unsafe_private_path")
+    return metadata
+
+
+def _read_source_environment(path: Path = SOURCE_ENV_FILE) -> dict[str, str]:
+    metadata = _safe_mode(path, directory=False)
+    if stat.S_IMODE(metadata.st_mode) != 0o600 or metadata.st_size > MAX_ENV_BYTES:
+        raise GateError("unsafe_source_environment")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+        with os.fdopen(descriptor, "rb") as stream:
+            payload = stream.read(MAX_ENV_BYTES + 1)
+    except OSError:
+        raise GateError("source_environment_unavailable") from None
+    if len(payload) > MAX_ENV_BYTES:
+        raise GateError("source_environment_too_large")
+    try:
+        text = payload.decode("ascii", "strict")
+    except UnicodeDecodeError:
+        raise GateError("invalid_source_environment") from None
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            raise GateError("invalid_source_environment")
+        name, value = line.split("=", 1)
+        if ENV_NAME.fullmatch(name) is None or name in values or not value:
+            raise GateError("invalid_source_environment")
+        if any(ord(character) < 33 or ord(character) > 126 for character in value):
+            raise GateError("invalid_source_environment")
+        values[name] = value
+    if not SOURCE_REQUIRED_ENV.issubset(values):
+        raise GateError("g8_source_environment_upgrade_required")
+    if NAMESPACE.fullmatch(values["HBCB_DEPLOYMENT_NAMESPACE"]) is None:
+        raise GateError("invalid_source_namespace")
+    if values["HBCB_DEPLOYMENT_NAMESPACE"] != "local":
+        raise GateError("local_source_namespace_required")
+    if BUCKET.fullmatch(values["HBCB_STORAGE_BUCKET"]) is None:
+        raise GateError("invalid_source_bucket")
+    if values["HBCB_STORAGE_BUCKET"] != "hbcb-artifacts":
+        raise GateError("local_source_bucket_required")
+    for name in (
+        "POSTGRES_USER",
+        "HBCB_DATABASE_MAINTENANCE_USER",
+    ):
+        if ROLE.fullmatch(values[name]) is None:
+            raise GateError("invalid_source_database_role")
+    for name in (
+        "HBCB_DATABASE_MAINTENANCE_PASSWORD",
+        "REDIS_PASSWORD",
+        "HBCB_STORAGE_MAINTENANCE_SECRET_KEY",
+    ):
+        if HEX_64.fullmatch(values[name]) is None:
+            raise GateError("invalid_source_secret_shape")
+    if values["HBCB_STORAGE_INTERNAL_ENDPOINT"] != "minio:9000":
+        raise GateError("unexpected_source_storage_endpoint")
+    if values["HBCB_STORAGE_INTERNAL_SECURE"] != "false":
+        raise GateError("unexpected_source_storage_transport")
+    if values["HBCB_STORAGE_REGION"] != "us-east-1":
+        raise GateError("unexpected_source_storage_region")
+    if re.fullmatch(
+        r"hbcb_maintenance(?:_[A-Za-z0-9_-]+)?",
+        values["HBCB_STORAGE_MAINTENANCE_ACCESS_KEY"],
+    ) is None:
+        raise GateError("invalid_source_storage_role")
+    return values
+
+
+def _write_private_file(path: Path, payload: bytes) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError:
+        raise GateError("private_file_write_failed") from None
+    _safe_mode(path, directory=False)
+
+
+def _write_private_environment(path: Path, values: Mapping[str, str]) -> None:
+    lines = []
+    for name in sorted(values):
+        value = values[name]
+        if ENV_NAME.fullmatch(name) is None or not value or "\n" in value or "\r" in value:
+            raise GateError("invalid_private_environment")
+        lines.append(f"{name}={value}\n")
+    _write_private_file(path, "".join(lines).encode("ascii", "strict"))
+
+
+def _compose_command() -> tuple[str, ...]:
+    configured = os.environ.get("HBCB_COMPOSE_BIN")
+    if configured:
+        path = Path(configured)
+        if not path.is_absolute() or not path.is_file() or not os.access(path, os.X_OK):
+            raise GateError("invalid_compose_binary")
+        return (str(path),)
+    return ("docker", "compose")
+
+
+def _image_id(runner: CommandRunner, reference: str, label: str) -> str:
+    result = runner.run(
+        (
+            "docker",
+            "image",
+            "inspect",
+            "--platform",
+            "linux/amd64",
+            "--format",
+            "{{.Id}}",
+            reference,
+        ),
+        label=label,
+        timeout=60,
+    )
+    value = result.stdout.decode("ascii", "strict").strip()
+    if IMAGE_ID.fullmatch(value) is None:
+        raise GateError(label + "_invalid")
+    return value
+
+
+def _target_environment(
+    source: Mapping[str, str],
+    *,
+    service_image: str,
+    minio_image: str,
+    backup_root: Path,
+    runtime_uid: int,
+    runtime_gid: int,
+) -> dict[str, str]:
+    target = dict(os.environ)
+    for name in tuple(target):
+        if name.startswith("HBCB_G8_"):
+            del target[name]
+    generated = {
+        "HBCB_G8_DEPLOYMENT_NAMESPACE": source["HBCB_DEPLOYMENT_NAMESPACE"],
+        "HBCB_G8_DATABASE_NAME": source["POSTGRES_DB"],
+        "HBCB_G8_DATABASE_ADMIN_USER": "hbcb_g8_admin",
+        "HBCB_G8_DATABASE_ADMIN_PASSWORD": secrets.token_hex(32),
+        "HBCB_G8_DATABASE_API_USER": "hbcb_g8_api",
+        "HBCB_G8_DATABASE_API_PASSWORD": secrets.token_hex(32),
+        "HBCB_G8_DATABASE_WORKER_USER": "hbcb_g8_worker",
+        "HBCB_G8_DATABASE_WORKER_PASSWORD": secrets.token_hex(32),
+        "HBCB_G8_DATABASE_MAINTENANCE_USER": "hbcb_g8_maintenance",
+        "HBCB_G8_DATABASE_MAINTENANCE_PASSWORD": secrets.token_hex(32),
+        "HBCB_G8_DATABASE_MIGRATOR_USER": "hbcb_g8_migrator",
+        "HBCB_G8_DATABASE_MIGRATOR_PASSWORD": secrets.token_hex(32),
+        "HBCB_G8_REDIS_PASSWORD": secrets.token_hex(32),
+        "HBCB_G8_MINIO_ROOT_USER": "hbcb_g8_root",
+        "HBCB_G8_MINIO_ROOT_PASSWORD": secrets.token_hex(32),
+        "HBCB_G8_STORAGE_API_ACCESS_KEY": "hbcb_api_g8",
+        "HBCB_G8_STORAGE_API_SECRET_KEY": secrets.token_hex(32),
+        "HBCB_G8_STORAGE_WORKER_ACCESS_KEY": "hbcb_worker_g8",
+        "HBCB_G8_STORAGE_WORKER_SECRET_KEY": secrets.token_hex(32),
+        "HBCB_G8_STORAGE_MAINTENANCE_ACCESS_KEY": "hbcb_maintenance_g8",
+        "HBCB_G8_STORAGE_MAINTENANCE_SECRET_KEY": secrets.token_hex(32),
+        "HBCB_G8_STORAGE_BUCKET": source["HBCB_STORAGE_BUCKET"],
+        "HBCB_G8_STORAGE_REGION": source["HBCB_STORAGE_REGION"],
+        "HBCB_G8_SERVICE_IMAGE": service_image,
+        "HBCB_G8_MINIO_IMAGE": minio_image,
+        "HBCB_G8_BACKUP_ROOT": str(backup_root),
+        "HBCB_G8_RUNTIME_UID": str(runtime_uid),
+        "HBCB_G8_RUNTIME_GID": str(runtime_gid),
+    }
+    target.update(generated)
+    return target
+
+
+def _source_process_environment(builder_image: str) -> dict[str, str]:
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "HBCB_BUILDER_IMAGE": builder_image,
+            "HBCB_BUILDER_IMAGE_REFERENCE": os.environ.get(
+                "BUILDER_IMAGE", "headless-blender-character-builder:dev"
+            ),
+            "HBCB_BUILDER_IMAGE_ID": builder_image,
+        }
+    )
+    return environment
+
+
+def _create_context(runner: Optional[CommandRunner] = None) -> DrillContext:
+    selected_runner = CommandRunner() if runner is None else runner
+    source_values = _read_source_environment()
+    builder_reference = os.environ.get("BUILDER_IMAGE", "headless-blender-character-builder:dev")
+    builder_image = _image_id(selected_runner, builder_reference, "builder_image")
+    service_image = _image_id(selected_runner, SERVICE_IMAGE_TAG, "service_image")
+    minio_image = _image_id(selected_runner, MINIO_IMAGE_TAG, "minio_image")
+
+    EVIDENCE_PARENT.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(EVIDENCE_PARENT, 0o700)
+    _safe_mode(EVIDENCE_PARENT, directory=True)
+    work_root = Path(tempfile.mkdtemp(prefix=".work.", dir=EVIDENCE_PARENT))
+    os.chmod(work_root, 0o700)
+    backup_root = work_root / "backups"
+    backup_root.mkdir(mode=0o700)
+    runtime_uid = os.getuid()
+    runtime_gid = os.getgid()
+    if runtime_uid == 0:
+        runtime_uid = 65532
+        os.chown(work_root, runtime_uid, runtime_gid if runtime_gid != 0 else 65532)
+        os.chown(backup_root, runtime_uid, runtime_gid if runtime_gid != 0 else 65532)
+    if runtime_gid == 0:
+        runtime_gid = 65532
+    project_name = "hbcb-g8-recovery-" + secrets.token_hex(6)
+    return DrillContext(
+        runner=selected_runner,
+        compose=_compose_command(),
+        source_environment=_source_process_environment(builder_image),
+        source_values=source_values,
+        target_environment=_target_environment(
+            source_values,
+            service_image=service_image,
+            minio_image=minio_image,
+            backup_root=backup_root,
+            runtime_uid=runtime_uid,
+            runtime_gid=runtime_gid,
+        ),
+        project_name=project_name,
+        runtime_uid=runtime_uid,
+        runtime_gid=runtime_gid,
+        work_root=work_root,
+        backup_root=backup_root,
+        service_image=service_image,
+        minio_image=minio_image,
+    )
+
+
+def _parse_json_result(result: CommandResult, label: str) -> Mapping[str, Any]:
+    try:
+        lines = [line for line in result.stdout.decode("utf-8", "strict").splitlines() if line]
+        payload = json.loads(lines[-1])
+    except (UnicodeDecodeError, json.JSONDecodeError, IndexError):
+        raise GateError(label + "_invalid_output") from None
+    if not isinstance(payload, dict):
+        raise GateError(label + "_invalid_output")
+    return payload
+
+
+def _source_container_running(context: DrillContext, service: str) -> bool:
+    result = context.source_compose(
+        "ps", "--status", "running", "--quiet", service,
+        label="source_status",
+        timeout=60,
+    )
+    identifiers = [line for line in result.stdout.decode("ascii", "strict").splitlines() if line]
+    if len(identifiers) > 1:
+        raise GateError("ambiguous_source_service")
+    return len(identifiers) == 1
+
+
+def _source_network(context: DrillContext) -> str:
+    result = context.source_compose("config", "--format", "json", label="source_config")
+    try:
+        configuration = json.loads(result.stdout)
+        network = configuration["networks"]["service-internal"]["name"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        raise GateError("invalid_source_network") from None
+    if not isinstance(network, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", network) is None:
+        raise GateError("invalid_source_network")
+    return network
+
+
+def _validate_target_topology(context: DrillContext) -> None:
+    result = context.target_compose(
+        "config", "--format", "json", label="target_config", timeout=120
+    )
+    try:
+        configuration = json.loads(result.stdout)
+        services = configuration["services"]
+        networks = configuration["networks"]
+        volumes = configuration["volumes"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        raise GateError("invalid_target_topology") from None
+    expected = {
+        "postgres", "redis", "minio", "minio-init", "database-init", "maintenance"
+    }
+    if not isinstance(services, dict) or set(services) != expected:
+        raise GateError("invalid_target_topology")
+    if not isinstance(networks, dict) or set(networks) != {"recovery"}:
+        raise GateError("invalid_target_topology")
+    recovery = networks["recovery"]
+    if not isinstance(recovery, dict) or recovery.get("internal") is not True:
+        raise GateError("target_network_not_internal")
+    if not isinstance(volumes, dict) or set(volumes) != {
+        "minio-data", "postgres-data", "redis-data"
+    }:
+        raise GateError("invalid_target_volumes")
+    for service in services.values():
+        if not isinstance(service, dict):
+            raise GateError("invalid_target_topology")
+        if service.get("ports") or service.get("build") is not None:
+            raise GateError("target_exposes_host_or_build")
+        raw_networks = service.get("networks", {})
+        if isinstance(raw_networks, list):
+            attached = set(raw_networks)
+        elif isinstance(raw_networks, dict):
+            attached = set(raw_networks)
+        else:
+            raise GateError("invalid_target_topology")
+        if attached != {"recovery"}:
+            raise GateError("target_network_escape")
+    if services["maintenance"].get("image") != context.service_image:
+        raise GateError("target_service_image_changed")
+    if services["database-init"].get("image") != context.service_image:
+        raise GateError("target_service_image_changed")
+    if services["minio"].get("image") != context.minio_image:
+        raise GateError("target_minio_image_changed")
+
+
+def _psql_command(
+    context: DrillContext,
+    *,
+    target: bool,
+    sql: str,
+    label: str,
+) -> CommandResult:
+    values = context.target_environment if target else context.source_values
+    user = (
+        values["HBCB_G8_DATABASE_ADMIN_USER"]
+        if target
+        else values["POSTGRES_USER"]
+    )
+    database = (
+        values["HBCB_G8_DATABASE_NAME"]
+        if target
+        else values["POSTGRES_DB"]
+    )
+    arguments = (
+        "exec",
+        "-T",
+        "postgres",
+        "psql",
+        "--no-psqlrc",
+        "--quiet",
+        "--tuples-only",
+        "--no-align",
+        "--set=ON_ERROR_STOP=1",
+        "--username",
+        user,
+        "--dbname",
+        database,
+        "--command",
+        sql,
+    )
+    if target:
+        return context.target_compose(*arguments, label=label, timeout=120)
+    return context.source_compose(*arguments, label=label, timeout=120)
+
+
+def _query_json(context: DrillContext, *, target: bool, sql: str, label: str) -> Any:
+    result = _psql_command(context, target=target, sql=sql, label=label)
+    try:
+        lines = [line for line in result.stdout.decode("utf-8", "strict").splitlines() if line]
+        if len(lines) != 1:
+            raise ValueError
+        return json.loads(lines[0])
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        raise GateError(label + "_invalid_output") from None
+
+
+def _snapshot(context: DrillContext, *, target: bool) -> str:
+    value = _query_json(
+        context,
+        target=target,
+        sql=SOURCE_SNAPSHOT_SQL,
+        label="target_snapshot" if target else "source_snapshot",
+    )
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _source_maintenance_environment(context: DrillContext) -> Path:
+    values = context.source_values
+    environment = {
+        "HBCB_DEPLOYMENT_NAMESPACE": values["HBCB_DEPLOYMENT_NAMESPACE"],
+        "HBCB_DATABASE_URL": (
+            "postgresql://"
+            + values["HBCB_DATABASE_MAINTENANCE_USER"]
+            + ":"
+            + values["HBCB_DATABASE_MAINTENANCE_PASSWORD"]
+            + "@postgres:5432/"
+            + values["POSTGRES_DB"]
+        ),
+        "HBCB_REDIS_URL": "redis://:" + values["REDIS_PASSWORD"] + "@redis:6379/0",
+        "HBCB_STORAGE_INTERNAL_ENDPOINT": values["HBCB_STORAGE_INTERNAL_ENDPOINT"],
+        "HBCB_STORAGE_ACCESS_KEY": values["HBCB_STORAGE_MAINTENANCE_ACCESS_KEY"],
+        "HBCB_STORAGE_SECRET_KEY": values["HBCB_STORAGE_MAINTENANCE_SECRET_KEY"],
+        "HBCB_STORAGE_BUCKET": values["HBCB_STORAGE_BUCKET"],
+        "HBCB_STORAGE_INTERNAL_SECURE": values["HBCB_STORAGE_INTERNAL_SECURE"],
+        "HBCB_STORAGE_REGION": values["HBCB_STORAGE_REGION"],
+    }
+    path = context.work_root / "source-maintenance.env"
+    _write_private_environment(path, environment)
+    return path
+
+
+def _source_maintenance(
+    context: DrillContext,
+    network: str,
+    environment_path: Path,
+    *arguments: str,
+    label: str,
+    timeout: int = 900,
+) -> Mapping[str, Any]:
+    command = (
+        "docker",
+        "run",
+        "--rm",
+        "--init",
+        "--platform",
+        "linux/amd64",
+        "--network",
+        network,
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--pids-limit",
+        "128",
+        "--cpus",
+        "1",
+        "--memory",
+        "1g",
+        "--user",
+        f"{context.runtime_uid}:{context.runtime_gid}",
+        "--tmpfs",
+        f"/work:rw,nosuid,nodev,noexec,size=256m,mode=0700,uid={context.runtime_uid},gid={context.runtime_gid}",
+        "--mount",
+        f"type=bind,source={context.backup_root},target=/backups",
+        "--env-file",
+        str(environment_path),
+        "--entrypoint",
+        "/usr/bin/python3",
+        context.service_image,
+        "-m",
+        "hbcb_service.maintenance_main",
+    ) + tuple(arguments)
+    result = context.runner.run(command, label=label, timeout=timeout)
+    return _parse_json_result(result, label)
+
+
+def _target_maintenance(
+    context: DrillContext,
+    *arguments: str,
+    label: str,
+    timeout: int = 900,
+) -> Mapping[str, Any]:
+    result = context.target_compose(
+        "run",
+        "--rm",
+        "--no-deps",
+        "maintenance",
+        *arguments,
+        label=label,
+        timeout=timeout,
+    )
+    return _parse_json_result(result, label)
+
+
+def _database_backup(context: DrillContext, destination: Path) -> tuple[int, str]:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(destination, flags, 0o600)
+    except OSError:
+        raise GateError("database_backup_create_failed") from None
+    values = context.source_values
+    command = context.compose + (
+        "--project-directory",
+        str(ROOT),
+        "--file",
+        str(SOURCE_COMPOSE_FILE),
+        "--env-file",
+        str(SOURCE_ENV_FILE),
+        "exec",
+        "-T",
+        "postgres",
+        "pg_dump",
+        "--format=custom",
+        "--compress=9",
+        "--data-only",
+        "--schema=hbcb",
+        "--exclude-table-data=hbcb.schema_migrations",
+        "--no-owner",
+        "--no-privileges",
+        "--username",
+        values["POSTGRES_USER"],
+        "--dbname",
+        values["POSTGRES_DB"],
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            context.runner.run(
+                command,
+                label="database_backup",
+                environment=context.source_environment,
+                stdout=stream,
+                timeout=900,
+            )
+            stream.flush()
+            os.fsync(stream.fileno())
+    except GateError:
+        try:
+            destination.unlink()
+        except OSError:
+            pass
+        raise
+    metadata = _safe_mode(destination, directory=False)
+    if stat.S_IMODE(metadata.st_mode) != 0o600 or not 1 <= metadata.st_size <= MAX_DATABASE_BACKUP_BYTES:
+        raise GateError("invalid_database_backup")
+    digest = hashlib.sha256()
+    with destination.open("rb") as stream:
+        while True:
+            chunk = stream.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return metadata.st_size, digest.hexdigest()
+
+
+def _database_restore(context: DrillContext, source: Path) -> None:
+    _safe_mode(source, directory=False)
+    values = context.target_environment
+    with source.open("rb") as stream:
+        context.target_compose(
+            "exec",
+            "-T",
+            "postgres",
+            "pg_restore",
+            "--exit-on-error",
+            "--single-transaction",
+            "--no-owner",
+            "--no-privileges",
+            "--username",
+            values["HBCB_G8_DATABASE_ADMIN_USER"],
+            "--dbname",
+            values["HBCB_G8_DATABASE_NAME"],
+            label="database_restore",
+            stdin=stream,
+            timeout=900,
+        )
+
+
+def _load_inventory(path: Path) -> Mapping[str, Any]:
+    metadata = _safe_mode(path, directory=False)
+    if stat.S_IMODE(metadata.st_mode) != 0o600 or not 1 <= metadata.st_size <= 16 * 1024 * 1024:
+        raise GateError("invalid_backup_inventory")
+    try:
+        payload = path.read_bytes()
+        inventory = json.loads(payload)
+    except (OSError, json.JSONDecodeError):
+        raise GateError("invalid_backup_inventory") from None
+    if not isinstance(inventory, dict) or set(inventory) != {
+        "artifacts", "generated_at", "inventory_version", "namespace"
+    }:
+        raise GateError("invalid_backup_inventory")
+    artifacts = inventory["artifacts"]
+    if not isinstance(artifacts, list) or not artifacts:
+        raise GateError("source_artifacts_required")
+    seen: set[tuple[str, str, str]] = set()
+    for item in artifacts:
+        if not isinstance(item, dict) or set(item) != {
+            "build_id", "bucket", "bytes", "namespace", "object_key", "sha256", "version_id"
+        }:
+            raise GateError("invalid_backup_inventory")
+        try:
+            build_id = str(UUID(item["build_id"]))
+        except (ValueError, TypeError, AttributeError):
+            raise GateError("invalid_backup_inventory") from None
+        if build_id != item["build_id"] or not isinstance(item["object_key"], str):
+            raise GateError("invalid_backup_inventory")
+        if HEX_64.fullmatch(item["sha256"]) is None:
+            raise GateError("invalid_backup_inventory")
+        identity = (build_id, item["bucket"], item["object_key"])
+        if identity in seen:
+            raise GateError("duplicate_backup_artifact")
+        seen.add(identity)
+    return inventory
+
+
+def _validate_private_tree(root: Path) -> None:
+    _safe_mode(root, directory=True)
+    entries = 0
+    try:
+        candidates = list(root.rglob("*"))
+    except OSError:
+        raise GateError("private_tree_unavailable") from None
+    for candidate in candidates:
+        entries += 1
+        if entries > 100_000:
+            raise GateError("private_tree_too_large")
+        try:
+            metadata = candidate.lstat()
+        except OSError:
+            raise GateError("private_tree_unavailable") from None
+        if candidate.is_symlink() or metadata.st_mode & 0o077:
+            raise GateError("unsafe_private_tree")
+        if not (stat.S_ISDIR(metadata.st_mode) or stat.S_ISREG(metadata.st_mode)):
+            raise GateError("unsafe_private_tree")
+
+
+def _compare_restored_inventories(
+    source: Mapping[str, Any], target: Mapping[str, Any]
+) -> tuple[str, int, int]:
+    if source["namespace"] != target["namespace"] or source["inventory_version"] != target["inventory_version"]:
+        raise GateError("restored_inventory_mismatch")
+    source_items = {
+        (item["build_id"], item["bucket"], item["object_key"]): item
+        for item in source["artifacts"]
+    }
+    target_items = {
+        (item["build_id"], item["bucket"], item["object_key"]): item
+        for item in target["artifacts"]
+    }
+    if set(source_items) != set(target_items):
+        raise GateError("restored_inventory_mismatch")
+    total_bytes = 0
+    for identity, source_item in source_items.items():
+        target_item = target_items[identity]
+        if (
+            source_item["sha256"] != target_item["sha256"]
+            or source_item["bytes"] != target_item["bytes"]
+            or source_item["version_id"] == target_item["version_id"]
+        ):
+            raise GateError("restored_inventory_mismatch")
+        total_bytes += int(target_item["bytes"])
+    selected_build = sorted(item[0] for item in source_items)[0]
+    selected_count = sum(1 for identity in source_items if identity[0] == selected_build)
+    return selected_build, selected_count, total_bytes
+
+
+def _sql_uuid(value: str) -> str:
+    try:
+        parsed = UUID(value)
+    except (ValueError, TypeError, AttributeError):
+        raise GateError("invalid_test_build_id") from None
+    if str(parsed) != value:
+        raise GateError("invalid_test_build_id")
+    return value
+
+
+def _verify_redis_reconstruction(context: DrillContext, build_id: str) -> None:
+    namespace = context.target_environment["HBCB_G8_DEPLOYMENT_NAMESPACE"]
+    if NAMESPACE.fullmatch(namespace) is None:
+        raise GateError("invalid_target_namespace")
+    script = (
+        'REDISCLI_AUTH="$REDIS_PASSWORD"; export REDISCLI_AUTH; '
+        f'exec redis-cli --no-auth-warning --json XRANGE "hbcb:{{{namespace}}}:builds:v1" - +'
+    )
+    result = context.target_compose(
+        "exec", "-T", "redis", "/bin/sh", "-ec", script,
+        label="redis_evidence",
+        timeout=60,
+    )
+    try:
+        entries = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        raise GateError("invalid_redis_evidence") from None
+    if (
+        not isinstance(entries, list)
+        or len(entries) != 1
+        or not isinstance(entries[0], list)
+        or len(entries[0]) != 2
+        or entries[0][1] != ["build_id", build_id]
+    ):
+        raise GateError("invalid_redis_evidence")
+
+
+def _verify_deleted_prefix(context: DrillContext, build_id: str) -> None:
+    selected = _sql_uuid(build_id)
+    script = (
+        'mc alias set recovery http://127.0.0.1:9000 "$MINIO_ROOT_USER" '
+        '"$MINIO_ROOT_PASSWORD" >/dev/null; '
+        'exec mc ls --versions --recursive --json '
+        '"recovery/$HBCB_STORAGE_BUCKET/$HBCB_DEPLOYMENT_NAMESPACE/v1/builds/'
+        + selected
+        + '/"'
+    )
+    result = context.target_compose(
+        "exec", "-T", "minio", "/bin/sh", "-ec", script,
+        label="deleted_prefix_evidence",
+        timeout=60,
+    )
+    if result.stdout.strip():
+        raise GateError("exact_versions_remain")
+
+
+def _wait_source_service(context: DrillContext, service: str, *, healthy: bool) -> None:
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        result = context.source_compose(
+            "ps", "--status", "running", "--quiet", service,
+            label="source_restart_status",
+            timeout=30,
+        )
+        identifiers = [line for line in result.stdout.decode("ascii", "strict").splitlines() if line]
+        if len(identifiers) == 1:
+            if not healthy:
+                return
+            inspection = context.runner.run(
+                (
+                    "docker", "inspect", "--format", "{{json .State.Health.Status}}", identifiers[0]
+                ),
+                label="source_health",
+                timeout=30,
+                allow_failure=True,
+            )
+            if inspection.stdout.decode("ascii", "ignore").strip() == '"healthy"':
+                return
+        time.sleep(2)
+    raise GateError("source_restart_failed")
+
+
+def _wait_target_initializers(context: DrillContext) -> None:
+    """Wait for both one-shot initializers and require clean exits.
+
+    ``compose up --wait`` may return while a one-shot service is still running.
+    Restoring before the database initializer exits races schema creation, so
+    inspect the exact Compose-owned containers rather than relying on that
+    command's running/healthy contract.
+    """
+
+    pending = {"database-init", "minio-init"}
+    deadline = time.monotonic() + 300
+    while pending and time.monotonic() < deadline:
+        for service in tuple(sorted(pending)):
+            result = context.target_compose(
+                "ps", "--all", "--quiet", service,
+                label="target_initializer_status",
+                timeout=30,
+            )
+            identifiers = [
+                line
+                for line in result.stdout.decode("ascii", "strict").splitlines()
+                if line
+            ]
+            if len(identifiers) != 1:
+                raise GateError("target_initializer_missing")
+            inspection = context.runner.run(
+                (
+                    "docker",
+                    "inspect",
+                    "--format",
+                    "{{json .State}}",
+                    identifiers[0],
+                ),
+                label="target_initializer_inspect",
+                timeout=30,
+            )
+            try:
+                state = json.loads(inspection.stdout)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise GateError("target_initializer_invalid") from None
+            if not isinstance(state, dict):
+                raise GateError("target_initializer_invalid")
+            status = state.get("Status")
+            running = state.get("Running")
+            exit_code = state.get("ExitCode")
+            if not isinstance(status, str) or not isinstance(running, bool):
+                raise GateError("target_initializer_invalid")
+            if running and status == "running":
+                continue
+            if not running and status == "exited":
+                if type(exit_code) is not int:
+                    raise GateError("target_initializer_invalid")
+                if exit_code != 0:
+                    raise GateError("target_initializer_failed")
+                pending.remove(service)
+                continue
+            if status not in {"created", "restarting"}:
+                raise GateError("target_initializer_failed")
+        if pending:
+            time.sleep(1)
+    if pending:
+        raise GateError("target_initializer_timeout")
+
+
+def _verify_target_removed(context: DrillContext) -> None:
+    commands = (
+        ("ps", "--all", "--quiet"),
+        ("volume", "ls", "--quiet"),
+        ("network", "ls", "--quiet"),
+    )
+    for arguments in commands:
+        result = context.runner.run(
+            (
+                "docker",
+                *arguments,
+                "--filter",
+                f"label=com.docker.compose.project={context.project_name}",
+            ),
+            label="target_cleanup_verification",
+            timeout=60,
+        )
+        if result.stdout.strip():
+            raise GateError("target_cleanup_incomplete")
+
+
+def _remove_work_root(path: Path) -> None:
+    try:
+        resolved_parent = EVIDENCE_PARENT.resolve(strict=True)
+        resolved = path.resolve(strict=True)
+    except OSError:
+        return
+    if resolved.parent != resolved_parent or not resolved.name.startswith(".work."):
+        raise GateError("unsafe_work_cleanup")
+    shutil.rmtree(resolved)
+
+
+def _save_evidence(summary: Mapping[str, Any]) -> Path:
+    directory = EVIDENCE_PARENT / ("run." + secrets.token_hex(6))
+    directory.mkdir(mode=0o700)
+    path = directory / "g8-recovery-summary.json"
+    payload = json.dumps(summary, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n"
+    _write_private_file(path, payload)
+    return path
+
+
+def execute_drill(context: DrillContext) -> Mapping[str, Any]:
+    stopped: list[str] = []
+    target_touched = False
+    primary_error: Optional[BaseException] = None
+    summary: Optional[Mapping[str, Any]] = None
+    try:
+        print("G8_RECOVERY_GATE: validating isolated topology")
+        _validate_target_topology(context)
+        for dependency in ("postgres", "redis", "minio"):
+            if not _source_container_running(context, dependency):
+                raise GateError("source_service_not_running")
+        source_network = _source_network(context)
+        source_env_path = _source_maintenance_environment(context)
+        was_running = {
+            "api": _source_container_running(context, "api"),
+            "worker": _source_container_running(context, "worker"),
+        }
+
+        print("G8_RECOVERY_GATE: quiescing source API and worker")
+        for service in ("api", "worker"):
+            if was_running[service]:
+                context.source_compose(
+                    "stop", "--timeout", "120", service,
+                    label="source_quiesce",
+                    timeout=180,
+                )
+                stopped.append(service)
+
+        source_snapshot = _snapshot(context, target=False)
+        source_object_path = context.backup_root / "source-objects"
+        object_result = _source_maintenance(
+            context,
+            source_network,
+            source_env_path,
+            "backup-export",
+            "--output",
+            "/backups/source-objects",
+            label="object_backup",
+        )
+        source_inventory_path = source_object_path / "inventory.json"
+        _validate_private_tree(source_object_path)
+        source_inventory = _load_inventory(source_inventory_path)
+        inventory_payload = source_inventory_path.read_bytes()
+        inventory_sha256 = hashlib.sha256(inventory_payload).hexdigest()
+        if (
+            object_result.get("inventory_sha256") != inventory_sha256
+            or object_result.get("artifacts") != len(source_inventory["artifacts"])
+        ):
+            raise GateError("object_backup_evidence_mismatch")
+        database_path = context.work_root / "database.dump"
+        database_bytes, database_sha256 = _database_backup(context, database_path)
+
+        print("G8_RECOVERY_GATE: starting fresh internal-only restore target")
+        target_touched = True
+        context.target_compose(
+            "up",
+            "--detach",
+            "--wait",
+            "--wait-timeout",
+            "300",
+            "postgres",
+            "redis",
+            "minio",
+            "minio-init",
+            "database-init",
+            label="target_start",
+            timeout=420,
+        )
+        _wait_target_initializers(context)
+        _database_restore(context, database_path)
+        if _snapshot(context, target=True) != source_snapshot:
+            raise GateError("database_restore_mismatch")
+
+        restore_result = _target_maintenance(
+            context,
+            "restore-objects",
+            "--input",
+            "/backups/source-objects",
+            "--apply",
+            label="object_restore",
+        )
+        if (
+            restore_result.get("dry_run") is not False
+            or restore_result.get("uploaded") != len(source_inventory["artifacts"])
+            or restore_result.get("remapped") != len(source_inventory["artifacts"])
+        ):
+            raise GateError("object_restore_evidence_mismatch")
+
+        target_export = _target_maintenance(
+            context,
+            "backup-export",
+            "--output",
+            "/backups/target-objects",
+            label="restored_object_verification",
+        )
+        _validate_private_tree(context.backup_root / "target-objects")
+        target_inventory = _load_inventory(context.backup_root / "target-objects" / "inventory.json")
+        selected_build, selected_artifact_count, artifact_bytes = _compare_restored_inventories(
+            source_inventory, target_inventory
+        )
+        if target_export.get("artifacts") != len(target_inventory["artifacts"]):
+            raise GateError("restored_object_verification_mismatch")
+
+        remap_count = _query_json(
+            context,
+            target=True,
+            sql="SELECT COUNT(*)::text::jsonb FROM hbcb.artifact_restore_remaps;",
+            label="restore_remap_count",
+        )
+        if remap_count != len(source_inventory["artifacts"]):
+            raise GateError("restore_remap_count_mismatch")
+
+        print("G8_RECOVERY_GATE: reconstructing Redis from restored PostgreSQL")
+        queued_build = str(uuid4())
+        selected_build = _sql_uuid(selected_build)
+        queued_build = _sql_uuid(queued_build)
+        seed_sql = f"""
+INSERT INTO hbcb.builds (
+  id, namespace, request_canonical, request_sha256, spec_sha256,
+  status, state_version, max_attempts, created_at, updated_at
+)
+SELECT '{queued_build}'::uuid, namespace, request_canonical, request_sha256,
+       spec_sha256, 'queued', 1, max_attempts, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+FROM hbcb.builds
+WHERE id = '{selected_build}'::uuid;
+SELECT CASE WHEN EXISTS (
+  SELECT 1 FROM hbcb.builds WHERE id = '{queued_build}'::uuid AND status = 'queued'
+) THEN 'true'::jsonb ELSE 'false'::jsonb END;
+"""
+        if _query_json(context, target=True, sql=seed_sql, label="queued_seed") is not True:
+            raise GateError("queued_seed_failed")
+        redis_result = _target_maintenance(
+            context,
+            "reconstruct-redis",
+            "--apply",
+            "--limit",
+            "100",
+            label="redis_reconstruction",
+        )
+        if redis_result != {"derived_queued_builds": 1, "dry_run": False, "enqueued": 1}:
+            raise GateError("redis_reconstruction_mismatch")
+        _verify_redis_reconstruction(context, queued_build)
+
+        print("G8_RECOVERY_GATE: exercising retention and exact-version deletion")
+        age_result = _query_json(
+            context,
+            target=True,
+            sql=(
+                "WITH changed AS (UPDATE hbcb.builds SET finished_at = "
+                "TIMESTAMPTZ '2000-01-01 00:00:00+00' WHERE id = '"
+                + selected_build
+                + "'::uuid AND status IN ('succeeded','failed','canceled','needs_review') RETURNING id) "
+                "SELECT COUNT(*)::text::jsonb FROM changed;"
+            ),
+            label="retention_age",
+        )
+        if age_result != 1:
+            raise GateError("retention_test_build_missing")
+        retention_arguments = (
+            "retain", "--limit", "1", "--succeeded-days", "30", "--failed-days", "30",
+            "--canceled-days", "30", "--needs-review-days", "30",
+        )
+        preview = _target_maintenance(
+            context, *retention_arguments, label="retention_preview"
+        )
+        if preview.get("dry_run") is not True or preview.get("candidates") != 1:
+            raise GateError("retention_preview_mismatch")
+        applied = _target_maintenance(
+            context, *retention_arguments, "--apply", label="retention_apply"
+        )
+        if (
+            applied.get("dry_run") is not False
+            or applied.get("deleted_builds") != 1
+            or applied.get("queued_artifact_versions") != selected_artifact_count
+        ):
+            raise GateError("retention_apply_mismatch")
+
+        deletion_preview = _target_maintenance(
+            context,
+            "delete-artifacts",
+            "--orphan-grace-days",
+            "7",
+            "--limit",
+            str(selected_artifact_count),
+            label="deletion_grace_preview",
+        )
+        if deletion_preview.get("dry_run") is not True or deletion_preview.get("considered") != 0:
+            raise GateError("orphan_grace_not_enforced")
+        aged_queue = _query_json(
+            context,
+            target=True,
+            sql=(
+                "WITH changed AS (UPDATE hbcb.artifact_deletion_queue SET queued_at = "
+                "TIMESTAMPTZ '2000-01-01 00:00:00+00' WHERE build_id = '"
+                + selected_build
+                + "'::uuid AND status = 'pending' RETURNING id) "
+                "SELECT COUNT(*)::text::jsonb FROM changed;"
+            ),
+            label="deletion_queue_age",
+        )
+        if aged_queue != selected_artifact_count:
+            raise GateError("deletion_queue_age_mismatch")
+        deletion = _target_maintenance(
+            context,
+            "delete-artifacts",
+            "--apply",
+            "--orphan-grace-days",
+            "7",
+            "--limit",
+            str(selected_artifact_count),
+            "--worker-id",
+            "g8-recovery-drill",
+            label="exact_version_deletion",
+        )
+        if deletion != {
+            "considered": selected_artifact_count,
+            "deleted": selected_artifact_count,
+            "dry_run": False,
+            "failed": 0,
+        }:
+            raise GateError("exact_version_deletion_mismatch")
+
+        deletion_audit = _query_json(
+            context,
+            target=True,
+            sql=(
+                "SELECT jsonb_build_object("
+                "'queue_deleted',(SELECT COUNT(*) FROM hbcb.artifact_deletion_queue "
+                "WHERE build_id='" + selected_build + "'::uuid AND status='deleted'),"
+                "'attempts_deleted',(SELECT COUNT(*) FROM hbcb.artifact_deletion_attempts a "
+                "JOIN hbcb.artifact_deletion_queue q ON q.id=a.deletion_id "
+                "WHERE q.build_id='" + selected_build + "'::uuid AND a.outcome='deleted'),"
+                "'source_versions_match',(SELECT COUNT(*) FROM hbcb.artifact_deletion_queue q "
+                "JOIN hbcb.artifact_restore_remaps r ON r.build_id=q.build_id AND "
+                "r.bucket=q.bucket AND r.object_key=q.object_key AND "
+                "r.restored_version_id=q.version_id WHERE q.build_id='" + selected_build + "'::uuid))::text;"
+            ),
+            label="deletion_audit",
+        )
+        if deletion_audit != {
+            "attempts_deleted": selected_artifact_count,
+            "queue_deleted": selected_artifact_count,
+            "source_versions_match": selected_artifact_count,
+        }:
+            raise GateError("exact_version_deletion_audit_mismatch")
+        _verify_deleted_prefix(context, selected_build)
+
+        post_source_snapshot = _snapshot(context, target=False)
+        if post_source_snapshot != source_snapshot:
+            raise GateError("source_database_changed")
+        _source_maintenance(
+            context,
+            source_network,
+            source_env_path,
+            "backup-export",
+            "--output",
+            "/backups/source-after",
+            label="source_object_recheck",
+        )
+        _validate_private_tree(context.backup_root / "source-after")
+        source_after = _load_inventory(
+            context.backup_root / "source-after" / "inventory.json"
+        )
+        if source_after["artifacts"] != source_inventory["artifacts"]:
+            raise GateError("source_objects_changed")
+        summary = {
+            "artifact_bytes": artifact_bytes,
+            "artifacts": len(source_inventory["artifacts"]),
+            "database_backup_bytes": database_bytes,
+            "database_backup_sha256": database_sha256,
+            "exact_versions_deleted": selected_artifact_count,
+            "gate": "G8_RECOVERY_GATE",
+            "inventory_sha256": inventory_sha256,
+            "redis_reconstructed": 1,
+            "remapped_versions": len(source_inventory["artifacts"]),
+            "result": "PASS",
+            "retained_builds": 1,
+            "source_database_unchanged": True,
+            "target_host_ports": 0,
+        }
+    except BaseException as exc:
+        primary_error = exc
+    finally:
+        cleanup_error: Optional[BaseException] = None
+        if target_touched:
+            try:
+                context.target_compose(
+                    "down", "--volumes", "--remove-orphans", "--timeout", "30",
+                    label="target_cleanup",
+                    timeout=180,
+                    allow_failure=False,
+                )
+                _verify_target_removed(context)
+            except BaseException as exc:
+                cleanup_error = exc
+        for service in reversed(stopped):
+            try:
+                context.source_compose("start", service, label="source_restart", timeout=120)
+                _wait_source_service(context, service, healthy=service == "api")
+            except BaseException as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
+        try:
+            _remove_work_root(context.work_root)
+        except BaseException as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        if primary_error is not None:
+            raise primary_error
+        if cleanup_error is not None:
+            raise cleanup_error
+    if summary is None:
+        raise GateError("missing_recovery_summary")
+    return summary
+
+
+def main() -> int:
+    context: Optional[DrillContext] = None
+    try:
+        context = _create_context()
+        summary = execute_drill(context)
+        summary = dict(summary)
+        summary["source_services_restored"] = True
+        summary["target_resources_removed"] = True
+        evidence = _save_evidence(summary)
+        print(json.dumps(summary, sort_keys=True, separators=(",", ":")))
+        print(f"G8_RECOVERY_GATE: evidence={evidence}")
+        return 0
+    except GateError as exc:
+        if context is not None and context.work_root.exists():
+            try:
+                _remove_work_root(context.work_root)
+            except GateError:
+                pass
+        print(f"G8_RECOVERY_GATE: FAIL code={exc.code}", file=sys.stderr)
+        return 1
+    except (KeyboardInterrupt, SystemExit):
+        print("G8_RECOVERY_GATE: FAIL code=interrupted", file=sys.stderr)
+        return 130
+    except BaseException:
+        print("G8_RECOVERY_GATE: FAIL code=unexpected_failure", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

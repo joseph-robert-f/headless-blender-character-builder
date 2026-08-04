@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "build-request-v1.schema.json",
+  "title": "BuildRequest v1",
+  "description": "The complete bounded input accepted by both the one-shot builder and POST /v1/builds.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "request_version",
+    "generator",
+    "spec",
+    "output_profile",
+    "render_profile",
+    "quality_profile"
+  ],
+  "properties": {
+    "request_version": {"const": "build/v1"},
+    "generator": {"const": "geometric-character@1.0.0"},
+    "spec": {"$ref": "character-spec-v1.schema.json"},
+    "output_profile": {"const": "complete-v1"},
+    "render_profile": {"const": "diagnostic-v1"},
+    "quality_profile": {"const": "geometry-v1"}
+  }
+}

@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "manifest-v1.schema.json",
+  "title": "Successful build manifest v1",
+  "description": "Provenance, dimensions, artifact hashes, and passing QA summary. manifest.json excludes its own hash.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_version",
+    "request_sha256",
+    "spec_sha256",
+    "input_sha256",
+    "generator_version",
+    "execution",
+    "dimensions_mm",
+    "artifacts",
+    "qa"
+  ],
+  "properties": {
+    "manifest_version": {"const": "manifest/v1"},
+    "request_sha256": {"$ref": "#/$defs/sha256"},
+    "spec_sha256": {"$ref": "#/$defs/sha256"},
+    "input_sha256": {"type": "object", "maxProperties": 0, "additionalProperties": false},
+    "generator_version": {"const": "1.0.0"},
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "project_revision",
+        "blender_version",
+        "blender_binary_sha256",
+        "worker_image_reference",
+        "worker_image_digest",
+        "worker_image_id"
+      ],
+      "properties": {
+        "mode": {"enum": ["native", "container"]},
+        "project_revision": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$(?![\\s\\S])"},
+        "blender_version": {"type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z .+-]{0,63}$(?![\\s\\S])"},
+        "blender_binary_sha256": {"$ref": "#/$defs/sha256"},
+        "worker_image_reference": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "string", "maxLength": 255, "pattern": "^[A-Za-z0-9][A-Za-z0-9._/@:+-]*$(?![\\s\\S])"}
+          ]
+        },
+        "worker_image_digest": {"$ref": "#/$defs/nullableImageDigest"},
+        "worker_image_id": {"$ref": "#/$defs/nullableImageDigest"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"mode": {"const": "native"}}, "required": ["mode"]},
+          "then": {
+            "properties": {
+              "worker_image_reference": {"type": "null"},
+              "worker_image_digest": {"type": "null"},
+              "worker_image_id": {"type": "null"}
+            }
+          },
+          "else": {
+            "properties": {
+              "worker_image_reference": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      ]
+    },
+    "dimensions_mm": {"$ref": "#/$defs/dimensions"},
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model.blend",
+        "model.glb",
+        "model.stl",
+        "preview.png",
+        "diagnostics/front.png",
+        "diagnostics/side.png",
+        "diagnostics/back.png",
+        "qa.json"
+      ],
+      "properties": {
+        "model.blend": {"$ref": "#/$defs/artifact"},
+        "model.glb": {"$ref": "#/$defs/artifact"},
+        "model.stl": {"$ref": "#/$defs/artifact"},
+        "preview.png": {"$ref": "#/$defs/artifact"},
+        "diagnostics/front.png": {"$ref": "#/$defs/artifact"},
+        "diagnostics/side.png": {"$ref": "#/$defs/artifact"},
+        "diagnostics/back.png": {"$ref": "#/$defs/artifact"},
+        "qa.json": {"$ref": "#/$defs/artifact"}
+      }
+    },
+    "qa": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "manifold",
+        "non_manifold_edges",
+        "minimum_wall_mm",
+        "minimum_feature_mm",
+        "connected_shells",
+        "positive_volume",
+        "fresh_reload",
+        "glb_reimport",
+        "stl_reimport"
+      ],
+      "properties": {
+        "status": {"const": "passed"},
+        "manifold": {"const": true},
+        "non_manifold_edges": {"const": 0},
+        "minimum_wall_mm": {"type": "number", "minimum": 1.2, "maximum": 1000},
+        "minimum_feature_mm": {"type": "number", "minimum": 2, "maximum": 1000},
+        "connected_shells": {"const": 1},
+        "positive_volume": {"const": true},
+        "fresh_reload": {"const": true},
+        "glb_reimport": {"const": true},
+        "stl_reimport": {"const": true}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"},
+    "nullableImageDigest": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$(?![\\s\\S])"}
+      ]
+    },
+    "dimensions": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"type": "number", "minimum": 0.001, "maximum": 1000}
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "bytes"],
+      "properties": {
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "bytes": {"type": "integer", "minimum": 1, "maximum": 2147483648}
+      }
+    }
+  }
+}

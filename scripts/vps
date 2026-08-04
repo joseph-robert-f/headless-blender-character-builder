@@ -1,0 +1,2641 @@
+#!/usr/bin/env python3
+"""Fail-closed operator wrapper for the digest-locked VPS Compose overlay."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import errno
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import BinaryIO, Iterator, Mapping, Sequence
+from urllib.parse import urlsplit
+from uuid import uuid4
+
+
+ROOT = Path(__file__).resolve().parents[1]
+BASE_COMPOSE = ROOT / "compose.yaml"
+VPS_COMPOSE = ROOT / "deploy" / "vps" / "compose.yaml"
+MIGRATIONS = ROOT / "service" / "src" / "hbcb_service" / "migrations"
+FROZEN_BUILDER_REVISION = (
+    "4e6f85a64fae06b15fe40787a50becb7aa53d0f96896dca5c26db9314a7e8968"
+)
+ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+IMAGE_DIGEST = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._/:+-]*@sha256:([0-9a-f]{64})$"
+)
+SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
+STORAGE_ENDPOINT = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::[0-9]{1,5})?$"
+)
+DATABASE_ROLE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
+STORAGE_ACCESS_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$")
+PLACEHOLDER_MARKERS = ("change-me", "replace-me", "example-secret", "placeholder")
+BACKUP_FORMAT = "hbcb-backup/v1"
+BACKUP_MANIFEST = "backup-manifest.json"
+BACKUP_DATABASE = "database.dump"
+BACKUP_OBJECTS = "objects"
+BACKUP_LOCK = "release.lock.env"
+BACKUP_CONFIG = "vps.env"
+BACKUP_ENTRIES = frozenset(
+    {BACKUP_MANIFEST, BACKUP_DATABASE, BACKUP_OBJECTS, BACKUP_LOCK, BACKUP_CONFIG}
+)
+BACKUP_MANIFEST_KEYS = frozenset(
+    {
+        "format",
+        "created_at",
+        "release_version",
+        "migration_catalog_sha256",
+        "namespace",
+        "bucket",
+        "database_sha256",
+        "database_bytes",
+        "objects_tree_sha256",
+        "object_inventory_sha256",
+        "artifact_count",
+        "artifact_bytes",
+        "object_tree_files",
+        "object_tree_bytes",
+        "release_lock_sha256",
+        "vps_env_sha256",
+    }
+)
+UPGRADE_HANDOFF_FORMAT = "hbcb-upgrade-handoff/v1"
+UPGRADE_HANDOFF_FILE = "upgrade-handoff.json"
+UPGRADE_HANDOFF_MAX_AGE_SECONDS = 4 * 60 * 60
+UPGRADE_HANDOFF_PREPARING_KEYS = frozenset(
+    {
+        "format",
+        "status",
+        "prepared_at",
+        "namespace",
+        "source_release_lock_sha256",
+        "token",
+    }
+)
+UPGRADE_HANDOFF_READY_KEYS = frozenset(
+    set(UPGRADE_HANDOFF_PREPARING_KEYS)
+    | {
+        "ready_at",
+        "bundle",
+        "bundle_manifest_sha256",
+        "database_system_identifier",
+        "database_oid",
+    }
+)
+UPGRADE_HANDOFF_UPGRADING_KEYS = frozenset(
+    set(UPGRADE_HANDOFF_READY_KEYS)
+    | {
+        "upgrade_started_at",
+        "target_release_lock_sha256",
+    }
+)
+MAX_BACKUP_DATABASE_BYTES = 64 * 1024 * 1024 * 1024
+ROOT_OPERATOR_UID = 0
+MAINTENANCE_CONTAINER_UID = 65532
+ROOT_OPERATOR_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+ROOT_DOCKER_CANDIDATES = (Path("/usr/bin/docker"), Path("/bin/docker"))
+SINGLE_NAMESPACE_QUERY = (
+    "WITH namespaces(namespace) AS ("
+    "SELECT namespace FROM hbcb.builds UNION "
+    "SELECT namespace FROM hbcb.idempotency_keys UNION "
+    "SELECT namespace FROM hbcb.artifact_deletion_queue UNION "
+    "SELECT namespace FROM hbcb.artifact_restore_remaps"
+    ") SELECT COALESCE(string_agg(namespace, ',' ORDER BY namespace), '') FROM namespaces"
+)
+DATABASE_HANDOFF_QUERY = (
+    "SELECT system_identifier::text || ':' || "
+    "(SELECT oid::text FROM pg_database WHERE datname = current_database()) || ':' || "
+    "current_setting('default_transaction_read_only') FROM pg_control_system()"
+)
+
+VPS_REQUIRED = frozenset(
+    {
+        "HBCB_DEPLOYMENT_NAMESPACE",
+        "POSTGRES_DB",
+        "HBCB_API_DOMAIN",
+        "HBCB_ACME_EMAIL",
+        "HBCB_VPS_SECRETS_DIR",
+        "HBCB_VPS_STATE_DIR",
+        "HBCB_BACKUP_ROOT",
+        "HBCB_STORAGE_NETWORK",
+        "HBCB_STORAGE_INTERNAL_ENDPOINT",
+        "HBCB_STORAGE_PUBLIC_ENDPOINT",
+        "HBCB_STORAGE_INTERNAL_SECURE",
+        "HBCB_STORAGE_PUBLIC_SECURE",
+        "HBCB_STORAGE_REGION",
+        "HBCB_STORAGE_BUCKET",
+        "HBCB_SIGNED_URL_TTL_SECONDS",
+        "HBCB_RETENTION_SUCCEEDED_DAYS",
+        "HBCB_RETENTION_OTHER_DAYS",
+        "HBCB_ORPHAN_GRACE_DAYS",
+    }
+)
+LOCK_REQUIRED = frozenset(
+    {
+        "HBCB_RELEASE_VERSION",
+        "HBCB_API_IMAGE",
+        "HBCB_WORKER_IMAGE",
+        "HBCB_CADDY_IMAGE",
+        "HBCB_BUILDER_IMAGE_REFERENCE",
+        "HBCB_BUILDER_IMAGE_ID",
+        "HBCB_BUILDER_SOURCE_REVISION",
+        "HBCB_MIGRATION_CATALOG_SHA256",
+    }
+)
+SECRET_FILE_KEYS = {
+    "postgres.env": frozenset({"POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"}),
+    "redis.env": frozenset({"REDIS_PASSWORD"}),
+    "database-init.env": frozenset(
+        {
+            "HBCB_DATABASE_ADMIN_URL",
+            "HBCB_DATABASE_MIGRATOR_URL",
+            "HBCB_DATABASE_API_USER",
+            "HBCB_DATABASE_API_PASSWORD",
+            "HBCB_DATABASE_WORKER_USER",
+            "HBCB_DATABASE_WORKER_PASSWORD",
+            "HBCB_DATABASE_MAINTENANCE_USER",
+            "HBCB_DATABASE_MAINTENANCE_PASSWORD",
+            "HBCB_DATABASE_MIGRATOR_USER",
+            "HBCB_DATABASE_MIGRATOR_PASSWORD",
+        }
+    ),
+    "api.env": frozenset(
+        {
+            "HBCB_API_TOKEN",
+            "HBCB_IDEMPOTENCY_SECRET",
+            "HBCB_DATABASE_URL",
+            "HBCB_REDIS_URL",
+            "HBCB_STORAGE_ACCESS_KEY",
+            "HBCB_STORAGE_SECRET_KEY",
+        }
+    ),
+    "worker.env": frozenset(
+        {
+            "HBCB_DATABASE_URL",
+            "HBCB_REDIS_URL",
+            "HBCB_STORAGE_ACCESS_KEY",
+            "HBCB_STORAGE_SECRET_KEY",
+        }
+    ),
+    "maintenance.env": frozenset(
+        {
+            "HBCB_DATABASE_URL",
+            "HBCB_REDIS_URL",
+            "HBCB_STORAGE_ACCESS_KEY",
+            "HBCB_STORAGE_SECRET_KEY",
+        }
+    ),
+}
+
+
+class OperatorError(RuntimeError):
+    """Safe-to-display operator failure; values from env files are excluded."""
+
+
+class BackupRestartError(OperatorError):
+    """A backup failed and the previously live service set did not reconverge."""
+
+
+def _regular_file(
+    path: Path,
+    *,
+    secret: bool = False,
+    owner_uid: int | None = None,
+    reject_group_world_writable: bool = False,
+) -> os.stat_result:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise OperatorError(f"required file is unavailable: {path}") from exc
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise OperatorError(f"required file must be a regular non-symlink: {path}")
+    permissions = stat.S_IMODE(metadata.st_mode)
+    if secret and permissions != 0o600:
+        raise OperatorError(f"secret file must have mode 0600: {path}")
+    if owner_uid is not None and metadata.st_uid != owner_uid:
+        raise OperatorError(f"required file has an unsafe owner: {path}")
+    if reject_group_world_writable and permissions & 0o022:
+        raise OperatorError(f"required file must not be group/world writable: {path}")
+    return metadata
+
+
+def _parse_env(
+    path: Path,
+    *,
+    secret: bool = False,
+    owner_uid: int | None = None,
+    reject_group_world_writable: bool = False,
+) -> dict[str, str]:
+    metadata = _regular_file(
+        path,
+        secret=secret,
+        owner_uid=owner_uid,
+        reject_group_world_writable=reject_group_world_writable,
+    )
+    if metadata.st_size <= 0 or metadata.st_size > 64 * 1024:
+        raise OperatorError(f"environment file size is outside policy: {path}")
+    try:
+        payload = path.read_bytes().decode("utf-8", "strict")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise OperatorError(f"environment file is unreadable: {path}") from exc
+    values: dict[str, str] = {}
+    for line_number, raw_line in enumerate(payload.splitlines(), 1):
+        if not raw_line or raw_line.startswith("#"):
+            continue
+        if raw_line != raw_line.strip() or "=" not in raw_line:
+            raise OperatorError(f"invalid environment syntax at {path}:{line_number}")
+        name, value = raw_line.split("=", 1)
+        if ENV_NAME.fullmatch(name) is None or not value or name in values:
+            raise OperatorError(f"invalid environment entry at {path}:{line_number}")
+        if any(ord(character) < 32 or ord(character) > 126 for character in value):
+            raise OperatorError(f"invalid environment value at {path}:{line_number}")
+        if value[0] in "'\"" or value[-1] in "'\"" or "$" in value or "`" in value:
+            raise OperatorError(f"shell-like environment value is forbidden at {path}:{line_number}")
+        values[name] = value
+    return values
+
+
+def _require_exact_keys(values: Mapping[str, str], expected: frozenset[str], label: str) -> None:
+    missing = sorted(expected - set(values))
+    extra = sorted(set(values) - expected)
+    if missing or extra:
+        raise OperatorError(
+            f"{label} keys do not match the release contract "
+            f"(missing={','.join(missing) or 'none'}; extra={','.join(extra) or 'none'})"
+        )
+
+
+def _bounded_integer(values: Mapping[str, str], name: str, minimum: int, maximum: int) -> int:
+    text = values[name]
+    if not text.isascii() or not text.isdigit():
+        raise OperatorError(f"{name} must be an unsigned decimal integer")
+    value = int(text)
+    if not minimum <= value <= maximum:
+        raise OperatorError(f"{name} is outside policy")
+    return value
+
+
+def migration_catalog_sha256() -> str:
+    try:
+        entries = sorted(MIGRATIONS.iterdir(), key=lambda item: item.name)
+    except OSError as exc:
+        raise OperatorError("migration catalog is unavailable") from exc
+    digest = hashlib.sha256()
+    count = 0
+    for path in entries:
+        if path.is_symlink() or not path.is_file() or re.fullmatch(
+            r"[0-9]{4}_[a-z][a-z0-9_]*\.sql", path.name
+        ) is None:
+            raise OperatorError("migration catalog contains an unsafe entry")
+        payload = path.read_bytes()
+        file_digest = hashlib.sha256(payload).hexdigest()
+        digest.update(path.name.encode("ascii") + b"\0" + file_digest.encode("ascii") + b"\n")
+        count += 1
+    if not count:
+        raise OperatorError("migration catalog is empty")
+    return digest.hexdigest()
+
+
+def _safe_absolute_directory(
+    value: str,
+    label: str,
+    *,
+    mode: int | None = None,
+    owner_uid: int | None = None,
+) -> Path:
+    path = Path(value)
+    if not path.is_absolute() or path == Path("/") or ".." in path.parts:
+        raise OperatorError(f"{label} must be a narrow absolute directory")
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise OperatorError(f"{label} is unavailable") from exc
+    if path.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+        raise OperatorError(f"{label} must be a non-symlink directory")
+    permissions = stat.S_IMODE(metadata.st_mode)
+    if mode is not None and permissions != mode:
+        raise OperatorError(f"{label} must have mode {mode:04o}")
+    if permissions & 0o022:
+        raise OperatorError(f"{label} must not be group/world writable")
+    if owner_uid is not None and metadata.st_uid != owner_uid:
+        raise OperatorError(f"{label} has an unsafe owner")
+    return path
+
+
+def _absolute_cli_path(path: Path, label: str) -> Path:
+    """Reject unsafe CLI trust paths without resolving away symlinks."""
+
+    if not path.is_absolute() or path == Path("/") or ".." in path.parts:
+        raise OperatorError(f"{label} must be a narrow absolute path")
+    return path
+
+
+def _validate_root_owned_ancestors(path: Path, label: str) -> None:
+    """Require a stable root-owned, non-writable directory chain around a trust input."""
+
+    directory = path if path.is_dir() and not path.is_symlink() else path.parent
+    while True:
+        try:
+            metadata = directory.lstat()
+        except OSError as exc:
+            raise OperatorError(f"{label} parent directory is unavailable") from exc
+        if directory.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+            raise OperatorError(f"{label} parent path must contain only directories")
+        if metadata.st_uid != ROOT_OPERATOR_UID:
+            raise OperatorError(f"{label} parent directory has an unsafe owner")
+        if stat.S_IMODE(metadata.st_mode) & 0o022:
+            raise OperatorError(f"{label} parent directory must not be group/world writable")
+        if directory == Path("/"):
+            return
+        directory = directory.parent
+
+
+def _root_trusted_file(path: Path, label: str, *, mode: int | None = None) -> os.stat_result:
+    _absolute_cli_path(path, label)
+    _validate_root_owned_ancestors(path, label)
+    metadata = _regular_file(
+        path,
+        owner_uid=ROOT_OPERATOR_UID,
+        reject_group_world_writable=True,
+    )
+    if mode is not None and stat.S_IMODE(metadata.st_mode) != mode:
+        raise OperatorError(f"{label} must have mode {mode:04o}")
+    return metadata
+
+
+def _root_trusted_directory(value: str, label: str, *, mode: int | None = None) -> Path:
+    path = _safe_absolute_directory(
+        value,
+        label,
+        mode=mode,
+        owner_uid=ROOT_OPERATOR_UID,
+    )
+    _validate_root_owned_ancestors(path, label)
+    return path
+
+
+def validate_vps_environment(values: Mapping[str, str]) -> None:
+    _require_exact_keys(values, VPS_REQUIRED, "VPS environment")
+    namespace = values["HBCB_DEPLOYMENT_NAMESPACE"]
+    if re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?", namespace) is None:
+        raise OperatorError("deployment namespace is outside policy")
+    if values["POSTGRES_DB"] != "hbcb":
+        raise OperatorError("v0.1 VPS database name must be hbcb")
+    domain = values["HBCB_API_DOMAIN"]
+    if (
+        re.fullmatch(r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}", domain)
+        is None
+    ):
+        raise OperatorError("API domain must be a DNS hostname")
+    email = values["HBCB_ACME_EMAIL"]
+    if len(email) > 254 or re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email) is None:
+        raise OperatorError("ACME email is outside policy")
+    for name in ("HBCB_STORAGE_INTERNAL_ENDPOINT", "HBCB_STORAGE_PUBLIC_ENDPOINT"):
+        endpoint = values[name]
+        if STORAGE_ENDPOINT.fullmatch(endpoint) is None:
+            raise OperatorError(f"{name} must be a host and optional port")
+        parsed = urlsplit("//" + endpoint)
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise OperatorError(f"{name} is outside policy") from exc
+        if not parsed.hostname or (port is not None and not 1 <= port <= 65535):
+            raise OperatorError(f"{name} is outside policy")
+    if values["HBCB_STORAGE_INTERNAL_ENDPOINT"] == values["HBCB_STORAGE_PUBLIC_ENDPOINT"]:
+        raise OperatorError("private and public storage endpoints must be distinct on VPS")
+    if urlsplit("//" + values["HBCB_STORAGE_PUBLIC_ENDPOINT"]).hostname == domain:
+        raise OperatorError("artifact and API domains must be distinct")
+    for name in ("HBCB_STORAGE_INTERNAL_SECURE", "HBCB_STORAGE_PUBLIC_SECURE"):
+        if values[name] != "true":
+            raise OperatorError(f"{name} must be true for VPS")
+    if re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", values["HBCB_STORAGE_REGION"]) is None:
+        raise OperatorError("storage region is outside policy")
+    bucket = values["HBCB_STORAGE_BUCKET"]
+    if re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]{1,61}[a-z0-9])", bucket) is None or ".." in bucket:
+        raise OperatorError("storage bucket is outside policy")
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", values["HBCB_STORAGE_NETWORK"]) is None:
+        raise OperatorError("storage network name is outside policy")
+    _bounded_integer(values, "HBCB_SIGNED_URL_TTL_SECONDS", 30, 900)
+    _bounded_integer(values, "HBCB_RETENTION_SUCCEEDED_DAYS", 1, 3650)
+    _bounded_integer(values, "HBCB_RETENTION_OTHER_DAYS", 1, 3650)
+    _bounded_integer(values, "HBCB_ORPHAN_GRACE_DAYS", 1, 3650)
+
+
+def _validate_release_lock_shape(values: Mapping[str, str]) -> None:
+    _require_exact_keys(values, LOCK_REQUIRED, "release lock")
+    if SEMVER.fullmatch(values["HBCB_RELEASE_VERSION"]) is None:
+        raise OperatorError("release version is outside policy")
+    for name in ("HBCB_API_IMAGE", "HBCB_WORKER_IMAGE", "HBCB_CADDY_IMAGE", "HBCB_BUILDER_IMAGE_REFERENCE"):
+        match = IMAGE_DIGEST.fullmatch(values[name])
+        if match is None or set(match.group(1)) == {"0"}:
+            raise OperatorError(f"{name} must be a non-placeholder digest reference")
+    image_id = values["HBCB_BUILDER_IMAGE_ID"]
+    if not image_id.startswith("sha256:") or SHA256.fullmatch(image_id[7:]) is None or set(image_id[7:]) == {"0"}:
+        raise OperatorError("builder image ID must be a non-placeholder SHA-256")
+    if values["HBCB_BUILDER_SOURCE_REVISION"] != FROZEN_BUILDER_REVISION:
+        raise OperatorError("builder source revision does not match the frozen G4 contract")
+    catalog = values["HBCB_MIGRATION_CATALOG_SHA256"]
+    if SHA256.fullmatch(catalog) is None or set(catalog) == {"0"}:
+        raise OperatorError("migration catalog digest is outside policy")
+
+
+def validate_release_lock(values: Mapping[str, str]) -> None:
+    _validate_release_lock_shape(values)
+    if values["HBCB_MIGRATION_CATALOG_SHA256"] != migration_catalog_sha256():
+        raise OperatorError("migration catalog digest does not match this release")
+
+
+def _validate_role_url(
+    value: str,
+    *,
+    scheme: str,
+    hostname: str,
+    database_path: str,
+    username: str | None = None,
+) -> None:
+    if not 1 <= len(value) <= 2048:
+        raise OperatorError("role connection URL is outside policy")
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as exc:
+        raise OperatorError("role connection URL is outside policy") from exc
+    if (
+        parsed.scheme != scheme
+        or parsed.hostname != hostname
+        or parsed.path != database_path
+        or parsed.query
+        or parsed.fragment
+        or parsed.password is None
+        or not 32 <= len(parsed.password) <= 128
+        or any(marker in parsed.password.lower() for marker in PLACEHOLDER_MARKERS)
+        or any(ord(character) < 33 or ord(character) > 126 for character in parsed.password)
+        or (username is not None and parsed.username != username)
+        or (scheme == "postgresql" and (
+            parsed.username is None or DATABASE_ROLE.fullmatch(parsed.username) is None
+        ))
+        or (scheme == "redis" and parsed.username not in (None, ""))
+        or (port is not None and not 1 <= port <= 65535)
+    ):
+        raise OperatorError("role connection URL is outside policy")
+
+
+def validate_secret_files(
+    directory: Path,
+    *,
+    owner_uid: int | None = None,
+) -> dict[str, dict[str, str]]:
+    parsed: dict[str, dict[str, str]] = {}
+    directory_uid = directory.lstat().st_uid
+    for filename, keys in SECRET_FILE_KEYS.items():
+        path = directory / filename
+        values = _parse_env(path, secret=True, owner_uid=owner_uid)
+        if path.lstat().st_uid != directory_uid:
+            raise OperatorError(f"secret file owner does not match its directory: {path}")
+        _require_exact_keys(values, keys, filename)
+        parsed[filename] = values
+    postgres = parsed["postgres.env"]
+    if (
+        postgres["POSTGRES_DB"] != "hbcb"
+        or postgres["POSTGRES_USER"] == "postgres"
+        or DATABASE_ROLE.fullmatch(postgres["POSTGRES_USER"]) is None
+    ):
+        raise OperatorError("postgres secret file uses an unsafe identity")
+    direct_secrets = [
+        postgres["POSTGRES_PASSWORD"],
+        parsed["redis.env"]["REDIS_PASSWORD"],
+        parsed["database-init.env"]["HBCB_DATABASE_API_PASSWORD"],
+        parsed["database-init.env"]["HBCB_DATABASE_WORKER_PASSWORD"],
+        parsed["database-init.env"]["HBCB_DATABASE_MAINTENANCE_PASSWORD"],
+        parsed["database-init.env"]["HBCB_DATABASE_MIGRATOR_PASSWORD"],
+        parsed["api.env"]["HBCB_API_TOKEN"],
+        parsed["api.env"]["HBCB_IDEMPOTENCY_SECRET"],
+        parsed["api.env"]["HBCB_STORAGE_SECRET_KEY"],
+        parsed["worker.env"]["HBCB_STORAGE_SECRET_KEY"],
+        parsed["maintenance.env"]["HBCB_STORAGE_SECRET_KEY"],
+    ]
+    if (
+        any(
+            not 32 <= len(value) <= 128
+            or any(marker in value.lower() for marker in PLACEHOLDER_MARKERS)
+            or any(ord(character) < 33 or ord(character) > 126 for character in value)
+            for value in direct_secrets
+        )
+        or len(set(direct_secrets)) != len(direct_secrets)
+    ):
+        raise OperatorError("role secrets must be strong and independent")
+    roles = [
+        postgres["POSTGRES_USER"],
+        parsed["database-init.env"]["HBCB_DATABASE_API_USER"],
+        parsed["database-init.env"]["HBCB_DATABASE_WORKER_USER"],
+        parsed["database-init.env"]["HBCB_DATABASE_MAINTENANCE_USER"],
+        parsed["database-init.env"]["HBCB_DATABASE_MIGRATOR_USER"],
+    ]
+    if len(set(roles)) != len(roles) or any(
+        DATABASE_ROLE.fullmatch(role) is None for role in roles
+    ):
+        raise OperatorError("database roles must be distinct")
+    api = parsed["api.env"]
+    worker = parsed["worker.env"]
+    maintenance = parsed["maintenance.env"]
+    initializer = parsed["database-init.env"]
+    for name in ("HBCB_API_TOKEN", "HBCB_IDEMPOTENCY_SECRET"):
+        if re.fullmatch(r"[0-9a-f]{64}", api[name]) is None:
+            raise OperatorError(f"{name} must be exactly 64 lowercase hexadecimal characters")
+    storage_keys = (
+        api["HBCB_STORAGE_ACCESS_KEY"],
+        worker["HBCB_STORAGE_ACCESS_KEY"],
+        maintenance["HBCB_STORAGE_ACCESS_KEY"],
+    )
+    if len(set(storage_keys)) != len(storage_keys) or any(
+        STORAGE_ACCESS_KEY.fullmatch(value) is None
+        or any(marker in value.lower() for marker in PLACEHOLDER_MARKERS)
+        for value in storage_keys
+    ):
+        raise OperatorError("storage role identities must be valid and distinct")
+    _validate_role_url(
+        initializer["HBCB_DATABASE_ADMIN_URL"],
+        scheme="postgresql",
+        hostname="postgres",
+        database_path="/hbcb",
+        username=postgres["POSTGRES_USER"],
+    )
+    _validate_role_url(
+        initializer["HBCB_DATABASE_MIGRATOR_URL"],
+        scheme="postgresql",
+        hostname="postgres",
+        database_path="/hbcb",
+        username=initializer["HBCB_DATABASE_MIGRATOR_USER"],
+    )
+    if urlsplit(initializer["HBCB_DATABASE_ADMIN_URL"]).password != postgres["POSTGRES_PASSWORD"]:
+        raise OperatorError("admin database URL does not match its configured credential")
+    if urlsplit(initializer["HBCB_DATABASE_MIGRATOR_URL"]).password != initializer["HBCB_DATABASE_MIGRATOR_PASSWORD"]:
+        raise OperatorError("migrator database URL does not match its configured credential")
+    for service, username, password in (
+        (api, initializer["HBCB_DATABASE_API_USER"], initializer["HBCB_DATABASE_API_PASSWORD"]),
+        (worker, initializer["HBCB_DATABASE_WORKER_USER"], initializer["HBCB_DATABASE_WORKER_PASSWORD"]),
+        (
+            maintenance,
+            initializer["HBCB_DATABASE_MAINTENANCE_USER"],
+            initializer["HBCB_DATABASE_MAINTENANCE_PASSWORD"],
+        ),
+    ):
+        _validate_role_url(
+            service["HBCB_DATABASE_URL"],
+            scheme="postgresql",
+            hostname="postgres",
+            database_path="/hbcb",
+            username=username,
+        )
+        if urlsplit(service["HBCB_DATABASE_URL"]).password != password:
+            raise OperatorError("runtime database URL does not match its configured credential")
+        _validate_role_url(
+            service["HBCB_REDIS_URL"],
+            scheme="redis",
+            hostname="redis",
+            database_path="/0",
+        )
+        if urlsplit(service["HBCB_REDIS_URL"]).password != parsed["redis.env"]["REDIS_PASSWORD"]:
+            raise OperatorError("runtime Redis URL does not match its configured credential")
+    return parsed
+
+
+def _compose_command(
+    compose_bin: str | None,
+    *,
+    root_trust: bool = False,
+) -> list[str]:
+    if compose_bin:
+        path = Path(compose_bin)
+        if (
+            not path.is_absolute()
+            or path.is_symlink()
+            or not path.is_file()
+            or not os.access(path, os.X_OK)
+        ):
+            raise OperatorError("HBCB_COMPOSE_BIN must name an executable absolute file")
+        if root_trust:
+            _root_trusted_file(path, "Compose executable")
+        return [str(path)]
+    if root_trust:
+        for path in ROOT_DOCKER_CANDIDATES:
+            try:
+                _root_trusted_file(path, "Docker executable")
+            except OperatorError:
+                continue
+            if os.access(path, os.X_OK):
+                return [str(path), "compose"]
+        raise OperatorError(
+            "no trusted Docker executable was found; set HBCB_COMPOSE_BIN to a trusted Compose executable"
+        )
+    docker = shutil.which("docker")
+    if docker is None:
+        raise OperatorError("Docker executable is unavailable")
+    return [docker, "compose"]
+
+
+def _run_safe(
+    command: Sequence[str],
+    *,
+    label: str,
+    environment: Mapping[str, str],
+    stdout=None,
+    stdin: BinaryIO | None = None,
+) -> None:
+    try:
+        result = subprocess.run(
+            list(command),
+            cwd=ROOT,
+            env=dict(environment),
+            stdin=subprocess.DEVNULL if stdin is None else stdin,
+            stdout=subprocess.PIPE if stdout is None else stdout,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as exc:
+        raise OperatorError(f"{label} could not start") from exc
+    if result.returncode != 0:
+        raise OperatorError(f"{label} failed with exit {result.returncode}")
+
+
+def _postgres_scalar(
+    prefix: Sequence[str],
+    environment: Mapping[str, str],
+    query: str,
+    *,
+    label: str,
+) -> str:
+    if not isinstance(query, str) or not 1 <= len(query) <= 8192 or "\x00" in query:
+        raise OperatorError("PostgreSQL probe query is outside policy")
+    command = list(prefix) + [
+        "exec",
+        "-T",
+        "postgres",
+        "/bin/sh",
+        "-ec",
+        "exec psql --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 "
+        "--username \"$POSTGRES_USER\" --dbname \"$POSTGRES_DB\" --command \"$1\"",
+        "hbcb-postgres-probe",
+        query,
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            cwd=ROOT,
+            env=dict(environment),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as exc:
+        raise OperatorError(f"{label} could not start") from exc
+    if result.returncode != 0:
+        raise OperatorError(f"{label} failed with exit {result.returncode}")
+    if not 1 <= len(result.stdout) <= 4096:
+        raise OperatorError(f"{label} returned invalid evidence")
+    try:
+        value = result.stdout.decode("ascii", "strict").strip()
+    except UnicodeDecodeError as exc:
+        raise OperatorError(f"{label} returned invalid evidence") from exc
+    if "\n" in value or "\r" in value:
+        raise OperatorError(f"{label} returned invalid evidence")
+    return value
+
+
+def _assert_single_namespace(
+    prefix: Sequence[str],
+    environment: Mapping[str, str],
+    expected_namespace: str,
+) -> None:
+    observed = _postgres_scalar(
+        prefix,
+        environment,
+        SINGLE_NAMESPACE_QUERY,
+        label="database namespace invariant",
+    )
+    if observed not in ("", expected_namespace):
+        raise OperatorError("database contains metadata outside the deployment namespace")
+
+
+def _database_handoff_identity(
+    prefix: Sequence[str],
+    environment: Mapping[str, str],
+) -> tuple[str, int, bool]:
+    observed = _postgres_scalar(
+        prefix,
+        environment,
+        DATABASE_HANDOFF_QUERY,
+        label="database handoff identity probe",
+    )
+    match = re.fullmatch(r"([1-9][0-9]{0,24}):([1-9][0-9]{0,9}):(on|off)", observed)
+    if match is None:
+        raise OperatorError("database handoff identity is invalid")
+    return match.group(1), int(match.group(2)), match.group(3) == "on"
+
+
+def _set_database_read_only(
+    prefix: Sequence[str],
+    environment: Mapping[str, str],
+    *,
+    enabled: bool,
+) -> None:
+    setting = "on" if enabled else "off"
+    query = (
+        f"ALTER DATABASE hbcb SET default_transaction_read_only = {setting}; "
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+        "WHERE datname = current_database() AND pid <> pg_backend_pid()"
+    )
+    _run_safe(
+        list(prefix)
+        + [
+            "exec",
+            "-T",
+            "postgres",
+            "/bin/sh",
+            "-ec",
+            "exec psql --quiet --set=ON_ERROR_STOP=1 "
+            "--username \"$POSTGRES_USER\" --dbname \"$POSTGRES_DB\" --command \"$1\"",
+            "hbcb-database-read-only",
+            query,
+        ],
+        label=f"database read-only {'enable' if enabled else 'disable'}",
+        environment=environment,
+    )
+    _system_identifier, _database_oid, observed_enabled = _database_handoff_identity(
+        prefix,
+        environment,
+    )
+    if observed_enabled is not enabled:
+        raise OperatorError("database read-only setting did not converge")
+
+
+def _run_captured_json(
+    command: Sequence[str],
+    *,
+    label: str,
+    environment: Mapping[str, str],
+    expected_keys: frozenset[str],
+) -> dict[str, object]:
+    try:
+        result = subprocess.run(
+            list(command),
+            cwd=ROOT,
+            env=dict(environment),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as exc:
+        raise OperatorError(f"{label} could not start") from exc
+    if result.returncode != 0:
+        raise OperatorError(f"{label} failed with exit {result.returncode}")
+    if len(result.stdout) > 16 * 1024:
+        raise OperatorError(f"{label} returned an oversized result")
+    try:
+        payload = json.loads(result.stdout.decode("ascii"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise OperatorError(f"{label} returned an invalid result") from exc
+    if not isinstance(payload, dict) or set(payload) != expected_keys:
+        raise OperatorError(f"{label} returned an unexpected result")
+    return payload
+
+
+def _maintenance_command(
+    prefix: Sequence[str],
+    arguments: Sequence[str],
+    *,
+    host_backup: Path | None = None,
+    read_only: bool = False,
+) -> list[str]:
+    command = list(prefix) + ["--profile", "maintenance", "run", "--rm", "--no-deps"]
+    if host_backup is not None:
+        mount = f"{host_backup}:/backup"
+        if read_only:
+            mount += ":ro"
+        command.extend(["--volume", mount])
+    command.extend(["maintenance", *arguments])
+    return command
+
+
+def _maintenance_result(
+    prefix: Sequence[str],
+    arguments: Sequence[str],
+    *,
+    label: str,
+    environment: Mapping[str, str],
+    expected_keys: frozenset[str],
+    host_backup: Path | None = None,
+    read_only: bool = False,
+) -> dict[str, object]:
+    return _run_captured_json(
+        _maintenance_command(
+            prefix,
+            arguments,
+            host_backup=host_backup,
+            read_only=read_only,
+        ),
+        label=label,
+        environment=environment,
+        expected_keys=expected_keys,
+    )
+
+
+def _maintenance_probe(
+    prefix: Sequence[str],
+    arguments: Sequence[str],
+    *,
+    environment: Mapping[str, str],
+) -> tuple[bool, str | None]:
+    """Run a no-output maintenance probe and expose only its bounded error code."""
+
+    try:
+        result = subprocess.run(
+            _maintenance_command(prefix, arguments),
+            cwd=ROOT,
+            env=dict(environment),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as exc:
+        raise OperatorError("maintenance probe could not start") from exc
+    if result.returncode == 0:
+        return True, None
+    if len(result.stderr) > 4096:
+        return False, None
+    try:
+        payload = json.loads(result.stderr.decode("ascii"))
+        code = payload["error"]["code"]
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        return False, None
+    if not isinstance(code, str) or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code) is None:
+        return False, None
+    return False, code
+
+
+def _sha256_file(path: Path, *, maximum_bytes: int | None = None) -> tuple[str, int]:
+    metadata = _regular_file(path)
+    if maximum_bytes is not None and metadata.st_size > maximum_bytes:
+        raise OperatorError("backup file is outside the supported size policy")
+    digest = hashlib.sha256()
+    consumed = 0
+    try:
+        with path.open("rb", buffering=0) as stream:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                consumed += len(chunk)
+                digest.update(chunk)
+    except OSError as exc:
+        raise OperatorError("backup file could not be hashed") from exc
+    if consumed != metadata.st_size:
+        raise OperatorError("backup file changed while being hashed")
+    return digest.hexdigest(), consumed
+
+
+def _write_private(path: Path, payload: bytes) -> None:
+    if not isinstance(payload, bytes) or len(payload) > 16 * 1024 * 1024:
+        raise OperatorError("private file payload is outside policy")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = None
+    try:
+        descriptor = os.open(path, flags, 0o600)
+        view = memoryview(payload)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError("short write")
+            view = view[written:]
+        os.fsync(descriptor)
+    except OSError as exc:
+        raise OperatorError("private backup metadata could not be written") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _copy_private(source: Path, destination: Path) -> str:
+    metadata = _regular_file(source)
+    if metadata.st_size <= 0 or metadata.st_size > 64 * 1024:
+        raise OperatorError("configuration copy is outside policy")
+    try:
+        payload = source.read_bytes()
+    except OSError as exc:
+        raise OperatorError("configuration copy could not be read") from exc
+    if len(payload) != metadata.st_size:
+        raise OperatorError("configuration copy changed while being read")
+    _write_private(destination, payload)
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _object_tree_sha256(
+    root: Path,
+    *,
+    owner_uid: int | None = None,
+) -> tuple[str, int, int]:
+    _safe_absolute_directory(
+        str(root),
+        "backup object tree",
+        mode=0o700,
+        owner_uid=owner_uid,
+    )
+    try:
+        entries = sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix())
+    except OSError as exc:
+        raise OperatorError("backup object tree could not be listed") from exc
+    if len(entries) > 300_001:
+        raise OperatorError("backup object tree contains too many entries")
+    digest = hashlib.sha256()
+    files = 0
+    total = 0
+    for path in entries:
+        relative = path.relative_to(root).as_posix()
+        if not relative or "\x00" in relative or len(relative.encode("utf-8")) > 4096:
+            raise OperatorError("backup object tree contains an unsafe path")
+        try:
+            metadata = path.lstat()
+        except OSError as exc:
+            raise OperatorError("backup object tree changed while being inspected") from exc
+        if path.is_symlink():
+            raise OperatorError("backup object tree contains a symlink")
+        if owner_uid is not None and metadata.st_uid != owner_uid:
+            raise OperatorError("backup object tree contains an unsafe owner")
+        if stat.S_ISDIR(metadata.st_mode):
+            if stat.S_IMODE(metadata.st_mode) != 0o700:
+                raise OperatorError("backup object directory must have mode 0700")
+            digest.update(b"D\0" + relative.encode("utf-8") + b"\0")
+            continue
+        if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise OperatorError("backup object must be a regular mode-0600 file")
+        file_digest, size = _sha256_file(path)
+        digest.update(
+            b"F\0"
+            + relative.encode("utf-8")
+            + b"\0"
+            + str(size).encode("ascii")
+            + b"\0"
+            + file_digest.encode("ascii")
+            + b"\0"
+        )
+        files += 1
+        total += size
+    return digest.hexdigest(), files, total
+
+
+def _private_new_directory(path: Path, *, owner: int | None = None) -> None:
+    expected_owner = ROOT_OPERATOR_UID if owner is None else owner
+    try:
+        os.mkdir(path, 0o700)
+        if owner is not None:
+            os.chown(path, owner, owner)
+        metadata = path.lstat()
+    except OSError as exc:
+        raise OperatorError("private backup directory could not be created") from exc
+    if (
+        path.is_symlink()
+        or not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or metadata.st_uid != expected_owner
+    ):
+        raise OperatorError("private backup directory has unsafe ownership or mode")
+
+
+def _safe_backup_child(root: Path, value: Path, *, must_exist: bool) -> Path:
+    if not value.is_absolute() or value == Path("/") or ".." in value.parts:
+        raise OperatorError("backup path must be a narrow absolute directory")
+    if value.parent != root or value.name.startswith(".") or ":" in str(value):
+        raise OperatorError("backup path must be one direct child of the configured backup root")
+    if must_exist:
+        _safe_absolute_directory(
+            str(value),
+            "backup bundle",
+            mode=0o700,
+            owner_uid=ROOT_OPERATOR_UID,
+        )
+    else:
+        try:
+            value.lstat()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise OperatorError("backup destination is unavailable") from exc
+        else:
+            raise OperatorError("backup destination already exists")
+    return value
+
+
+def _validate_private_storage_network(name: str, environment: Mapping[str, str]) -> None:
+    try:
+        result = subprocess.run(
+            ["docker", "network", "inspect", "--format", "{{json .Internal}}", name],
+            cwd=ROOT,
+            env=dict(environment),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise OperatorError("private storage network validation could not start") from exc
+    if result.returncode != 0:
+        raise OperatorError("private storage network is unavailable")
+    if result.stdout.strip() != "true":
+        raise OperatorError(
+            "storage network must be Docker-internal; attach an operator-managed private S3 gateway"
+        )
+
+
+def _compose_prefix(
+    config: Path,
+    lock: Path,
+    compose_bin: str | None,
+    *,
+    root_trust: bool = False,
+) -> list[str]:
+    return _compose_command(compose_bin, root_trust=root_trust) + [
+        "--project-name",
+        "hbcb-vps",
+        "--env-file",
+        str(config),
+        "--env-file",
+        str(lock),
+        "-f",
+        str(BASE_COMPOSE),
+        "-f",
+        str(VPS_COMPOSE),
+    ]
+
+
+def _operator_environment(
+    vps: Mapping[str, str],
+    lock: Mapping[str, str],
+    *,
+    root_trust: bool,
+) -> dict[str, str]:
+    environment = os.environ.copy()
+    if root_trust:
+        forbidden = sorted(
+            name
+            for name in environment
+            if name.startswith(("DOCKER_", "COMPOSE_", "BUILDX_", "BUILDKIT_"))
+        )
+        if forbidden:
+            raise OperatorError(
+                "inherited Docker/Compose control environment is forbidden "
+                f"(names={','.join(forbidden)})"
+            )
+        environment["PATH"] = ROOT_OPERATOR_PATH
+        environment["HOME"] = "/root"
+        environment["XDG_CONFIG_HOME"] = "/root/.config"
+    environment.update(vps)
+    environment.update(lock)
+    return environment
+
+
+def _validate_release_root_trust() -> None:
+    _root_trusted_directory(str(ROOT), "release directory")
+    _root_trusted_file(ROOT / "scripts" / "vps", "operator wrapper")
+    _root_trusted_file(BASE_COMPOSE, "base Compose file")
+    _root_trusted_file(VPS_COMPOSE, "VPS Compose file")
+    _root_trusted_file(ROOT / "deploy" / "vps" / "Caddyfile", "Caddy configuration")
+    _root_trusted_directory(str(MIGRATIONS), "migration catalog directory")
+    try:
+        migrations = sorted(MIGRATIONS.iterdir(), key=lambda item: item.name)
+    except OSError as exc:
+        raise OperatorError("migration catalog is unavailable") from exc
+    for path in migrations:
+        _root_trusted_file(path, "migration catalog file")
+
+
+def preflight(
+    config_path: Path,
+    lock_path: Path,
+    *,
+    compose_bin: str | None,
+    offline: bool,
+    root_trust: bool = False,
+) -> tuple[dict[str, str], dict[str, str], list[str]]:
+    _absolute_cli_path(config_path, "VPS configuration")
+    _absolute_cli_path(lock_path, "release lock")
+    if root_trust:
+        _validate_release_root_trust()
+        _root_trusted_file(config_path, "VPS configuration")
+        _root_trusted_file(lock_path, "release lock")
+    vps = _parse_env(
+        config_path,
+        owner_uid=ROOT_OPERATOR_UID if root_trust else None,
+        reject_group_world_writable=root_trust,
+    )
+    lock = _parse_env(
+        lock_path,
+        owner_uid=ROOT_OPERATOR_UID if root_trust else None,
+        reject_group_world_writable=root_trust,
+    )
+    validate_vps_environment(vps)
+    validate_release_lock(lock)
+    directory_validator = _root_trusted_directory if root_trust else _safe_absolute_directory
+    secrets = directory_validator(
+        vps["HBCB_VPS_SECRETS_DIR"],
+        "secrets directory",
+        mode=0o700,
+    )
+    state = directory_validator(vps["HBCB_VPS_STATE_DIR"], "state directory")
+    directory_validator(vps["HBCB_BACKUP_ROOT"], "backup root", mode=0o700)
+    for name in ("caddy-data", "caddy-config"):
+        child = _safe_absolute_directory(
+            str(state / name),
+            f"Caddy {name} directory",
+            mode=0o700,
+            owner_uid=1000 if root_trust else None,
+        )
+        if child.lstat().st_uid != 1000:
+            raise OperatorError(f"Caddy {name} directory must be owned by UID 1000")
+    validate_secret_files(
+        secrets,
+        owner_uid=ROOT_OPERATOR_UID if root_trust else None,
+    )
+    environment = _operator_environment(vps, lock, root_trust=root_trust)
+    prefix = _compose_prefix(
+        config_path,
+        lock_path,
+        compose_bin,
+        root_trust=root_trust,
+    )
+    _run_safe(prefix + ["config", "--quiet"], label="VPS Compose validation", environment=environment)
+    if not offline:
+        _validate_private_storage_network(vps["HBCB_STORAGE_NETWORK"], environment)
+    return vps, environment, prefix
+
+
+def _require_root_operator() -> None:
+    if not hasattr(os, "geteuid") or os.geteuid() != ROOT_OPERATOR_UID:
+        raise OperatorError("VPS operator actions require a root operator")
+
+
+@contextlib.contextmanager
+def _exclusive_operator_lock(state: Path) -> Iterator[None]:
+    """Hold one fail-fast host lock across an entire VPS operator action."""
+
+    state = _root_trusted_directory(str(state), "state directory")
+    lock_path = state / "operator.lock"
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_CLOEXEC"):
+        raise OperatorError("operator lock requires Linux no-follow file support")
+    flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW
+    descriptor: int | None = None
+    locked = False
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+        metadata = os.fstat(descriptor)
+        try:
+            observed = lock_path.lstat()
+        except OSError as exc:
+            raise OperatorError("operator lock path changed during validation") from exc
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_uid != ROOT_OPERATOR_UID
+            or metadata.st_nlink != 1
+            or (metadata.st_dev, metadata.st_ino) != (observed.st_dev, observed.st_ino)
+        ):
+            raise OperatorError("operator lock has unsafe ownership, mode, or links")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, errno.EAGAIN):
+                raise OperatorError("another VPS operator action is in progress") from exc
+            raise OperatorError("operator lock could not be acquired") from exc
+        locked = True
+        yield
+    except OperatorError:
+        raise
+    except OSError as exc:
+        raise OperatorError("operator lock is unavailable") from exc
+    finally:
+        if descriptor is not None:
+            if locked:
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                except OSError:
+                    pass
+            os.close(descriptor)
+
+
+def _stop_writers(
+    prefix: Sequence[str], environment: Mapping[str, str], *, include_worker: bool
+) -> None:
+    _run_safe(
+        list(prefix) + ["stop", "caddy"],
+        label="public ingress stop",
+        environment=environment,
+    )
+    _run_safe(
+        list(prefix) + ["stop", "api"],
+        label="API writer stop",
+        environment=environment,
+    )
+    if include_worker:
+        _run_safe(
+            list(prefix) + ["stop", "worker"],
+            label="worker stop",
+            environment=environment,
+        )
+
+
+def _start_private_application(
+    prefix: Sequence[str],
+    environment: Mapping[str, str],
+    expected_namespace: str,
+) -> None:
+    _run_safe(
+        list(prefix)
+        + [
+            "up",
+            "--detach",
+            "--wait",
+            "--wait-timeout",
+            "360",
+            "postgres",
+            "redis",
+            "database-init",
+        ],
+        label="database substrate startup",
+        environment=environment,
+    )
+    _assert_single_namespace(prefix, environment, expected_namespace)
+    _run_safe(
+        list(prefix)
+        + [
+            "up",
+            "--detach",
+            "--wait",
+            "--wait-timeout",
+            "360",
+            "api",
+            "worker",
+        ],
+        label="private application startup",
+        environment=environment,
+    )
+
+
+def _restart_live_application(
+    prefix: Sequence[str],
+    environment: Mapping[str, str],
+    expected_namespace: str,
+) -> None:
+    _start_private_application(prefix, environment, expected_namespace)
+    _run_safe(
+        list(prefix)
+        + [
+            "up",
+            "--detach",
+            "--wait",
+            "--wait-timeout",
+            "360",
+            "caddy",
+        ],
+        label="public ingress startup",
+        environment=environment,
+    )
+
+
+def _wait_for_quiescence(
+    prefix: Sequence[str],
+    environment: Mapping[str, str],
+    *,
+    timeout_seconds: int,
+) -> None:
+    if not 30 <= timeout_seconds <= 86_400:
+        raise OperatorError("drain timeout is outside policy")
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        ready, code = _maintenance_probe(
+            prefix,
+            ["backup-inventory"],
+            environment=environment,
+        )
+        if ready:
+            return
+        if code != "backup_not_quiescent":
+            raise OperatorError("backup quiescence probe failed")
+        if time.monotonic() >= deadline:
+            raise OperatorError("worker drain timed out")
+        time.sleep(5)
+
+
+def _database_dump(
+    prefix: Sequence[str],
+    environment: Mapping[str, str],
+    destination: Path,
+) -> tuple[str, int]:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = None
+    try:
+        descriptor = os.open(destination, flags, 0o600)
+        with os.fdopen(descriptor, "wb", closefd=True) as stream:
+            descriptor = None
+            _run_safe(
+                list(prefix)
+                + [
+                    "exec",
+                    "-T",
+                    "postgres",
+                    "/bin/sh",
+                    "-ec",
+                    "exec pg_dump --format=custom --compress=0 --data-only "
+                    "--no-owner --no-privileges --schema=hbcb "
+                    "--exclude-table=hbcb.schema_migrations "
+                    "--exclude-table-data=hbcb.artifact_deletion_queue "
+                    "--exclude-table-data=hbcb.artifact_deletion_attempts "
+                    "--username \"$POSTGRES_USER\" --dbname \"$POSTGRES_DB\"",
+                ],
+                label="PostgreSQL backup",
+                environment=environment,
+                stdout=stream,
+            )
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError as exc:
+        raise OperatorError("PostgreSQL backup file could not be created") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    digest, size = _sha256_file(destination, maximum_bytes=MAX_BACKUP_DATABASE_BYTES)
+    if size < 1:
+        raise OperatorError("PostgreSQL backup is empty")
+    return digest, size
+
+
+def _validate_backup_result(payload: Mapping[str, object]) -> tuple[int, int, str]:
+    artifacts = payload.get("artifacts")
+    artifact_bytes = payload.get("artifact_bytes")
+    inventory_sha256 = payload.get("inventory_sha256")
+    if (
+        type(artifacts) is not int
+        or not 0 <= artifacts <= 300_000
+        or type(artifact_bytes) is not int
+        or not 0 <= artifact_bytes <= (1 << 63) - 1
+        or not isinstance(inventory_sha256, str)
+        or SHA256.fullmatch(inventory_sha256) is None
+    ):
+        raise OperatorError("object backup returned invalid evidence")
+    return artifacts, artifact_bytes, inventory_sha256
+
+
+def _backup_bundle(
+    vps: Mapping[str, str],
+    lock: Mapping[str, str],
+    config_path: Path,
+    lock_path: Path,
+    prefix: Sequence[str],
+    environment: Mapping[str, str],
+    *,
+    drain_timeout_seconds: int,
+    restart_application: bool = True,
+) -> Path:
+    _require_root_operator()
+    _root_trusted_file(config_path, "VPS configuration")
+    _root_trusted_file(lock_path, "release lock")
+    backup_root = _root_trusted_directory(
+        vps["HBCB_BACKUP_ROOT"],
+        "backup root",
+        mode=0o700,
+    )
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    final = backup_root / (
+        f"{timestamp}-{lock['HBCB_RELEASE_VERSION']}-{vps['HBCB_DEPLOYMENT_NAMESPACE']}-"
+        f"{uuid4().hex[:12]}"
+    )
+    _safe_backup_child(backup_root, final, must_exist=False)
+    stage = backup_root / f".partial-{uuid4().hex}"
+    _private_new_directory(stage)
+    stopped = False
+    failure: Exception | None = None
+    try:
+        # From the first stop attempt onward, always converge the normal live
+        # service set in ``finally``.  A failure between stopping Caddy and the
+        # API must not leave a partially stopped deployment behind.
+        stopped = True
+        _stop_writers(prefix, environment, include_worker=False)
+        _wait_for_quiescence(
+            prefix,
+            environment,
+            timeout_seconds=drain_timeout_seconds,
+        )
+        _run_safe(
+            list(prefix) + ["stop", "worker"],
+            label="worker stop",
+            environment=environment,
+        )
+        ready, code = _maintenance_probe(
+            prefix,
+            ["backup-inventory"],
+            environment=environment,
+        )
+        if not ready:
+            raise OperatorError(
+                "backup changed after worker drain"
+                if code == "backup_not_quiescent"
+                else "final backup quiescence probe failed"
+            )
+
+        _assert_single_namespace(
+            prefix,
+            environment,
+            vps["HBCB_DEPLOYMENT_NAMESPACE"],
+        )
+
+        database_sha256, database_bytes = _database_dump(
+            prefix,
+            environment,
+            stage / BACKUP_DATABASE,
+        )
+        _assert_single_namespace(
+            prefix,
+            environment,
+            vps["HBCB_DEPLOYMENT_NAMESPACE"],
+        )
+        container_root = stage / ".container"
+        _private_new_directory(container_root, owner=MAINTENANCE_CONTAINER_UID)
+        result = _maintenance_result(
+            prefix,
+            ["backup-export", "--output", "/backup/objects"],
+            label="exact-version object backup",
+            environment=environment,
+            expected_keys=frozenset({"artifact_bytes", "artifacts", "inventory_sha256"}),
+            host_backup=container_root,
+        )
+        artifacts, artifact_bytes, inventory_sha256 = _validate_backup_result(result)
+        exported = container_root / BACKUP_OBJECTS
+        _safe_absolute_directory(
+            str(exported),
+            "object backup",
+            mode=0o700,
+            owner_uid=MAINTENANCE_CONTAINER_UID,
+        )
+        os.replace(exported, stage / BACKUP_OBJECTS)
+        container_root.rmdir()
+
+        objects_tree_sha256, object_tree_files, object_tree_bytes = _object_tree_sha256(
+            stage / BACKUP_OBJECTS,
+            owner_uid=MAINTENANCE_CONTAINER_UID,
+        )
+        if object_tree_files != artifacts + 1:
+            raise OperatorError("object backup file count does not match its inventory")
+        observed_inventory_sha256, inventory_bytes = _sha256_file(
+            stage / BACKUP_OBJECTS / "inventory.json",
+            maximum_bytes=64 * 1024 * 1024,
+        )
+        if observed_inventory_sha256 != inventory_sha256:
+            raise OperatorError("object backup inventory hash changed")
+        if object_tree_bytes != artifact_bytes + inventory_bytes:
+            raise OperatorError("object backup byte count does not match its inventory")
+
+        release_lock_sha256 = _copy_private(lock_path, stage / BACKUP_LOCK)
+        vps_env_sha256 = _copy_private(config_path, stage / BACKUP_CONFIG)
+        manifest = {
+            "format": BACKUP_FORMAT,
+            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "release_version": lock["HBCB_RELEASE_VERSION"],
+            "migration_catalog_sha256": lock["HBCB_MIGRATION_CATALOG_SHA256"],
+            "namespace": vps["HBCB_DEPLOYMENT_NAMESPACE"],
+            "bucket": vps["HBCB_STORAGE_BUCKET"],
+            "database_sha256": database_sha256,
+            "database_bytes": database_bytes,
+            "objects_tree_sha256": objects_tree_sha256,
+            "object_inventory_sha256": inventory_sha256,
+            "artifact_count": artifacts,
+            "artifact_bytes": artifact_bytes,
+            "object_tree_files": object_tree_files,
+            "object_tree_bytes": object_tree_bytes,
+            "release_lock_sha256": release_lock_sha256,
+            "vps_env_sha256": vps_env_sha256,
+        }
+        _write_private(
+            stage / BACKUP_MANIFEST,
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("ascii")
+            + b"\n",
+        )
+        os.replace(stage, final)
+        _safe_backup_child(backup_root, final, must_exist=True)
+        directory = os.open(backup_root, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except Exception as exc:
+        failure = exc
+        if stage.exists():
+            shutil.rmtree(stage)
+    finally:
+        if stopped and (failure is not None or restart_application):
+            try:
+                _restart_live_application(
+                    prefix,
+                    environment,
+                    vps["HBCB_DEPLOYMENT_NAMESPACE"],
+                )
+            except Exception as restart_exc:
+                if failure is not None:
+                    raise BackupRestartError(
+                        "backup failed and application restart also failed"
+                    ) from restart_exc
+                raise
+    if failure is not None:
+        raise failure
+    return final
+
+
+def _load_json_object(
+    path: Path,
+    *,
+    owner_uid: int | None = None,
+    expected_keys: frozenset[str] | None = BACKUP_MANIFEST_KEYS,
+    label: str = "backup manifest",
+) -> dict[str, object]:
+    metadata = _regular_file(path, owner_uid=owner_uid)
+    if stat.S_IMODE(metadata.st_mode) != 0o600 or not 1 <= metadata.st_size <= 64 * 1024:
+        raise OperatorError(f"{label} mode or size is outside policy")
+
+    def reject_duplicates(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise OperatorError(f"{label} contains duplicate keys")
+            result[key] = value
+        return result
+
+    try:
+        payload = json.loads(
+            path.read_bytes().decode("ascii"),
+            object_pairs_hook=reject_duplicates,
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise OperatorError(f"{label} is invalid") from exc
+    if not isinstance(payload, dict) or (
+        expected_keys is not None and set(payload) != expected_keys
+    ):
+        raise OperatorError(f"{label} shape is invalid")
+    return payload
+
+
+def _utc_timestamp(value: object, label: str) -> datetime:
+    if not isinstance(value, str) or not 1 <= len(value) <= 40:
+        raise OperatorError(f"{label} is invalid")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise OperatorError(f"{label} is invalid") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise OperatorError(f"{label} must be UTC")
+    return parsed
+
+
+def _atomic_private_json(path: Path, payload: Mapping[str, object]) -> None:
+    temporary = path.parent / f".handoff-{uuid4().hex}"
+    try:
+        _write_private(
+            temporary,
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
+            + b"\n",
+        )
+        os.replace(temporary, path)
+        descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except Exception as exc:
+        try:
+            if temporary.exists():
+                temporary.unlink()
+        except OSError:
+            pass
+        if isinstance(exc, OperatorError):
+            raise
+        raise OperatorError("upgrade handoff could not be written atomically") from exc
+
+
+def _upgrade_handoff_path(state: Path) -> Path:
+    return state / UPGRADE_HANDOFF_FILE
+
+
+def _load_upgrade_handoff(state: Path) -> dict[str, object] | None:
+    state = _root_trusted_directory(str(state), "state directory")
+    path = _upgrade_handoff_path(state)
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise OperatorError("upgrade handoff is unavailable") from exc
+    payload = _load_json_object(
+        path,
+        owner_uid=ROOT_OPERATOR_UID,
+        expected_keys=None,
+        label="upgrade handoff",
+    )
+    status = payload.get("status")
+    expected = (
+        UPGRADE_HANDOFF_PREPARING_KEYS
+        if status == "preparing"
+        else UPGRADE_HANDOFF_READY_KEYS
+        if status == "ready"
+        else UPGRADE_HANDOFF_UPGRADING_KEYS
+        if status == "upgrading"
+        else frozenset()
+    )
+    if not expected or set(payload) != expected:
+        raise OperatorError("upgrade handoff shape is invalid")
+    if payload.get("format") != UPGRADE_HANDOFF_FORMAT:
+        raise OperatorError("upgrade handoff format is unsupported")
+    _utc_timestamp(payload.get("prepared_at"), "upgrade handoff preparation time")
+    namespace = payload.get("namespace")
+    if not isinstance(namespace, str) or re.fullmatch(
+        r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?",
+        namespace,
+    ) is None:
+        raise OperatorError("upgrade handoff namespace is invalid")
+    source_lock = payload.get("source_release_lock_sha256")
+    token = payload.get("token")
+    if (
+        not isinstance(source_lock, str)
+        or SHA256.fullmatch(source_lock) is None
+        or not isinstance(token, str)
+        or re.fullmatch(r"[0-9a-f]{32}", token) is None
+    ):
+        raise OperatorError("upgrade handoff identity is invalid")
+    if status in ("ready", "upgrading"):
+        _utc_timestamp(payload.get("ready_at"), "upgrade handoff ready time")
+        bundle = payload.get("bundle")
+        if not isinstance(bundle, str):
+            raise OperatorError("upgrade handoff bundle is invalid")
+        _absolute_cli_path(Path(bundle), "upgrade handoff bundle")
+        bundle_manifest_sha256 = payload.get("bundle_manifest_sha256")
+        database_system_identifier = payload.get("database_system_identifier")
+        database_oid = payload.get("database_oid")
+        if (
+            not isinstance(bundle_manifest_sha256, str)
+            or SHA256.fullmatch(bundle_manifest_sha256) is None
+            or not isinstance(database_system_identifier, str)
+            or re.fullmatch(r"[1-9][0-9]{0,24}", database_system_identifier) is None
+            or type(database_oid) is not int
+            or not 1 <= database_oid <= (1 << 32) - 1
+        ):
+            raise OperatorError("upgrade handoff database or bundle identity is invalid")
+    if status == "upgrading":
+        _utc_timestamp(payload.get("upgrade_started_at"), "upgrade handoff start time")
+        target_lock = payload.get("target_release_lock_sha256")
+        if not isinstance(target_lock, str) or SHA256.fullmatch(target_lock) is None:
+            raise OperatorError("upgrade handoff target lock identity is invalid")
+    return payload
+
+
+def _prepare_upgrade_handoff(
+    state: Path,
+    vps: Mapping[str, str],
+    lock_path: Path,
+) -> dict[str, object]:
+    if _load_upgrade_handoff(state) is not None:
+        raise OperatorError("an upgrade handoff is already active")
+    source_lock_sha256, _ = _sha256_file(lock_path, maximum_bytes=64 * 1024)
+    payload: dict[str, object] = {
+        "format": UPGRADE_HANDOFF_FORMAT,
+        "status": "preparing",
+        "prepared_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "namespace": vps["HBCB_DEPLOYMENT_NAMESPACE"],
+        "source_release_lock_sha256": source_lock_sha256,
+        "token": uuid4().hex,
+    }
+    _atomic_private_json(_upgrade_handoff_path(state), payload)
+    return payload
+
+
+def _finalize_upgrade_handoff(
+    state: Path,
+    preparing: Mapping[str, object],
+    bundle: Path,
+    vps: Mapping[str, str],
+    lock_path: Path,
+    prefix: Sequence[str],
+    environment: Mapping[str, str],
+) -> dict[str, object]:
+    current = _load_upgrade_handoff(state)
+    if current != preparing or current.get("status") != "preparing":
+        raise OperatorError("upgrade handoff preparation changed unexpectedly")
+    manifest = _validate_backup_bundle(
+        bundle,
+        Path(vps["HBCB_BACKUP_ROOT"]),
+        vps,
+        lock_path,
+        require_current_lock=True,
+    )
+    if manifest["release_lock_sha256"] != preparing["source_release_lock_sha256"]:
+        raise OperatorError("upgrade handoff source lock does not match its backup")
+    _set_database_read_only(prefix, environment, enabled=True)
+    system_identifier, database_oid, read_only = _database_handoff_identity(
+        prefix,
+        environment,
+    )
+    if not read_only:
+        raise OperatorError("upgrade handoff database is not read-only")
+    bundle_manifest_sha256, _ = _sha256_file(
+        bundle / BACKUP_MANIFEST,
+        maximum_bytes=64 * 1024,
+    )
+    payload = dict(preparing)
+    payload.update(
+        {
+            "status": "ready",
+            "ready_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "bundle": str(bundle),
+            "bundle_manifest_sha256": bundle_manifest_sha256,
+            "database_system_identifier": system_identifier,
+            "database_oid": database_oid,
+        }
+    )
+    _atomic_private_json(_upgrade_handoff_path(state), payload)
+    return payload
+
+
+def _validate_ready_upgrade_handoff(
+    state: Path,
+    handoff: Mapping[str, object],
+    bundle: Path,
+    vps: Mapping[str, str],
+    current_lock_path: Path,
+    prefix: Sequence[str],
+    environment: Mapping[str, str],
+) -> None:
+    if handoff.get("status") != "ready":
+        raise OperatorError("upgrade requires a completed quiesced handoff")
+    ready_at = _utc_timestamp(handoff.get("ready_at"), "upgrade handoff ready time")
+    age = (datetime.now(timezone.utc) - ready_at).total_seconds()
+    if age < 0 or age > UPGRADE_HANDOFF_MAX_AGE_SECONDS:
+        raise OperatorError("upgrade handoff is stale")
+    if handoff.get("namespace") != vps["HBCB_DEPLOYMENT_NAMESPACE"]:
+        raise OperatorError("upgrade handoff namespace does not match")
+    if handoff.get("bundle") != str(bundle):
+        raise OperatorError("upgrade backup does not match the quiesced handoff")
+    manifest = _validate_backup_bundle(
+        bundle,
+        Path(vps["HBCB_BACKUP_ROOT"]),
+        vps,
+        current_lock_path,
+        require_current_lock=False,
+    )
+    if manifest["release_lock_sha256"] != handoff["source_release_lock_sha256"]:
+        raise OperatorError("upgrade handoff source lock does not match its backup")
+    manifest_sha256, _ = _sha256_file(
+        bundle / BACKUP_MANIFEST,
+        maximum_bytes=64 * 1024,
+    )
+    if manifest_sha256 != handoff["bundle_manifest_sha256"]:
+        raise OperatorError("upgrade handoff bundle identity changed")
+    system_identifier, database_oid, read_only = _database_handoff_identity(
+        prefix,
+        environment,
+    )
+    if (
+        system_identifier != handoff["database_system_identifier"]
+        or database_oid != handoff["database_oid"]
+        or not read_only
+    ):
+        raise OperatorError("upgrade handoff database identity or read-only guard changed")
+    _assert_single_namespace(
+        prefix,
+        environment,
+        vps["HBCB_DEPLOYMENT_NAMESPACE"],
+    )
+    ready, code = _maintenance_probe(
+        prefix,
+        ["backup-inventory"],
+        environment=environment,
+    )
+    if not ready:
+        raise OperatorError(
+            "upgrade handoff database is no longer quiescent"
+            if code == "backup_not_quiescent"
+            else "upgrade handoff quiescence probe failed"
+        )
+
+
+def _begin_upgrade_handoff(
+    state: Path,
+    ready: Mapping[str, object],
+    target_lock_path: Path,
+) -> dict[str, object]:
+    current = _load_upgrade_handoff(state)
+    if current != ready or current.get("status") != "ready":
+        raise OperatorError("ready upgrade handoff changed unexpectedly")
+    _root_trusted_file(target_lock_path, "release lock")
+    target_lock_sha256, _ = _sha256_file(
+        target_lock_path,
+        maximum_bytes=64 * 1024,
+    )
+    payload = dict(ready)
+    payload.update(
+        {
+            "status": "upgrading",
+            "upgrade_started_at": datetime.now(timezone.utc).isoformat(
+                timespec="seconds"
+            ),
+            "target_release_lock_sha256": target_lock_sha256,
+        }
+    )
+    # This durable state transition is the point of no return for in-place
+    # source-release restart. It must commit before migrations can make the
+    # database writable.
+    _atomic_private_json(_upgrade_handoff_path(state), payload)
+    return payload
+
+
+def _validate_upgrading_upgrade_handoff(
+    handoff: Mapping[str, object],
+    bundle: Path,
+    vps: Mapping[str, str],
+    current_lock_path: Path,
+    prefix: Sequence[str],
+    environment: Mapping[str, str],
+) -> None:
+    if handoff.get("status") != "upgrading":
+        raise OperatorError("upgrade retry requires an upgrading handoff")
+    if handoff.get("namespace") != vps["HBCB_DEPLOYMENT_NAMESPACE"]:
+        raise OperatorError("upgrade handoff namespace does not match")
+    if handoff.get("bundle") != str(bundle):
+        raise OperatorError("upgrade backup does not match the active handoff")
+    _root_trusted_file(current_lock_path, "release lock")
+    target_lock_sha256, _ = _sha256_file(
+        current_lock_path,
+        maximum_bytes=64 * 1024,
+    )
+    if target_lock_sha256 != handoff["target_release_lock_sha256"]:
+        raise OperatorError("upgrade retry requires the exact target release lock")
+    manifest = _validate_backup_bundle(
+        bundle,
+        Path(vps["HBCB_BACKUP_ROOT"]),
+        vps,
+        current_lock_path,
+        require_current_lock=False,
+    )
+    if manifest["release_lock_sha256"] != handoff["source_release_lock_sha256"]:
+        raise OperatorError("upgrade handoff source lock does not match its backup")
+    manifest_sha256, _ = _sha256_file(
+        bundle / BACKUP_MANIFEST,
+        maximum_bytes=64 * 1024,
+    )
+    if manifest_sha256 != handoff["bundle_manifest_sha256"]:
+        raise OperatorError("upgrade handoff bundle identity changed")
+    system_identifier, database_oid, read_only = _database_handoff_identity(
+        prefix,
+        environment,
+    )
+    if (
+        system_identifier != handoff["database_system_identifier"]
+        or database_oid != handoff["database_oid"]
+        or not read_only
+    ):
+        raise OperatorError("upgrade handoff database identity or read-only guard changed")
+    _assert_single_namespace(
+        prefix,
+        environment,
+        vps["HBCB_DEPLOYMENT_NAMESPACE"],
+    )
+
+
+def _remove_upgrade_handoff(state: Path, expected: Mapping[str, object]) -> None:
+    current = _load_upgrade_handoff(state)
+    if current != expected:
+        raise OperatorError("upgrade handoff changed unexpectedly")
+    path = _upgrade_handoff_path(state)
+    tombstone = state / f".consumed-handoff-{expected['token']}"
+    try:
+        try:
+            tombstone.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            raise OperatorError("upgrade handoff tombstone already exists")
+        os.replace(path, tombstone)
+        descriptor = os.open(state, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise OperatorError("upgrade handoff could not be consumed") from exc
+    try:
+        tombstone.unlink()
+        descriptor = os.open(state, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError:
+        # The durable rename is the consumption commit. A root-only hidden
+        # tombstone is inert and may be removed during the next maintenance.
+        pass
+
+
+def _validate_backup_manifest_values(
+    manifest: Mapping[str, object],
+    vps: Mapping[str, str],
+) -> None:
+    if manifest["format"] != BACKUP_FORMAT:
+        raise OperatorError("backup format is unsupported")
+    if manifest["namespace"] != vps["HBCB_DEPLOYMENT_NAMESPACE"]:
+        raise OperatorError("backup namespace does not match the target")
+    if manifest["bucket"] != vps["HBCB_STORAGE_BUCKET"]:
+        raise OperatorError("backup bucket does not match the target")
+    if not isinstance(manifest["release_version"], str) or SEMVER.fullmatch(
+        manifest["release_version"]
+    ) is None:
+        raise OperatorError("backup release version is invalid")
+    for name in (
+        "migration_catalog_sha256",
+        "database_sha256",
+        "objects_tree_sha256",
+        "object_inventory_sha256",
+        "release_lock_sha256",
+        "vps_env_sha256",
+    ):
+        value = manifest[name]
+        if not isinstance(value, str) or SHA256.fullmatch(value) is None:
+            raise OperatorError("backup manifest contains an invalid digest")
+    for name, maximum in (
+        ("database_bytes", MAX_BACKUP_DATABASE_BYTES),
+        ("artifact_count", 300_000),
+        ("artifact_bytes", (1 << 63) - 1),
+        ("object_tree_files", 300_001),
+        ("object_tree_bytes", (1 << 63) - 1),
+    ):
+        value = manifest[name]
+        if type(value) is not int or not 0 <= value <= maximum:
+            raise OperatorError("backup manifest contains an invalid count")
+    if manifest["database_bytes"] < 1 or manifest["object_tree_files"] < 1:
+        raise OperatorError("backup manifest evidence is incomplete")
+    created_at = manifest["created_at"]
+    if not isinstance(created_at, str) or len(created_at) > 40:
+        raise OperatorError("backup creation time is invalid")
+    try:
+        parsed = datetime.fromisoformat(created_at)
+    except ValueError as exc:
+        raise OperatorError("backup creation time is invalid") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise OperatorError("backup creation time must be UTC")
+
+
+def _validate_backup_bundle(
+    bundle: Path,
+    backup_root: Path,
+    vps: Mapping[str, str],
+    current_lock_path: Path,
+    *,
+    require_current_lock: bool,
+) -> dict[str, object]:
+    backup_root = _root_trusted_directory(
+        str(backup_root),
+        "backup root",
+        mode=0o700,
+    )
+    selected = _safe_backup_child(backup_root, bundle, must_exist=True)
+    try:
+        children = {entry.name for entry in selected.iterdir()}
+    except OSError as exc:
+        raise OperatorError("backup bundle could not be listed") from exc
+    if children != BACKUP_ENTRIES:
+        raise OperatorError("backup bundle entries do not match the contract")
+    manifest = _load_json_object(
+        selected / BACKUP_MANIFEST,
+        owner_uid=ROOT_OPERATOR_UID,
+    )
+    _validate_backup_manifest_values(manifest, vps)
+
+    for filename in (BACKUP_DATABASE, BACKUP_LOCK, BACKUP_CONFIG):
+        if stat.S_IMODE(
+            _regular_file(selected / filename, owner_uid=ROOT_OPERATOR_UID).st_mode
+        ) != 0o600:
+            raise OperatorError("backup bundle files must have mode 0600")
+
+    database_sha256, database_bytes = _sha256_file(
+        selected / BACKUP_DATABASE,
+        maximum_bytes=MAX_BACKUP_DATABASE_BYTES,
+    )
+    if (
+        database_sha256 != manifest["database_sha256"]
+        or database_bytes != manifest["database_bytes"]
+    ):
+        raise OperatorError("PostgreSQL backup evidence does not match")
+    tree_sha256, tree_files, tree_bytes = _object_tree_sha256(
+        selected / BACKUP_OBJECTS,
+        owner_uid=MAINTENANCE_CONTAINER_UID,
+    )
+    if (
+        tree_sha256 != manifest["objects_tree_sha256"]
+        or tree_files != manifest["object_tree_files"]
+        or tree_bytes != manifest["object_tree_bytes"]
+    ):
+        raise OperatorError("object backup tree evidence does not match")
+    inventory_sha256, inventory_bytes = _sha256_file(
+        selected / BACKUP_OBJECTS / "inventory.json",
+        maximum_bytes=64 * 1024 * 1024,
+    )
+    if inventory_sha256 != manifest["object_inventory_sha256"]:
+        raise OperatorError("object backup inventory evidence does not match")
+    if tree_files != manifest["artifact_count"] + 1:
+        raise OperatorError("object backup file count does not match")
+    if tree_bytes != manifest["artifact_bytes"] + inventory_bytes:
+        raise OperatorError("object backup bytes do not match")
+
+    archived_lock_sha256, _ = _sha256_file(selected / BACKUP_LOCK, maximum_bytes=64 * 1024)
+    archived_config_sha256, _ = _sha256_file(selected / BACKUP_CONFIG, maximum_bytes=64 * 1024)
+    if (
+        archived_lock_sha256 != manifest["release_lock_sha256"]
+        or archived_config_sha256 != manifest["vps_env_sha256"]
+    ):
+        raise OperatorError("backup configuration evidence does not match")
+    archived_lock = _parse_env(selected / BACKUP_LOCK, owner_uid=ROOT_OPERATOR_UID)
+    _validate_release_lock_shape(archived_lock)
+    if (
+        archived_lock["HBCB_RELEASE_VERSION"] != manifest["release_version"]
+        or archived_lock["HBCB_MIGRATION_CATALOG_SHA256"]
+        != manifest["migration_catalog_sha256"]
+    ):
+        raise OperatorError("archived release lock does not match backup metadata")
+    archived_config = _parse_env(selected / BACKUP_CONFIG, owner_uid=ROOT_OPERATOR_UID)
+    validate_vps_environment(archived_config)
+    if (
+        archived_config["HBCB_DEPLOYMENT_NAMESPACE"] != manifest["namespace"]
+        or archived_config["HBCB_STORAGE_BUCKET"] != manifest["bucket"]
+    ):
+        raise OperatorError("archived VPS configuration does not match backup metadata")
+    if require_current_lock:
+        _root_trusted_file(current_lock_path, "release lock")
+        current_sha256, _ = _sha256_file(current_lock_path, maximum_bytes=64 * 1024)
+        if current_sha256 != archived_lock_sha256:
+            raise OperatorError("restore requires the exact release lock recorded by the backup")
+    return manifest
+
+
+def _assert_empty_database(prefix: Sequence[str], environment: Mapping[str, str]) -> None:
+    query = (
+        "SELECT EXISTS ("
+        "SELECT 1 FROM hbcb.builds UNION ALL "
+        "SELECT 1 FROM hbcb.build_attempts UNION ALL "
+        "SELECT 1 FROM hbcb.artifacts UNION ALL "
+        "SELECT 1 FROM hbcb.build_events UNION ALL "
+        "SELECT 1 FROM hbcb.idempotency_keys UNION ALL "
+        "SELECT 1 FROM hbcb.queue_outbox UNION ALL "
+        "SELECT 1 FROM hbcb.artifact_deletion_queue UNION ALL "
+        "SELECT 1 FROM hbcb.artifact_deletion_attempts UNION ALL "
+        "SELECT 1 FROM hbcb.artifact_restore_remaps);"
+    )
+    command = list(prefix) + [
+        "exec",
+        "-T",
+        "postgres",
+        "/bin/sh",
+        "-ec",
+        "test \"$(psql --tuples-only --no-align --username \"$POSTGRES_USER\" "
+        "--dbname \"$POSTGRES_DB\" --command \"$1\")\" = f",
+        "hbcb-empty-check",
+        query,
+    ]
+    _run_safe(command, label="empty PostgreSQL target check", environment=environment)
+
+
+def _assert_empty_redis(prefix: Sequence[str], environment: Mapping[str, str]) -> None:
+    _run_safe(
+        list(prefix)
+        + [
+            "exec",
+            "-T",
+            "redis",
+            "/bin/sh",
+            "-ec",
+            "test \"$(redis-cli --no-auth-warning -a \"$REDIS_PASSWORD\" DBSIZE)\" = 0",
+        ],
+        label="empty Redis target check",
+        environment=environment,
+    )
+
+
+def _restore_database(
+    prefix: Sequence[str],
+    environment: Mapping[str, str],
+    source: Path,
+) -> None:
+    with source.open("rb", buffering=0) as stream:
+        _run_safe(
+            list(prefix)
+            + [
+                "exec",
+                "-T",
+                "postgres",
+                "/bin/sh",
+                "-ec",
+                "exec pg_restore --single-transaction --exit-on-error --data-only "
+                "--no-owner --no-privileges --username \"$POSTGRES_USER\" "
+                "--dbname \"$POSTGRES_DB\"",
+            ],
+            label="PostgreSQL restore",
+            environment=environment,
+            stdin=stream,
+        )
+
+
+def _restore_bundle(
+    vps: Mapping[str, str],
+    lock_path: Path,
+    prefix: Sequence[str],
+    environment: Mapping[str, str],
+    bundle: Path,
+) -> None:
+    _require_root_operator()
+    _root_trusted_file(lock_path, "release lock")
+    backup_root = _root_trusted_directory(
+        vps["HBCB_BACKUP_ROOT"],
+        "backup root",
+        mode=0o700,
+    )
+    selected = _safe_backup_child(backup_root, bundle, must_exist=True)
+    _validate_backup_bundle(
+        selected,
+        backup_root,
+        vps,
+        lock_path,
+        require_current_lock=True,
+    )
+    _stop_writers(prefix, environment, include_worker=True)
+    _run_safe(
+        list(prefix)
+        + [
+            "up",
+            "--detach",
+            "--wait",
+            "--wait-timeout",
+            "360",
+            "postgres",
+            "redis",
+            "database-init",
+        ],
+        label="empty restore substrate startup",
+        environment=environment,
+    )
+    _assert_empty_database(prefix, environment)
+    _assert_empty_redis(prefix, environment)
+    dry_run = _maintenance_result(
+        prefix,
+        ["restore-objects", "--input", "/backup"],
+        label="object restore validation",
+        environment=environment,
+        expected_keys=frozenset(
+            {"artifact_bytes", "artifacts", "dry_run", "remapped", "uploaded"}
+        ),
+        host_backup=selected / BACKUP_OBJECTS,
+        read_only=True,
+    )
+    if (
+        dry_run.get("dry_run") is not True
+        or dry_run.get("uploaded") != 0
+        or dry_run.get("remapped") != 0
+    ):
+        raise OperatorError("object restore validation returned unexpected evidence")
+    _restore_database(prefix, environment, selected / BACKUP_DATABASE)
+    restored = _maintenance_result(
+        prefix,
+        ["restore-objects", "--input", "/backup", "--apply"],
+        label="exact-version object restore",
+        environment=environment,
+        expected_keys=frozenset(
+            {"artifact_bytes", "artifacts", "dry_run", "remapped", "uploaded"}
+        ),
+        host_backup=selected / BACKUP_OBJECTS,
+        read_only=True,
+    )
+    if (
+        restored.get("dry_run") is not False
+        or type(restored.get("artifacts")) is not int
+        or restored.get("uploaded") != restored.get("artifacts")
+        or restored.get("remapped") != restored.get("artifacts")
+    ):
+        raise OperatorError("object restore returned incomplete evidence")
+    rebuilt = _maintenance_result(
+        prefix,
+        ["reconstruct-redis", "--apply"],
+        label="Redis reconstruction",
+        environment=environment,
+        expected_keys=frozenset({"derived_queued_builds", "dry_run", "enqueued"}),
+    )
+    if rebuilt.get("dry_run") is not False or rebuilt.get("enqueued") != rebuilt.get(
+        "derived_queued_builds"
+    ):
+        raise OperatorError("Redis reconstruction returned incomplete evidence")
+    _start_private_application(
+        prefix,
+        environment,
+        vps["HBCB_DEPLOYMENT_NAMESPACE"],
+    )
+
+
+def _upgrade_from_verified_backup(
+    vps: Mapping[str, str],
+    lock_path: Path,
+    prefix: Sequence[str],
+    environment: Mapping[str, str],
+    backup: Path,
+) -> None:
+    _require_root_operator()
+    _root_trusted_file(lock_path, "release lock")
+    backup_root = _root_trusted_directory(
+        vps["HBCB_BACKUP_ROOT"],
+        "backup root",
+        mode=0o700,
+    )
+    _validate_backup_bundle(
+        _safe_backup_child(backup_root, backup, must_exist=True),
+        backup_root,
+        vps,
+        lock_path,
+        require_current_lock=False,
+    )
+    _stop_writers(prefix, environment, include_worker=True)
+    _run_safe(
+        list(prefix)
+        + ["pull", "postgres", "redis", "database-init", "api", "worker", "caddy"],
+        label="upgrade image pull",
+        environment=environment,
+    )
+    writable = False
+    failure: Exception | None = None
+    try:
+        writable = True
+        _set_database_read_only(prefix, environment, enabled=False)
+        _start_private_application(
+            prefix,
+            environment,
+            vps["HBCB_DEPLOYMENT_NAMESPACE"],
+        )
+    except Exception as exc:
+        failure = exc
+    if failure is not None:
+        try:
+            _stop_writers(prefix, environment, include_worker=True)
+            if writable:
+                _set_database_read_only(prefix, environment, enabled=True)
+        except Exception as reseal_exc:
+            raise OperatorError(
+                "upgrade failed and the quiesced database could not be resealed"
+            ) from reseal_exc
+        raise failure
+
+
+def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "action",
+        choices=(
+            "preflight",
+            "config",
+            "up",
+            "down",
+            "backup",
+            "restore",
+            "upgrade",
+            "rollback",
+            "handoff-abort",
+            "retention-preview",
+            "retention-apply",
+            "artifact-deletion-preview",
+            "artifact-deletion-apply",
+            "queue-rebuild-preview",
+            "queue-rebuild-apply",
+        ),
+    )
+    parser.add_argument("--config", type=Path, default=ROOT / "deploy" / "vps" / "vps.env")
+    parser.add_argument(
+        "--release-lock",
+        type=Path,
+        default=ROOT / "deploy" / "vps" / "release.lock.env",
+    )
+    parser.add_argument("--compose-bin", default=os.environ.get("HBCB_COMPOSE_BIN"))
+    parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--confirm", action="store_true")
+    parser.add_argument("--confirm-empty-target", action="store_true")
+    parser.add_argument("--leave-ingress-down", action="store_true")
+    parser.add_argument("--backup", type=Path)
+    parser.add_argument(
+        "--drain-timeout-seconds",
+        type=int,
+        default=3600,
+    )
+    return parser.parse_args(argv)
+
+
+def _execute_operator_action(
+    args: argparse.Namespace,
+    vps: Mapping[str, str],
+    environment: Mapping[str, str],
+    prefix: Sequence[str],
+    config_path: Path,
+    lock_path: Path,
+) -> int:
+    if args.offline and args.action != "down":
+        raise OperatorError("mutating VPS actions cannot run with --offline")
+    if args.leave_ingress_down and args.action != "backup":
+        raise OperatorError("--leave-ingress-down is only valid for backup")
+    if args.backup is not None and args.action not in ("restore", "upgrade", "rollback"):
+        raise OperatorError("--backup is only valid for restore, upgrade, or rollback")
+    if args.action in ("restore", "upgrade", "rollback") and args.backup is None:
+        raise OperatorError(f"{args.action} requires --backup")
+    selected_backup = (
+        None
+        if args.backup is None
+        else _absolute_cli_path(args.backup, "backup bundle")
+    )
+    lock = _parse_env(
+        lock_path,
+        owner_uid=ROOT_OPERATOR_UID,
+        reject_group_world_writable=True,
+    )
+    state = _root_trusted_directory(vps["HBCB_VPS_STATE_DIR"], "state directory")
+    handoff = _load_upgrade_handoff(state)
+    handoff_allowed = {"upgrade", "handoff-abort"}
+    if handoff is not None and handoff.get("status") == "upgrading":
+        handoff_allowed.add("rollback")
+    if handoff is not None and args.action not in handoff_allowed:
+        raise OperatorError(
+            "an upgrade handoff is active; use its permitted recovery action"
+        )
+    if handoff is None and args.action in ("upgrade", "handoff-abort"):
+        raise OperatorError(f"{args.action} requires an active upgrade handoff")
+    if args.action == "up":
+        _run_safe(prefix + ["pull", "postgres", "redis", "database-init", "api", "worker", "caddy"], label="image pull", environment=environment)
+        _restart_live_application(
+            prefix,
+            environment,
+            vps["HBCB_DEPLOYMENT_NAMESPACE"],
+        )
+    elif args.action == "down":
+        _run_safe(prefix + ["down", "--remove-orphans"], label="VPS shutdown", environment=environment)
+    elif args.action == "retention-preview":
+        _run_safe(prefix + ["--profile", "maintenance", "run", "--rm", "--no-deps", "maintenance", "retain"], label="retention preview", environment=environment)
+    elif args.action == "retention-apply":
+        if not args.confirm:
+            raise OperatorError("retention apply requires --confirm")
+        _run_safe(prefix + ["--profile", "maintenance", "run", "--rm", "--no-deps", "maintenance", "retain", "--apply"], label="retention apply", environment=environment)
+    elif args.action == "artifact-deletion-preview":
+        _run_safe(
+            _maintenance_command(prefix, ["delete-artifacts"]),
+            label="artifact deletion preview",
+            environment=environment,
+        )
+    elif args.action == "artifact-deletion-apply":
+        if not args.confirm:
+            raise OperatorError("artifact deletion apply requires --confirm")
+        _run_safe(
+            _maintenance_command(prefix, ["delete-artifacts", "--apply"]),
+            label="artifact deletion apply",
+            environment=environment,
+        )
+    elif args.action == "queue-rebuild-preview":
+        _run_safe(
+            _maintenance_command(prefix, ["reconstruct-redis"]),
+            label="queue rebuild preview",
+            environment=environment,
+        )
+    elif args.action == "queue-rebuild-apply":
+        if not args.confirm:
+            raise OperatorError("queue rebuild apply requires --confirm")
+        _run_safe(
+            _maintenance_command(prefix, ["reconstruct-redis", "--apply"]),
+            label="queue rebuild apply",
+            environment=environment,
+        )
+    elif args.action == "backup":
+        if not args.confirm:
+            raise OperatorError("backup requires --confirm because it briefly stops ingress")
+        preparing = None
+        if args.leave_ingress_down:
+            preparing = _prepare_upgrade_handoff(state, vps, lock_path)
+        try:
+            bundle = _backup_bundle(
+                vps,
+                lock,
+                config_path,
+                lock_path,
+                prefix,
+                environment,
+                drain_timeout_seconds=args.drain_timeout_seconds,
+                restart_application=not args.leave_ingress_down,
+            )
+        except Exception as exc:
+            if preparing is not None and not isinstance(exc, BackupRestartError):
+                current_handoff = _load_upgrade_handoff(state)
+                if current_handoff == preparing:
+                    _remove_upgrade_handoff(state, preparing)
+            raise exc
+        if preparing is not None:
+            _finalize_upgrade_handoff(
+                state,
+                preparing,
+                bundle,
+                vps,
+                lock_path,
+                prefix,
+                environment,
+            )
+            print(f"VPS_BACKUP: PASS bundle={bundle} handoff=ready ingress=stopped")
+        else:
+            print(f"VPS_BACKUP: PASS bundle={bundle}")
+        return 0
+    elif args.action in ("restore", "rollback"):
+        if not args.confirm or not args.confirm_empty_target:
+            raise OperatorError(
+                f"{args.action} requires --confirm and --confirm-empty-target"
+        )
+        assert selected_backup is not None
+        if handoff is not None:
+            if (
+                args.action != "rollback"
+                or handoff.get("status") != "upgrading"
+                or handoff.get("bundle") != str(selected_backup)
+            ):
+                raise OperatorError(
+                    "an upgrading handoff permits only empty-target rollback from its bound backup"
+                )
+        _restore_bundle(vps, lock_path, prefix, environment, selected_backup)
+        if handoff is not None:
+            _remove_upgrade_handoff(state, handoff)
+        print(f"VPS_{args.action.upper()}: PASS ingress=stopped")
+        return 0
+    elif args.action == "upgrade":
+        if not args.confirm:
+            raise OperatorError("upgrade requires --confirm and a quiesced handoff backup")
+        assert selected_backup is not None
+        assert handoff is not None
+        if handoff.get("status") == "ready":
+            _stop_writers(prefix, environment, include_worker=True)
+            _validate_ready_upgrade_handoff(
+                state,
+                handoff,
+                selected_backup,
+                vps,
+                lock_path,
+                prefix,
+                environment,
+            )
+            handoff = _begin_upgrade_handoff(state, handoff, lock_path)
+        elif handoff.get("status") == "upgrading":
+            # A crashed attempt may have left the database writable. Reseal it,
+            # terminate sessions, then stop writers before validating a retry.
+            _set_database_read_only(prefix, environment, enabled=True)
+            _stop_writers(prefix, environment, include_worker=True)
+            _validate_upgrading_upgrade_handoff(
+                handoff,
+                selected_backup,
+                vps,
+                lock_path,
+                prefix,
+                environment,
+            )
+        else:
+            raise OperatorError("upgrade requires a completed quiesced handoff")
+        try:
+            _upgrade_from_verified_backup(
+                vps,
+                lock_path,
+                prefix,
+                environment,
+                selected_backup,
+            )
+            _run_safe(
+                list(prefix)
+                + ["up", "--detach", "--wait", "--wait-timeout", "360", "caddy"],
+                label="upgraded ingress startup",
+                environment=environment,
+            )
+            _remove_upgrade_handoff(state, handoff)
+        except Exception as exc:
+            try:
+                _stop_writers(prefix, environment, include_worker=True)
+                _set_database_read_only(prefix, environment, enabled=True)
+            except Exception as reseal_exc:
+                raise OperatorError(
+                    "upgrade failed and its handoff could not be preserved safely"
+                ) from reseal_exc
+            raise exc
+    elif args.action == "handoff-abort":
+        if not args.confirm:
+            raise OperatorError("handoff abort requires --confirm")
+        assert handoff is not None
+        if handoff.get("status") not in ("preparing", "ready"):
+            raise OperatorError(
+                "handoff abort is forbidden after upgrade started; retry the exact "
+                "target release or perform empty-target rollback"
+            )
+        if handoff.get("namespace") != vps["HBCB_DEPLOYMENT_NAMESPACE"]:
+            raise OperatorError("handoff abort namespace does not match")
+        source_lock_sha256, _ = _sha256_file(lock_path, maximum_bytes=64 * 1024)
+        if source_lock_sha256 != handoff["source_release_lock_sha256"]:
+            raise OperatorError("handoff abort requires the exact source release lock")
+        try:
+            _stop_writers(prefix, environment, include_worker=True)
+            if handoff.get("status") == "ready":
+                system_identifier, database_oid, read_only = (
+                    _database_handoff_identity(prefix, environment)
+                )
+                if (
+                    system_identifier != handoff["database_system_identifier"]
+                    or database_oid != handoff["database_oid"]
+                    or not read_only
+                ):
+                    raise OperatorError(
+                        "handoff abort database identity or read-only guard changed"
+                    )
+                _assert_single_namespace(
+                    prefix,
+                    environment,
+                    vps["HBCB_DEPLOYMENT_NAMESPACE"],
+                )
+            _set_database_read_only(prefix, environment, enabled=False)
+            _restart_live_application(
+                prefix,
+                environment,
+                vps["HBCB_DEPLOYMENT_NAMESPACE"],
+            )
+            _remove_upgrade_handoff(state, handoff)
+        except Exception as exc:
+            try:
+                _stop_writers(prefix, environment, include_worker=True)
+                _set_database_read_only(prefix, environment, enabled=True)
+            except Exception as reseal_exc:
+                raise OperatorError(
+                    "handoff abort failed and the source deployment could not be resealed"
+                ) from reseal_exc
+            raise exc
+    print(f"VPS_{args.action.upper().replace('-', '_')}: PASS")
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parse_args(sys.argv[1:] if argv is None else argv)
+    config_path = _absolute_cli_path(args.config, "VPS configuration")
+    lock_path = _absolute_cli_path(args.release_lock, "release lock")
+    root_trust = hasattr(os, "geteuid") and os.geteuid() == ROOT_OPERATOR_UID
+    vps, environment, prefix = preflight(
+        config_path,
+        lock_path,
+        compose_bin=args.compose_bin,
+        offline=args.offline or args.action == "down",
+        root_trust=root_trust,
+    )
+    if args.action in ("preflight", "config"):
+        print(f"VPS_{args.action.upper()}: PASS")
+        return 0
+    _require_root_operator()
+    with _exclusive_operator_lock(Path(vps["HBCB_VPS_STATE_DIR"])):
+        return _execute_operator_action(
+            args,
+            vps,
+            environment,
+            prefix,
+            config_path,
+            lock_path,
+        )
+
+
+def cli() -> int:
+    try:
+        return main()
+    except OperatorError as exc:
+        print(f"VPS: FAIL: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"VPS: FAIL: unexpected {type(exc).__name__}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli())

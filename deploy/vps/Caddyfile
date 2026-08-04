@@ -1,0 +1,30 @@
+{
+	admin off
+	persist_config off
+	http_port 8080
+	https_port 8443
+	email {$HBCB_ACME_EMAIL}
+	servers {
+		protocols h1 h2 h3
+	}
+}
+{$HBCB_API_DOMAIN} {
+	encode zstd gzip
+
+	# Readiness exposes dependency state and stays private to the Compose
+	# network.  The public edge permits liveness and the authenticated API only.
+	@hbcb_api path /healthz /v1/*
+	handle @hbcb_api {
+		reverse_proxy api:8080
+	}
+
+	handle {
+		respond 404
+	}
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+	}
+}

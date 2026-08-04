@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+blank_issues_enabled: true
+contact_links:
+  - name: Private security report
+    url: https://github.com/joseph-robert-f/headless-blender-character-builder/security/advisories/new
+    about: Report vulnerabilities privately; never place exploit details or secrets in a public issue.
+  - name: Support policy
+    url: https://github.com/joseph-robert-f/headless-blender-character-builder/blob/main/SUPPORT.md
+    about: Review the best-effort support boundary before opening an issue.

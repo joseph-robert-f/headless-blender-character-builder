@@ -1,0 +1,106 @@
+#!/bin/sh
+set -eu
+
+compose() {
+  if [ -n "${HBCB_COMPOSE_BIN:-}" ]; then
+    "$HBCB_COMPOSE_BIN" "$@"
+  else
+    docker compose "$@"
+  fi
+}
+
+if [ "$#" -ne 0 ]; then
+  printf '%s\n' 'SERVICE_SMOKE: usage: scripts/service-smoke' >&2
+  exit 2
+fi
+if [ ! -f .env ]; then
+  printf '%s\n' 'SERVICE_SMOKE: .env is missing; run make init-env' >&2
+  exit 3
+fi
+
+builder_image=${BUILDER_IMAGE:-headless-blender-character-builder:dev}
+builder_id=$(docker image inspect --platform linux/amd64 --format '{{.Id}}' "$builder_image")
+case "$builder_id" in
+  sha256:????????????????????????????????????????????????????????????????) ;;
+  *)
+    printf '%s\n' 'SERVICE_SMOKE: builder image ID is invalid' >&2
+    exit 4
+    ;;
+esac
+HBCB_BUILDER_IMAGE=$builder_id
+HBCB_BUILDER_IMAGE_REFERENCE=$builder_image
+HBCB_BUILDER_IMAGE_ID=$builder_id
+export HBCB_BUILDER_IMAGE HBCB_BUILDER_IMAGE_REFERENCE HBCB_BUILDER_IMAGE_ID
+
+mkdir -p build/service-smoke
+run_root=$(mktemp -d "$(pwd)/build/service-smoke/run.XXXXXX")
+chmod 0700 "$run_root"
+request=$(pwd)/examples/requests/facet-bot.json
+host_uid=$(id -u)
+runtime_uid=$host_uid
+runtime_gid=$(id -g)
+if [ "$runtime_uid" = 0 ]; then runtime_uid=65532; fi
+if [ "$runtime_gid" = 0 ]; then runtime_gid=65532; fi
+if [ "$host_uid" = 0 ]; then chown "$runtime_uid:$runtime_gid" "$run_root"; fi
+
+docker run \
+  --rm \
+  --init \
+  --platform linux/amd64 \
+  --network none \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true \
+  --pids-limit 512 \
+  --cpus 4 \
+  --memory 4g \
+  --user "$runtime_uid:$runtime_gid" \
+  --tmpfs /work:rw,nosuid,nodev,noexec,size=2g,mode=1777 \
+  --mount "type=bind,source=$request,target=/input/request.json,readonly" \
+  --mount "type=bind,source=$run_root,target=/output" \
+  --env HBCB_EXECUTION_MODE=container \
+  --env "HBCB_WORKER_IMAGE_REFERENCE=$builder_image" \
+  --env "HBCB_WORKER_IMAGE_ID=$builder_id" \
+  "$builder_id" \
+  build --request /input/request.json --output /output/direct
+
+python3 tests/service_integration/g7_service_smoke.py \
+  --env-file .env \
+  --direct-output "$run_root/direct" \
+  --service-output "$run_root/service" \
+  --summary "$run_root/g7-service-summary.json"
+
+# The host-side integration gate creates the downloaded service artifacts.  A
+# root-run CI host would otherwise leave them unreadable to the non-root
+# verifier below.  Only this invocation's freshly-created evidence directory
+# is adjusted.
+if [ "$host_uid" = 0 ]; then chown -R "$runtime_uid:$runtime_gid" "$run_root"; fi
+
+docker run \
+  --rm \
+  --init \
+  --platform linux/amd64 \
+  --network none \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true \
+  --pids-limit 512 \
+  --cpus 4 \
+  --memory 4g \
+  --user "$runtime_uid:$runtime_gid" \
+  --tmpfs /work:rw,nosuid,nodev,noexec,size=2g,mode=1777 \
+  --mount "type=bind,source=$request,target=/input/request.json,readonly" \
+  --mount "type=bind,source=$run_root,target=/output,readonly" \
+  --env HBCB_EXECUTION_MODE=container \
+  --env "HBCB_WORKER_IMAGE_REFERENCE=$builder_image" \
+  --env "HBCB_WORKER_IMAGE_ID=$builder_id" \
+  "$builder_id" \
+  verify --request /input/request.json --output /output/service
+
+compose --env-file .env --profile test run --rm --build service-test \
+  tests/service_integration/g7_redis_gate.py
+
+compose --env-file .env --profile test run --rm service-test \
+  tests/service_integration/g7_iam_gate.py
+
+printf 'SERVICE_SMOKE: PASS evidence=%s\n' "$run_root"

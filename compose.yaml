@@ -1,0 +1,339 @@
+name: hbcb-local
+
+x-hardened-service: &hardened-service
+  init: true
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+x-service-build: &service-build
+  context: .
+  dockerfile: docker/service.Dockerfile
+  args:
+    HBCB_BUILDER_IMAGE: ${HBCB_BUILDER_IMAGE:-headless-blender-character-builder:dev}
+
+services:
+  postgres:
+    image: postgres:16.9-bookworm@sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 10s
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - service-internal
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.0
+
+  redis:
+    image: redis:8.0.1-bookworm@sha256:b3ad79880c88e302deb5e0fed6cee3e90c0031eb90cd936b01ef2f83ff5b3ff2
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    entrypoint: ["/bin/sh", "-ec"]
+    user: "999:999"
+    command:
+      - |
+        umask 077
+        printf 'appendonly yes\nappendfsync everysec\nrequirepass %s\n' "$${REDIS_PASSWORD}" > /run/redis/redis.conf
+        exec redis-server /run/redis/redis.conf
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli --no-auth-warning ping | grep -Fx PONG"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 5s
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run/redis:rw,nosuid,nodev,noexec,size=16m,mode=0700,uid=999,gid=999
+    volumes:
+      - redis-data:/data
+    networks:
+      - service-internal
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 0.5
+
+  minio:
+    build:
+      context: .
+      dockerfile: docker/minio.Dockerfile
+      target: minio
+      args:
+        HBCB_MINIO_RECIPE_ID: ${HBCB_MINIO_RECIPE_ID:-unmeasured}
+    image: hbcb-minio-local:RELEASE.2025-10-15T17-29-55Z
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BROWSER: "off"
+      MINIO_UPDATE: "off"
+    command: ["server", "/data", "--address", ":9000"]
+    healthcheck:
+      test: ["CMD-SHELL", "mc alias set health http://127.0.0.1:9000 \"$${MINIO_ROOT_USER}\" \"$${MINIO_ROOT_PASSWORD}\" >/dev/null && mc ready health >/dev/null"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+    <<: *hardened-service
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777
+      - /work:rw,nosuid,nodev,noexec,size=16m,mode=0700,uid=65532,gid=65532
+    volumes:
+      - minio-data:/data
+    ports:
+      - "127.0.0.1:9000:9000"
+    networks:
+      - service-internal
+      - host-ingress
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.0
+
+  minio-init:
+    image: hbcb-minio-local:RELEASE.2025-10-15T17-29-55Z
+    platform: linux/amd64
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/sh", "/opt/hbcb/minio-init.sh"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_DEPLOYMENT_NAMESPACE}
+      HBCB_STORAGE_API_ACCESS_KEY: ${HBCB_STORAGE_API_ACCESS_KEY}
+      HBCB_STORAGE_API_SECRET_KEY: ${HBCB_STORAGE_API_SECRET_KEY}
+      HBCB_STORAGE_WORKER_ACCESS_KEY: ${HBCB_STORAGE_WORKER_ACCESS_KEY}
+      HBCB_STORAGE_WORKER_SECRET_KEY: ${HBCB_STORAGE_WORKER_SECRET_KEY}
+      HBCB_STORAGE_MAINTENANCE_ACCESS_KEY: ${HBCB_STORAGE_MAINTENANCE_ACCESS_KEY}
+      HBCB_STORAGE_MAINTENANCE_SECRET_KEY: ${HBCB_STORAGE_MAINTENANCE_SECRET_KEY}
+      HBCB_STORAGE_BUCKET: ${HBCB_STORAGE_BUCKET}
+    <<: *hardened-service
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777
+      - /work:rw,nosuid,nodev,noexec,size=16m,mode=0700,uid=65532,gid=65532
+    volumes:
+      - ./compose/minio-init.sh:/opt/hbcb/minio-init.sh:ro
+      - ./compose/minio-api-policy.json:/policies/minio-api-policy.json:ro
+      - ./compose/minio-worker-policy.json:/policies/minio-worker-policy.json:ro
+      - ./compose/minio-maintenance-policy.json:/policies/minio-maintenance-policy.json:ro
+    networks:
+      - service-internal
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.25
+
+  database-init:
+    image: hbcb-service-api:dev
+    platform: linux/amd64
+    entrypoint: ["/usr/bin/python3", "-m", "hbcb_service.initialize_main"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_DEPLOYMENT_NAMESPACE}
+      POSTGRES_DB: ${POSTGRES_DB}
+      HBCB_DATABASE_ADMIN_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      HBCB_DATABASE_MIGRATOR_URL: postgresql://${HBCB_DATABASE_MIGRATOR_USER}:${HBCB_DATABASE_MIGRATOR_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      HBCB_DATABASE_API_USER: ${HBCB_DATABASE_API_USER}
+      HBCB_DATABASE_API_PASSWORD: ${HBCB_DATABASE_API_PASSWORD}
+      HBCB_DATABASE_WORKER_USER: ${HBCB_DATABASE_WORKER_USER}
+      HBCB_DATABASE_WORKER_PASSWORD: ${HBCB_DATABASE_WORKER_PASSWORD}
+      HBCB_DATABASE_MAINTENANCE_USER: ${HBCB_DATABASE_MAINTENANCE_USER}
+      HBCB_DATABASE_MAINTENANCE_PASSWORD: ${HBCB_DATABASE_MAINTENANCE_PASSWORD}
+      HBCB_DATABASE_MIGRATOR_USER: ${HBCB_DATABASE_MIGRATOR_USER}
+      HBCB_DATABASE_MIGRATOR_PASSWORD: ${HBCB_DATABASE_MIGRATOR_PASSWORD}
+    <<: *hardened-service
+    tmpfs:
+      - /work:rw,nosuid,nodev,noexec,size=64m,mode=0700,uid=65532,gid=65532
+    networks:
+      - service-internal
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.5
+
+  api:
+    build:
+      <<: *service-build
+      target: api
+    image: hbcb-service-api:dev
+    platform: linux/amd64
+    depends_on:
+      database-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_DEPLOYMENT_NAMESPACE}
+      HBCB_API_TOKEN: ${HBCB_API_TOKEN}
+      HBCB_IDEMPOTENCY_SECRET: ${HBCB_IDEMPOTENCY_SECRET}
+      HBCB_DATABASE_URL: postgresql://${HBCB_DATABASE_API_USER}:${HBCB_DATABASE_API_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      HBCB_REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      HBCB_STORAGE_INTERNAL_ENDPOINT: ${HBCB_STORAGE_INTERNAL_ENDPOINT}
+      HBCB_STORAGE_PUBLIC_ENDPOINT: ${HBCB_STORAGE_PUBLIC_ENDPOINT}
+      HBCB_STORAGE_ACCESS_KEY: ${HBCB_STORAGE_API_ACCESS_KEY}
+      HBCB_STORAGE_SECRET_KEY: ${HBCB_STORAGE_API_SECRET_KEY}
+      HBCB_STORAGE_BUCKET: ${HBCB_STORAGE_BUCKET}
+      HBCB_STORAGE_INTERNAL_SECURE: ${HBCB_STORAGE_INTERNAL_SECURE}
+      HBCB_STORAGE_PUBLIC_SECURE: ${HBCB_STORAGE_PUBLIC_SECURE}
+      HBCB_STORAGE_REGION: ${HBCB_STORAGE_REGION}
+      HBCB_SIGNED_URL_TTL_SECONDS: ${HBCB_SIGNED_URL_TTL_SECONDS}
+    healthcheck:
+      test: ["CMD", "/usr/bin/python3", "-c", "import json,urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2)) == {'status':'ok'}"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 5s
+    <<: *hardened-service
+    tmpfs:
+      - /work:rw,nosuid,nodev,noexec,size=128m,mode=0700,uid=65532,gid=65532
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - service-internal
+      - host-ingress
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+
+  worker:
+    build:
+      <<: *service-build
+      target: worker
+    image: hbcb-service-worker:dev
+    platform: linux/amd64
+    depends_on:
+      database-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_DEPLOYMENT_NAMESPACE}
+      HBCB_DATABASE_URL: postgresql://${HBCB_DATABASE_WORKER_USER}:${HBCB_DATABASE_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      HBCB_REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      HBCB_STORAGE_INTERNAL_ENDPOINT: ${HBCB_STORAGE_INTERNAL_ENDPOINT}
+      HBCB_STORAGE_ACCESS_KEY: ${HBCB_STORAGE_WORKER_ACCESS_KEY}
+      HBCB_STORAGE_SECRET_KEY: ${HBCB_STORAGE_WORKER_SECRET_KEY}
+      HBCB_STORAGE_BUCKET: ${HBCB_STORAGE_BUCKET}
+      HBCB_STORAGE_INTERNAL_SECURE: ${HBCB_STORAGE_INTERNAL_SECURE}
+      HBCB_STORAGE_REGION: ${HBCB_STORAGE_REGION}
+      HBCB_WORKER_IMAGE_REFERENCE: ${HBCB_BUILDER_IMAGE_REFERENCE:?run make service-up so the measured reference is recorded}
+      HBCB_WORKER_IMAGE_ID: ${HBCB_BUILDER_IMAGE_ID:?run make service-up so provenance is measured}
+    <<: *hardened-service
+    tmpfs:
+      - /work:rw,nosuid,nodev,noexec,size=2g,mode=1777
+    networks:
+      - service-internal
+    pids_limit: 512
+    mem_limit: 4g
+    cpus: 4.0
+
+  maintenance:
+    profiles: ["maintenance"]
+    build:
+      <<: *service-build
+      target: api
+    image: hbcb-service-api:dev
+    platform: linux/amd64
+    entrypoint: ["/usr/bin/python3", "-m", "hbcb_service.maintenance_main"]
+    depends_on:
+      database-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_DEPLOYMENT_NAMESPACE}
+      HBCB_DATABASE_URL: postgresql://${HBCB_DATABASE_MAINTENANCE_USER}:${HBCB_DATABASE_MAINTENANCE_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      HBCB_REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      HBCB_STORAGE_INTERNAL_ENDPOINT: ${HBCB_STORAGE_INTERNAL_ENDPOINT}
+      HBCB_STORAGE_ACCESS_KEY: ${HBCB_STORAGE_MAINTENANCE_ACCESS_KEY}
+      HBCB_STORAGE_SECRET_KEY: ${HBCB_STORAGE_MAINTENANCE_SECRET_KEY}
+      HBCB_STORAGE_BUCKET: ${HBCB_STORAGE_BUCKET}
+      HBCB_STORAGE_INTERNAL_SECURE: ${HBCB_STORAGE_INTERNAL_SECURE}
+      HBCB_STORAGE_REGION: ${HBCB_STORAGE_REGION}
+      HBCB_RETENTION_SUCCEEDED_DAYS: ${HBCB_RETENTION_SUCCEEDED_DAYS:-30}
+      HBCB_RETENTION_OTHER_DAYS: ${HBCB_RETENTION_OTHER_DAYS:-7}
+      HBCB_ORPHAN_GRACE_DAYS: ${HBCB_ORPHAN_GRACE_DAYS:-7}
+    <<: *hardened-service
+    tmpfs:
+      - /work:rw,nosuid,nodev,noexec,size=256m,mode=0700,uid=65532,gid=65532
+    networks:
+      - service-internal
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 1.0
+
+  service-test:
+    profiles: ["test"]
+    build:
+      <<: *service-build
+      target: service-test
+    image: hbcb-service-test:dev
+    platform: linux/amd64
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      HBCB_REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      HBCB_DEPLOYMENT_NAMESPACE: ${HBCB_DEPLOYMENT_NAMESPACE}
+      HBCB_IAM_DATABASE_API_URL: postgresql://${HBCB_DATABASE_API_USER}:${HBCB_DATABASE_API_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      HBCB_IAM_DATABASE_WORKER_URL: postgresql://${HBCB_DATABASE_WORKER_USER}:${HBCB_DATABASE_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      HBCB_IAM_DATABASE_MAINTENANCE_URL: postgresql://${HBCB_DATABASE_MAINTENANCE_USER}:${HBCB_DATABASE_MAINTENANCE_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      HBCB_STORAGE_INTERNAL_ENDPOINT: ${HBCB_STORAGE_INTERNAL_ENDPOINT}
+      HBCB_STORAGE_API_ACCESS_KEY: ${HBCB_STORAGE_API_ACCESS_KEY}
+      HBCB_STORAGE_API_SECRET_KEY: ${HBCB_STORAGE_API_SECRET_KEY}
+      HBCB_STORAGE_WORKER_ACCESS_KEY: ${HBCB_STORAGE_WORKER_ACCESS_KEY}
+      HBCB_STORAGE_WORKER_SECRET_KEY: ${HBCB_STORAGE_WORKER_SECRET_KEY}
+      HBCB_STORAGE_MAINTENANCE_ACCESS_KEY: ${HBCB_STORAGE_MAINTENANCE_ACCESS_KEY}
+      HBCB_STORAGE_MAINTENANCE_SECRET_KEY: ${HBCB_STORAGE_MAINTENANCE_SECRET_KEY}
+      HBCB_STORAGE_BUCKET: ${HBCB_STORAGE_BUCKET}
+      HBCB_STORAGE_INTERNAL_SECURE: ${HBCB_STORAGE_INTERNAL_SECURE}
+      HBCB_STORAGE_REGION: ${HBCB_STORAGE_REGION}
+    <<: *hardened-service
+    tmpfs:
+      - /work:rw,nosuid,nodev,noexec,size=128m,mode=0700,uid=65532,gid=65532
+    networks:
+      - service-internal
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+
+networks:
+  service-internal:
+    internal: true
+  host-ingress:
+    driver: bridge
+
+volumes:
+  minio-data:
+  postgres-data:
+  redis-data:

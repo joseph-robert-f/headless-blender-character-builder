@@ -1,0 +1,271 @@
+#!/bin/sh
+set -eu
+
+case "$#:$*" in
+  0:) action=create ;;
+  1:--upgrade-g8) action=upgrade_g8 ;;
+  *)
+    printf '%s\n' 'INIT_ENV: usage: scripts/init-env [--upgrade-g8]' >&2
+    exit 2
+    ;;
+esac
+
+LC_ALL=C
+export LC_ALL
+umask 077
+target=.env
+
+temporary=
+upgrade_lock=
+cleanup() {
+  if [ -n "$temporary" ]; then
+    rm -f "$temporary"
+  fi
+  if [ -n "$upgrade_lock" ]; then
+    rmdir "$upgrade_lock" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT HUP INT TERM
+
+random_hex() {
+  byte_count=$1
+  value=$(od -An -N "$byte_count" -tx1 /dev/urandom | tr -d ' \n')
+  if [ "${#value}" -ne $((byte_count * 2)) ]; then
+    printf '%s\n' 'INIT_ENV: secure random generation failed' >&2
+    exit 12
+  fi
+  printf '%s' "$value"
+}
+
+file_mode() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
+}
+
+file_owner() {
+  stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1" 2>/dev/null
+}
+
+file_identity() {
+  stat -c '%d:%i:%a:%u:%s' "$1" 2>/dev/null || \
+    stat -f '%d:%i:%Lp:%u:%z' "$1" 2>/dev/null
+}
+
+is_hex_64() {
+  case "$1" in
+    *[!0-9a-f]*|'') return 1 ;;
+  esac
+  [ "${#1}" -eq 64 ]
+}
+
+upgrade_g8() {
+  upgrade_lock=./.env.upgrade-g8.lock
+  if ! mkdir "$upgrade_lock" 2>/dev/null; then
+    printf '%s\n' 'INIT_ENV: another G8 environment upgrade may be active' >&2
+    exit 8
+  fi
+  if [ ! -e "$target" ] || [ -L "$target" ] || [ ! -f "$target" ]; then
+    printf '%s\n' 'INIT_ENV: G8 upgrade requires a regular existing .env' >&2
+    exit 4
+  fi
+  if [ "$(file_mode "$target")" != 600 ] || [ "$(file_owner "$target")" != "$(id -u)" ]; then
+    printf '%s\n' 'INIT_ENV: G8 upgrade requires an owned mode-0600 .env' >&2
+    exit 4
+  fi
+  size=$(wc -c < "$target" | tr -d ' ')
+  if [ -z "$size" ] || [ "$size" -le 0 ] || [ "$size" -gt 65536 ]; then
+    printf '%s\n' 'INIT_ENV: existing .env size is outside policy' >&2
+    exit 4
+  fi
+  if ! awk '
+    /^[A-Z][A-Z0-9_]*=[!-~]+$/ {
+      name = $0
+      sub(/=.*/, "", name)
+      if (seen[name]++) exit 1
+      next
+    }
+    { exit 1 }
+  ' "$target" >/dev/null; then
+    printf '%s\n' 'INIT_ENV: existing .env syntax is outside policy' >&2
+    exit 4
+  fi
+
+  maintenance_count=$(awk -F= '
+    $1 == "HBCB_DATABASE_MAINTENANCE_USER" ||
+    $1 == "HBCB_DATABASE_MAINTENANCE_PASSWORD" ||
+    $1 == "HBCB_STORAGE_MAINTENANCE_ACCESS_KEY" ||
+    $1 == "HBCB_STORAGE_MAINTENANCE_SECRET_KEY" { count++ }
+    END { print count + 0 }
+  ' "$target")
+  if [ "$maintenance_count" -ne 0 ] && [ "$maintenance_count" -ne 4 ]; then
+    printf '%s\n' 'INIT_ENV: partial G8 maintenance configuration is forbidden' >&2
+    exit 4
+  fi
+  add_maintenance=true
+  if [ "$maintenance_count" -eq 4 ]; then
+    database_user=$(awk -F= '$1 == "HBCB_DATABASE_MAINTENANCE_USER" { print $2 }' "$target")
+    database_password=$(awk -F= '$1 == "HBCB_DATABASE_MAINTENANCE_PASSWORD" { print $2 }' "$target")
+    storage_user=$(awk -F= '$1 == "HBCB_STORAGE_MAINTENANCE_ACCESS_KEY" { print $2 }' "$target")
+    storage_secret=$(awk -F= '$1 == "HBCB_STORAGE_MAINTENANCE_SECRET_KEY" { print $2 }' "$target")
+    if [ "$database_user" != hbcb_maintenance ] || \
+       [ "$storage_user" != hbcb_maintenance ] || \
+       ! is_hex_64 "$database_password" || \
+       ! is_hex_64 "$storage_secret" || \
+       [ "$database_password" = "$storage_secret" ]; then
+      printf '%s\n' 'INIT_ENV: existing G8 maintenance configuration is outside policy' >&2
+      exit 4
+    fi
+    add_maintenance=false
+  fi
+
+  storage_legacy_count=$(awk -F= '$1 == "HBCB_STORAGE_SECURE" { count++ } END { print count + 0 }' "$target")
+  storage_split_count=$(awk -F= '
+    $1 == "HBCB_STORAGE_INTERNAL_SECURE" ||
+    $1 == "HBCB_STORAGE_PUBLIC_SECURE" ||
+    $1 == "HBCB_STORAGE_REGION" { count++ }
+    END { print count + 0 }
+  ' "$target")
+  migrate_storage=false
+  if [ "$storage_legacy_count" -eq 1 ] && [ "$storage_split_count" -eq 0 ]; then
+    legacy_storage_secure=$(awk -F= '$1 == "HBCB_STORAGE_SECURE" { print $2 }' "$target")
+    if [ "$legacy_storage_secure" != false ]; then
+      printf '%s\n' 'INIT_ENV: legacy local storage security setting is outside policy' >&2
+      exit 4
+    fi
+    migrate_storage=true
+  elif [ "$storage_legacy_count" -eq 0 ] && [ "$storage_split_count" -eq 3 ]; then
+    internal_storage_secure=$(awk -F= '$1 == "HBCB_STORAGE_INTERNAL_SECURE" { print $2 }' "$target")
+    public_storage_secure=$(awk -F= '$1 == "HBCB_STORAGE_PUBLIC_SECURE" { print $2 }' "$target")
+    storage_region=$(awk -F= '$1 == "HBCB_STORAGE_REGION" { print $2 }' "$target")
+    if [ "$internal_storage_secure" != false ] || \
+       [ "$public_storage_secure" != false ] || \
+       [ "$storage_region" != us-east-1 ]; then
+      printf '%s\n' 'INIT_ENV: split local storage settings are outside policy' >&2
+      exit 4
+    fi
+  else
+    printf '%s\n' 'INIT_ENV: mixed or partial storage security configuration is forbidden' >&2
+    exit 4
+  fi
+
+  if [ "$add_maintenance" = false ] && [ "$migrate_storage" = false ]; then
+    printf '%s\n' 'INIT_ENV: .env already satisfies G8 runtime settings (mode 0600)'
+    exit 0
+  fi
+
+  original_identity=$(file_identity "$target")
+  database_maintenance_password=
+  storage_maintenance_secret_key=
+  while [ "$add_maintenance" = true ]; do
+    database_maintenance_password=$(random_hex 32)
+    storage_maintenance_secret_key=$(random_hex 32)
+    if [ "$database_maintenance_password" != "$storage_maintenance_secret_key" ] && \
+       ! grep -Fq "=$database_maintenance_password" "$target" && \
+       ! grep -Fq "=$storage_maintenance_secret_key" "$target"; then
+      break
+    fi
+  done
+  temporary=$(mktemp ./.env.tmp.XXXXXX)
+  if [ "$migrate_storage" = true ]; then
+    awk '
+      $0 == "HBCB_STORAGE_SECURE=false" {
+        print "HBCB_STORAGE_INTERNAL_SECURE=false"
+        print "HBCB_STORAGE_PUBLIC_SECURE=false"
+        print "HBCB_STORAGE_REGION=us-east-1"
+        next
+      }
+      { print }
+    ' "$target" > "$temporary"
+  else
+    awk '{ print }' "$target" > "$temporary"
+  fi
+  if [ "$(file_identity "$target")" != "$original_identity" ]; then
+    printf '%s\n' 'INIT_ENV: existing .env changed during G8 upgrade' >&2
+    exit 8
+  fi
+  if [ "$add_maintenance" = true ]; then
+    {
+      printf '%s\n' 'HBCB_DATABASE_MAINTENANCE_USER=hbcb_maintenance'
+      printf 'HBCB_DATABASE_MAINTENANCE_PASSWORD=%s\n' "$database_maintenance_password"
+      printf '%s\n' 'HBCB_STORAGE_MAINTENANCE_ACCESS_KEY=hbcb_maintenance'
+      printf 'HBCB_STORAGE_MAINTENANCE_SECRET_KEY=%s\n' "$storage_maintenance_secret_key"
+    } >> "$temporary"
+  fi
+  chmod 0600 "$temporary"
+  if [ "$(file_identity "$target")" != "$original_identity" ]; then
+    printf '%s\n' 'INIT_ENV: existing .env changed during G8 upgrade' >&2
+    exit 8
+  fi
+  mv -f "$temporary" "$target"
+  temporary=
+  printf '%s\n' 'INIT_ENV: upgraded .env to G8 runtime settings (mode 0600)'
+  exit 0
+}
+
+if [ "$action" = upgrade_g8 ]; then
+  upgrade_g8
+fi
+
+if [ -e "$target" ] || [ -L "$target" ]; then
+  printf '%s\n' 'INIT_ENV: refusing to overwrite existing .env' >&2
+  exit 4
+fi
+
+temporary=$(mktemp ./.env.tmp.XXXXXX)
+
+api_token=$(random_hex 32)
+idempotency_secret=$(random_hex 32)
+postgres_admin_password=$(random_hex 32)
+database_api_password=$(random_hex 32)
+database_worker_password=$(random_hex 32)
+database_maintenance_password=$(random_hex 32)
+database_migrator_password=$(random_hex 32)
+redis_password=$(random_hex 32)
+minio_root_password=$(random_hex 32)
+storage_api_access_key=hbcb_api
+storage_api_secret_key=$(random_hex 32)
+storage_worker_access_key=hbcb_worker
+storage_worker_secret_key=$(random_hex 32)
+storage_maintenance_access_key=hbcb_maintenance
+storage_maintenance_secret_key=$(random_hex 32)
+
+{
+  printf '%s\n' 'HBCB_DEPLOYMENT_NAMESPACE=local'
+  printf 'HBCB_API_TOKEN=%s\n' "$api_token"
+  printf 'HBCB_IDEMPOTENCY_SECRET=%s\n' "$idempotency_secret"
+  printf '%s\n' 'POSTGRES_DB=hbcb'
+  printf '%s\n' 'POSTGRES_USER=hbcb_admin'
+  printf 'POSTGRES_PASSWORD=%s\n' "$postgres_admin_password"
+  printf '%s\n' 'HBCB_DATABASE_API_USER=hbcb_api'
+  printf 'HBCB_DATABASE_API_PASSWORD=%s\n' "$database_api_password"
+  printf '%s\n' 'HBCB_DATABASE_WORKER_USER=hbcb_worker'
+  printf 'HBCB_DATABASE_WORKER_PASSWORD=%s\n' "$database_worker_password"
+  printf '%s\n' 'HBCB_DATABASE_MAINTENANCE_USER=hbcb_maintenance'
+  printf 'HBCB_DATABASE_MAINTENANCE_PASSWORD=%s\n' "$database_maintenance_password"
+  printf '%s\n' 'HBCB_DATABASE_MIGRATOR_USER=hbcb_migrator'
+  printf 'HBCB_DATABASE_MIGRATOR_PASSWORD=%s\n' "$database_migrator_password"
+  printf 'REDIS_PASSWORD=%s\n' "$redis_password"
+  printf '%s\n' 'MINIO_ROOT_USER=hbcb_root'
+  printf 'MINIO_ROOT_PASSWORD=%s\n' "$minio_root_password"
+  printf 'HBCB_STORAGE_API_ACCESS_KEY=%s\n' "$storage_api_access_key"
+  printf 'HBCB_STORAGE_API_SECRET_KEY=%s\n' "$storage_api_secret_key"
+  printf 'HBCB_STORAGE_WORKER_ACCESS_KEY=%s\n' "$storage_worker_access_key"
+  printf 'HBCB_STORAGE_WORKER_SECRET_KEY=%s\n' "$storage_worker_secret_key"
+  printf 'HBCB_STORAGE_MAINTENANCE_ACCESS_KEY=%s\n' "$storage_maintenance_access_key"
+  printf 'HBCB_STORAGE_MAINTENANCE_SECRET_KEY=%s\n' "$storage_maintenance_secret_key"
+  printf '%s\n' 'HBCB_STORAGE_BUCKET=hbcb-artifacts'
+  printf '%s\n' 'HBCB_STORAGE_INTERNAL_ENDPOINT=minio:9000'
+  printf '%s\n' 'HBCB_STORAGE_PUBLIC_ENDPOINT=localhost:9000'
+  printf '%s\n' 'HBCB_STORAGE_INTERNAL_SECURE=false'
+  printf '%s\n' 'HBCB_STORAGE_PUBLIC_SECURE=false'
+  printf '%s\n' 'HBCB_STORAGE_REGION=us-east-1'
+  printf '%s\n' 'HBCB_SIGNED_URL_TTL_SECONDS=300'
+} > "$temporary"
+
+chmod 0600 "$temporary"
+if ! ln "$temporary" "$target"; then
+  printf '%s\n' 'INIT_ENV: refusing to overwrite existing .env' >&2
+  exit 4
+fi
+rm -f "$temporary"
+trap - EXIT HUP INT TERM
+printf '%s\n' 'INIT_ENV: created .env (mode 0600)'

@@ -1,0 +1,132 @@
+{
+  "dependencies": {
+    "annotated-doc": {
+      "license": "MIT",
+      "source_url": "https://pypi.org/project/annotated-doc/0.0.5/",
+      "version": "0.0.5"
+    },
+    "annotated-types": {
+      "license": "MIT",
+      "source_url": "https://pypi.org/project/annotated-types/0.8.0/",
+      "version": "0.8.0"
+    },
+    "anyio": {
+      "license": "MIT",
+      "source_url": "https://pypi.org/project/anyio/4.14.2/",
+      "version": "4.14.2"
+    },
+    "argon2-cffi": {
+      "license": "MIT",
+      "source_url": "https://pypi.org/project/argon2-cffi/25.1.0/",
+      "version": "25.1.0"
+    },
+    "argon2-cffi-bindings": {
+      "license": "MIT",
+      "source_url": "https://pypi.org/project/argon2-cffi-bindings/21.2.0/",
+      "version": "21.2.0"
+    },
+    "async-timeout": {
+      "license": "Apache-2.0",
+      "source_url": "https://pypi.org/project/async-timeout/4.0.3/",
+      "version": "4.0.3"
+    },
+    "certifi": {
+      "license": "MPL-2.0",
+      "source_url": "https://pypi.org/project/certifi/2026.7.22/",
+      "version": "2026.7.22"
+    },
+    "cffi": {
+      "license": "MIT",
+      "source_url": "https://pypi.org/project/cffi/2.1.0/",
+      "version": "2.1.0"
+    },
+    "click": {
+      "license": "BSD-3-Clause",
+      "source_url": "https://pypi.org/project/click/8.4.2/",
+      "version": "8.4.2"
+    },
+    "fastapi": {
+      "license": "MIT",
+      "source_url": "https://pypi.org/project/fastapi/0.139.2/",
+      "version": "0.139.2"
+    },
+    "h11": {
+      "license": "MIT",
+      "source_url": "https://pypi.org/project/h11/0.16.0/",
+      "version": "0.16.0"
+    },
+    "idna": {
+      "license": "BSD-3-Clause",
+      "source_url": "https://pypi.org/project/idna/3.18/",
+      "version": "3.18"
+    },
+    "minio": {
+      "license": "Apache-2.0",
+      "source_url": "https://pypi.org/project/minio/7.2.20/",
+      "version": "7.2.20"
+    },
+    "psycopg": {
+      "license": "LGPL-3.0-only",
+      "source_url": "https://pypi.org/project/psycopg/3.3.4/",
+      "version": "3.3.4"
+    },
+    "psycopg-binary": {
+      "license": "LGPL-3.0-only",
+      "source_url": "https://pypi.org/project/psycopg-binary/3.3.4/",
+      "version": "3.3.4"
+    },
+    "pycparser": {
+      "license": "BSD-3-Clause",
+      "source_url": "https://pypi.org/project/pycparser/3.0/",
+      "version": "3.0"
+    },
+    "pycryptodome": {
+      "license": "BSD-2-Clause",
+      "source_url": "https://pypi.org/project/pycryptodome/3.23.0/",
+      "version": "3.23.0"
+    },
+    "pydantic": {
+      "license": "MIT",
+      "source_url": "https://pypi.org/project/pydantic/2.13.4/",
+      "version": "2.13.4"
+    },
+    "pydantic-core": {
+      "license": "MIT",
+      "source_url": "https://pypi.org/project/pydantic-core/2.46.4/",
+      "version": "2.46.4"
+    },
+    "redis": {
+      "license": "MIT",
+      "source_url": "https://pypi.org/project/redis/8.0.1/",
+      "version": "8.0.1"
+    },
+    "starlette": {
+      "license": "BSD-3-Clause",
+      "source_url": "https://pypi.org/project/starlette/1.3.1/",
+      "version": "1.3.1"
+    },
+    "typing-extensions": {
+      "license": "PSF-2.0",
+      "source_url": "https://pypi.org/project/typing-extensions/4.16.0/",
+      "version": "4.16.0"
+    },
+    "typing-inspection": {
+      "license": "MIT",
+      "source_url": "https://pypi.org/project/typing-inspection/0.4.2/",
+      "version": "0.4.2"
+    },
+    "urllib3": {
+      "license": "MIT",
+      "source_url": "https://pypi.org/project/urllib3/2.7.0/",
+      "version": "2.7.0"
+    },
+    "uvicorn": {
+      "license": "BSD-3-Clause",
+      "source_url": "https://pypi.org/project/uvicorn/0.51.0/",
+      "version": "0.51.0"
+    }
+  },
+  "format": "hbcb-service-license-inventory/v1",
+  "requirements_lock": "docker/service-requirements.lock",
+  "requirements_sha256": "723149d693609efdc164dde9c2487c7a1daf46a8f5717d3a9ec93022ecfdbb2b"
+}

@@ -1,10 +1,15 @@
 # Open-Source Headless Blender Character Builder
 
-Status: **Execution-ready v0.1 build plan**
+Status: **Executed v0.1 build plan and authoritative scope record**
 
-Last updated: **July 31, 2026**
+Last updated: **August 4, 2026**
 
-This document is the authoritative scope for the first public implementation. A future `/goal` run should execute the release-blocking milestones **M0 through M5 in order**, use the defaults in Section 17 unless the user explicitly overrides them, and leave the repository in a locally verified, publication-ready state. Post-v0.1 work is context, not part of that completion target.
+This document is the authoritative scope record for the first public
+implementation. The release-blocking milestones **M0 through M5** and work
+packages **G0 through G9** were executed in order using the defaults in Section
+17, leaving a locally verified v0.1 release candidate. Section 20 preserves the
+completed `/goal` contract for reproducibility. Post-v0.1 work is context, not
+part of that completion target.
 
 ## 1. Proposed project
 
@@ -100,27 +105,41 @@ make verify-demo
 The equivalent direct-container contract should remain documented for users who do not use Make:
 
 ```sh
-mkdir -p build/demo
+mkdir -p build
+test ! -e build/demo
+host_uid="$(id -u)"
+runtime_uid="$host_uid"
+runtime_gid="$(id -g)"
+if [ "$runtime_uid" = 0 ]; then runtime_uid=65532; fi
+if [ "$runtime_gid" = 0 ]; then runtime_gid=65532; fi
+if [ "$host_uid" = 0 ]; then chown "$runtime_uid:$runtime_gid" build; fi
 docker build \
   --file docker/builder.Dockerfile \
+  --target builder \
   --tag headless-blender-character-builder:dev \
+  --platform linux/amd64 \
   .
-docker run --rm \
+image_id="$(docker image inspect --format '{{.Id}}' headless-blender-character-builder:dev)"
+docker run --rm --init \
+  --platform linux/amd64 \
   --network none \
   --read-only \
   --cap-drop ALL \
   --security-opt no-new-privileges:true \
   --pids-limit 512 \
   --cpus 4 \
-  --memory 8g \
-  --user "$(id -u):$(id -g)" \
-  --tmpfs /work:rw,nosuid,nodev,size=2g,mode=1777 \
-  --mount type=bind,src="$PWD/examples/requests/facet-bot.json",dst=/input/request.json,readonly \
-  --mount type=bind,src="$PWD/build/demo",dst=/output \
+  --memory 4g \
+  --user "$runtime_uid:$runtime_gid" \
+  --tmpfs /work:rw,nosuid,nodev,noexec,size=2g,mode=1777 \
+  --mount "type=bind,source=$PWD/examples/requests/facet-bot.json,target=/input/request.json,readonly" \
+  --mount "type=bind,source=$PWD/build,target=/output" \
+  --env HBCB_EXECUTION_MODE=container \
+  --env HBCB_WORKER_IMAGE_REFERENCE=headless-blender-character-builder:dev \
+  --env "HBCB_WORKER_IMAGE_ID=$image_id" \
   headless-blender-character-builder:dev \
   build \
   --request /input/request.json \
-  --output /output
+  --output /output/demo
 ```
 
 A successful v0.1 demo must expose:
@@ -712,10 +731,16 @@ Exit criteria:
 - workflow definitions are syntax-validated and every command they invoke passes locally without repository secrets; the first hosted CI run is a conditional publication check;
 - no `.env`, key, local path, `.blend1`, temp output, or credential-bearing URL is tracked;
 - root license text and SPDX metadata validate locally; GitHub license detection is a conditional post-push check;
-- security policy names GitHub private vulnerability reporting as the intended route and documents the post-publication enablement step;
+- security policy names the enabled GitHub private vulnerability reporting route;
 - limitations explicitly state that slicer validation is not a physical-print guarantee.
 
-The public GitHub planning repository was created and initially published with explicit user authorization on August 2, 2026. Future remote pushes, publishing a GHCR image, creating a tag/release, attaching artifacts, or deploying to a live VPS remain conditional operator actions. They require explicit user authorization and credentials and do not block a locally complete release candidate.
+The public GitHub planning repository was created and initially published with
+explicit user authorization on August 2, 2026. The source branch containing the
+completed v0.1 work and public-repository organization pass was explicitly
+authorized on August 4, 2026. Merging that branch, publishing a GHCR image,
+creating a tag or GitHub Release, attaching release assets, and deploying to a
+live VPS remain separate conditional operator actions. They require explicit
+authorization and do not block a locally complete release candidate.
 
 ## 12. Testing and CI
 
@@ -939,7 +964,10 @@ Explicitly hold for post-v0.1:
 
 ## 19. Ordered implementation work packages
 
-Use these work packages as the execution queue. Do not begin a package until its dependencies and gate are satisfied. Work that does not alter a stable contract—documentation, isolated unit tests, and license inventories—may be parallelized after its dependency is fixed.
+These work packages were used as the execution queue. Each package began only
+after its dependencies and gate were satisfied. Work that did not alter a
+stable contract—documentation, isolated unit tests, and license inventories—was
+eligible for parallel review after its dependency was fixed.
 
 | ID | Milestone | Depends on | Required result | Gate before advancing |
 |---|---|---|---|---|
@@ -963,15 +991,15 @@ At the end of every package, update `docs/progress.md` with:
 - deviations from this plan and their decision-log entry;
 - remaining risks or externally conditional checks.
 
-## 20. `/goal` execution contract
+## 20. Historical `/goal` execution contract
 
-The next build step can use this copy-ready objective:
+The completed build used this copy-ready objective:
 
 ```text
 /goal Build the complete local v0.1 release candidate described in PLAN.md from the current workspace. Treat PLAN.md as the authoritative scope and use its Section 17 defaults without stopping for reversible product choices. Execute work packages G0 through G9 in dependency order, preserve existing user files and baseline evidence, and update docs/progress.md after every gate. The primary acceptance path must remain a synchronous, keyless, single-container build; Compose is the secondary asynchronous service; OpenAI/MCP and managed cloud are post-v0.1. Implement, test, diagnose, and repair until every locally verifiable release gate passes. Do not create or push a remote repository, publish images/releases, deploy to a live VPS, purchase services, or use external credentials unless I explicitly authorize it. Finish with a milestone report, exact test results, artifact locations, decisions/deviations, conditional operator steps, and any genuine blockers.
 ```
 
-Execution rules for that goal:
+Execution rules used for that goal:
 
 1. Read this entire file, repository instructions, current status, and existing source before editing.
 2. Preserve user work. Never delete or overwrite current `.blend`, export, render, research, or script files merely to make the public tree cleaner; ignore, migrate, or archive them only when the plan and verification support it.
@@ -984,9 +1012,9 @@ Execution rules for that goal:
 9. Safe local implementation and testing are in scope. If the workspace is not already a Git repository, local `git init`, intentional staging/index maintenance, and logical local milestone commits are authorized for the build; do not configure a remote or rewrite unrelated history. Remote GitHub creation/push, GHCR publication, GitHub Release creation, live VPS/cloud deployment, DNS/TLS changes, and paid API calls remain conditional operator actions.
 10. Use sub-agents for bounded parallel review or independent QA when useful, but keep contract decisions and the final integrated verification in the primary execution path.
 
-## 21. Definition of complete
+## 21. Definition of local completion
 
-The `/goal` is complete only when all of the following are true:
+The `/goal` was considered complete only when all of the following were true:
 
 - G0–G9 are marked passed locally, with any external-only action explicitly marked conditional rather than falsely completed.
 - A temporary tree exported from the final Git index with `git checkout-index` can run `make demo && make verify-demo` with Git, Docker, and Make, without `.env`, Compose, an account, third-party keys, or runtime networking.

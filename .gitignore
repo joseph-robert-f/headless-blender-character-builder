@@ -8,6 +8,9 @@
 *.pfx
 secrets/
 credentials/
+/deploy/vps/vps.env
+/deploy/vps/release.lock.env
+/backups/
 
 # Generated build and service state
 /build/
@@ -36,6 +39,7 @@ credentials/
 *.mp4
 *.mov
 /codex_*.png
+!/docs/assets/facet-bot-preview.png
 
 # Local branded prototype sources; preserve locally until generalized
 /create_codex_avatar.py
@@ -58,6 +62,7 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+*.egg-info/
 .venv/
 venv/
 

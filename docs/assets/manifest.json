@@ -1,0 +1,57 @@
+{
+  "manifest_version": "docs-assets/v1",
+  "assets": [
+    {
+      "path": "docs/assets/facet-bot-preview.png",
+      "media_type": "image/png",
+      "bytes": 152085,
+      "dimensions_px": [
+        384,
+        384
+      ],
+      "sha256": "b0054b471b54bff584dff17401e83b934eb879ce16496ec7b8cf1dbce2865bc1",
+      "license": "CC0-1.0",
+      "creator": {
+        "name": "Headless Blender Character Builder project",
+        "repository_owner": "joseph-robert-f"
+      },
+      "project": {
+        "name": "Headless Blender Character Builder",
+        "slug": "headless-blender-character-builder",
+        "repository": "https://github.com/joseph-robert-f/headless-blender-character-builder"
+      },
+      "source": {
+        "artifact_path": "build/service-smoke/run.1QHNJX/service/preview.png",
+        "artifact_sha256": "6323f050b1aa3fd80957c985f3a1f0017bc16ac300618abcd0192f4228af61e3",
+        "artifact_bytes": 262835,
+        "artifact_dimensions_px": [
+          512,
+          512
+        ],
+        "build_manifest_path": "build/service-smoke/run.1QHNJX/service/manifest.json",
+        "build_manifest_sha256": "c80d1f4279e0709d8524b5b3b997e3f081314004e3a7e299d4481e8a2535a966",
+        "build_manifest_artifact_key": "preview.png",
+        "build_qa_path": "build/service-smoke/run.1QHNJX/service/qa.json",
+        "build_qa_sha256": "a62cab861ac17fed176139b3784861b0815ba1853ce45afb1219751ffece8d4d",
+        "build_qa_status": "passed",
+        "smoke_summary_path": "build/service-smoke/run.1QHNJX/g7-service-summary.json",
+        "smoke_summary_sha256": "a1fa2bacfb43d671a1d35df01b1bde513099bc0489e0ec117fa7662e70308c52",
+        "smoke_result": "PASS",
+        "smoke_manifest_sha256": "c80d1f4279e0709d8524b5b3b997e3f081314004e3a7e299d4481e8a2535a966"
+      },
+      "generator": {
+        "name": "headless-blender-character-builder",
+        "version": "1.0.0",
+        "blender_version": "4.5.12 LTS",
+        "execution_mode": "container",
+        "project_revision": "4e6f85a64fae06b15fe40787a50becb7aa53d0f96896dca5c26db9314a7e8968",
+        "worker_image_id": "sha256:1a12a56ac0528054de23a13806f7b89ae2edf72abe3cd26f925ee237ef46981e"
+      },
+      "transformation": {
+        "tool": "sips",
+        "tool_version": "316",
+        "note": "Resampled the real 512x512 Blender preview to 384x384 and re-encoded it as PNG. No compositing, content edits, external source assets, or AI image generation were used."
+      }
+    }
+  ]
+}

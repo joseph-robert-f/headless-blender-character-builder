@@ -1,0 +1,25 @@
+{
+  "name": "Release candidate verification",
+  "on": {"workflow_dispatch": {}},
+  "permissions": {"contents": "read"},
+  "concurrency": {
+    "group": "release-candidate-${{ github.ref }}",
+    "cancel-in-progress": false
+  },
+  "jobs": {
+    "release-check": {
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 360,
+      "steps": [
+        {
+          "uses": "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+          "with": {"persist-credentials": false, "fetch-depth": 0}
+        },
+        {
+          "name": "Full clean-index release gate",
+          "run": "make release-check"
+        }
+      ]
+    }
+  }
+}

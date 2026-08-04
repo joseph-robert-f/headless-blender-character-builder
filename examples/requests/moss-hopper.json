@@ -1,0 +1,30 @@
+{
+  "request_version": "build/v1",
+  "generator": "geometric-character@1.0.0",
+  "spec": {
+    "spec_version": "character/v1",
+    "name": "Moss Hopper",
+    "slug": "moss-hopper",
+    "style": "chibi",
+    "height_mm": 125,
+    "pose": "wave",
+    "palette": ["#2F6F4E", "#9DC08B", "#F2C14E", "#302B27"],
+    "proportions": {
+      "head_scale": 1.5,
+      "body_scale": 0.78,
+      "limb_scale": 1.2
+    },
+    "material_preset": "matte",
+    "eye_preset": "sleepy",
+    "components": ["swept-tail", "pointed-ears", "backpack"],
+    "base": {
+      "preset": "hexagonal",
+      "width_mm": 68,
+      "depth_mm": 58,
+      "height_mm": 7
+    }
+  },
+  "output_profile": "complete-v1",
+  "render_profile": "diagnostic-v1",
+  "quality_profile": "geometry-v1"
+}
