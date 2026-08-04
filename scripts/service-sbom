@@ -1,0 +1,441 @@
+#!/usr/bin/env python3
+"""Generate offline service SPDX/notices and validate the actual builder SBOM."""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import hashlib
+import json
+import os
+import re
+import shutil
+import stat
+import sys
+import tempfile
+from pathlib import Path
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+
+
+ROOT = Path(__file__).resolve().parents[1]
+LOCK_PATH = ROOT / "docker" / "service-requirements.lock"
+INVENTORY_PATH = ROOT / "release" / "service-dependency-licenses.json"
+SERVICE_PROJECT = ROOT / "service" / "pyproject.toml"
+MAX_INPUT_BYTES = 64 * 1024 * 1024
+PACKAGE_LINE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)==([^\s\\]+)\s*\\$")
+HASH_LINE = re.compile(r"^\s+--hash=sha256:([0-9a-f]{64})(?:\s*\\)?$")
+SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
+SPDX_EXPRESSION = re.compile(r"^[A-Za-z0-9.+-]+(?: (?:AND|OR) [A-Za-z0-9.+-]+)*$")
+
+
+class SbomFailure(RuntimeError):
+    def __init__(self, code: str, detail: str) -> None:
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code) is None:
+            code = "invalid_sbom_failure"
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
+def _regular_bytes(path: Path, maximum: int = MAX_INPUT_BYTES) -> bytes:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        raise SbomFailure("input_unavailable", "required input is unavailable: " + path.name) from None
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise SbomFailure("unsafe_input", "required input must be a regular non-symlink: " + path.name)
+    if metadata.st_size <= 0 or metadata.st_size > maximum:
+        raise SbomFailure("input_size_invalid", "required input size is outside policy: " + path.name)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(str(path), flags)
+        with os.fdopen(descriptor, "rb") as stream:
+            payload = stream.read(maximum + 1)
+    except OSError:
+        raise SbomFailure("input_unreadable", "required input cannot be read: " + path.name) from None
+    if len(payload) != metadata.st_size:
+        raise SbomFailure("input_changed", "required input changed while reading: " + path.name)
+    return payload
+
+
+def _normalize_name(value: str) -> str:
+    return re.sub(r"[-_.]+", "-", value).lower()
+
+
+def parse_lock(payload: bytes) -> Dict[str, Dict[str, object]]:
+    try:
+        text = payload.decode("ascii", "strict")
+    except UnicodeDecodeError:
+        raise SbomFailure("invalid_service_lock", "service dependency lock is not ASCII") from None
+    packages: Dict[str, Dict[str, object]] = {}
+    current: Optional[Tuple[str, str]] = None
+    hashes: List[str] = []
+
+    def finish() -> None:
+        nonlocal current, hashes
+        if current is None:
+            return
+        name, version = current
+        normalized = _normalize_name(name)
+        if not hashes or normalized in packages:
+            raise SbomFailure("invalid_service_lock", "service dependency lock is incomplete or duplicated")
+        packages[normalized] = {
+            "hashes": sorted(set(hashes)),
+            "name": normalized,
+            "version": version,
+        }
+        current = None
+        hashes = []
+
+    for number, raw_line in enumerate(text.splitlines(), 1):
+        if not raw_line or raw_line.startswith("#"):
+            continue
+        package_match = PACKAGE_LINE.fullmatch(raw_line)
+        if package_match is not None:
+            finish()
+            current = (package_match.group(1), package_match.group(2))
+            continue
+        hash_match = HASH_LINE.fullmatch(raw_line)
+        if hash_match is not None and current is not None:
+            hashes.append(hash_match.group(1))
+            continue
+        raise SbomFailure("invalid_service_lock", "invalid service lock syntax at line %d" % number)
+    finish()
+    if not packages:
+        raise SbomFailure("empty_service_lock", "service dependency lock contains no packages")
+    return packages
+
+
+def load_inventory(payload: bytes, lock_payload: bytes) -> Dict[str, Dict[str, str]]:
+    try:
+        document = json.loads(payload.decode("utf-8", "strict"))
+    except (UnicodeDecodeError, ValueError):
+        raise SbomFailure("invalid_license_inventory", "service license inventory is invalid JSON") from None
+    expected = {"dependencies", "format", "requirements_lock", "requirements_sha256"}
+    if not isinstance(document, dict) or set(document) != expected:
+        raise SbomFailure("invalid_license_inventory", "service license inventory has an unsupported contract")
+    if document.get("format") != "hbcb-service-license-inventory/v1" or document.get("requirements_lock") != "docker/service-requirements.lock":
+        raise SbomFailure("invalid_license_inventory", "service license inventory identity mismatch")
+    if document.get("requirements_sha256") != hashlib.sha256(lock_payload).hexdigest():
+        raise SbomFailure("license_inventory_stale", "service dependency lock changed without license review")
+    dependencies = document.get("dependencies")
+    if not isinstance(dependencies, dict) or not dependencies:
+        raise SbomFailure("invalid_license_inventory", "service license inventory is empty")
+    result: Dict[str, Dict[str, str]] = {}
+    for raw_name, item in dependencies.items():
+        name = _normalize_name(raw_name)
+        if name != raw_name or name in result or not isinstance(item, dict):
+            raise SbomFailure("invalid_license_inventory", "service license inventory package key is invalid")
+        if set(item) != {"license", "source_url", "version"}:
+            raise SbomFailure("invalid_license_inventory", "service license inventory entry is incomplete: " + name)
+        license_expression = item.get("license")
+        source_url = item.get("source_url")
+        version = item.get("version")
+        if (
+            not isinstance(license_expression, str)
+            or SPDX_EXPRESSION.fullmatch(license_expression) is None
+            or license_expression == "NOASSERTION"
+            or not isinstance(source_url, str)
+            or not source_url.startswith("https://")
+            or "@" in source_url.split("//", 1)[1].split("/", 1)[0]
+            or not isinstance(version, str)
+            or not version
+        ):
+            raise SbomFailure("invalid_license_inventory", "service license inventory value is invalid: " + name)
+        if source_url != "https://pypi.org/project/%s/%s/" % (name, version):
+            raise SbomFailure("invalid_license_inventory", "service license source URL is not canonical: " + name)
+        result[name] = {
+            "license": license_expression,
+            "source_url": source_url,
+            "version": version,
+        }
+    return result
+
+
+def validate_builder_sbom(payload: bytes) -> Dict[str, object]:
+    try:
+        document = json.loads(payload.decode("utf-8", "strict"))
+    except (UnicodeDecodeError, ValueError):
+        raise SbomFailure("invalid_builder_sbom", "builder SBOM is invalid JSON") from None
+    if not isinstance(document, dict):
+        raise SbomFailure("invalid_builder_sbom", "builder SBOM root must be an object")
+    if (
+        document.get("spdxVersion") != "SPDX-2.3"
+        or document.get("dataLicense") != "CC0-1.0"
+        or document.get("SPDXID") != "SPDXRef-DOCUMENT"
+    ):
+        raise SbomFailure("invalid_builder_sbom", "builder SBOM SPDX header is invalid")
+    packages = document.get("packages")
+    if not isinstance(packages, list) or not packages:
+        raise SbomFailure("invalid_builder_sbom", "builder SBOM contains no packages")
+    names = set()
+    identifiers = set()
+    project_valid = False
+    blender_valid = False
+    for package in packages:
+        if not isinstance(package, dict):
+            raise SbomFailure("invalid_builder_sbom", "builder SBOM package is not an object")
+        name = package.get("name")
+        identifier = package.get("SPDXID")
+        if not isinstance(name, str) or not name or not isinstance(identifier, str) or not identifier.startswith("SPDXRef-"):
+            raise SbomFailure("invalid_builder_sbom", "builder SBOM package identity is invalid")
+        if identifier in identifiers:
+            raise SbomFailure("invalid_builder_sbom", "builder SBOM has duplicate SPDX identifiers")
+        identifiers.add(identifier)
+        names.add(name.casefold())
+        if name == "headless-blender-character-builder":
+            project_valid = package.get("licenseDeclared") == "GPL-3.0-or-later"
+        if name == "Blender":
+            blender_valid = (
+                package.get("licenseDeclared") == "GPL-3.0-or-later"
+                and bool(package.get("versionInfo"))
+                and bool(package.get("checksums"))
+            )
+    if not project_valid or not blender_valid:
+        raise SbomFailure("builder_sbom_incomplete", "builder SBOM lacks reviewed project/Blender packages")
+    relationships = document.get("relationships")
+    if not isinstance(relationships, list) or not relationships:
+        raise SbomFailure("builder_sbom_incomplete", "builder SBOM lacks relationships")
+    return document
+
+
+def _project_version(payload: bytes) -> str:
+    try:
+        text = payload.decode("utf-8", "strict")
+    except UnicodeDecodeError:
+        raise SbomFailure("invalid_service_project", "service project metadata is not UTF-8") from None
+    versions = re.findall(r'(?m)^version\s*=\s*"([^"]+)"\s*$', text)
+    licenses = re.findall(r'(?m)^license\s*=\s*"([^"]+)"\s*$', text)
+    if len(versions) != 1 or SEMVER.fullmatch(versions[0]) is None or licenses != ["GPL-3.0-or-later"]:
+        raise SbomFailure("invalid_service_project", "service project version/license metadata is invalid")
+    return versions[0]
+
+
+def _created(epoch: int) -> str:
+    if epoch < 0 or epoch > 2147483647:
+        raise SbomFailure("invalid_source_date_epoch", "source date epoch is outside portable range")
+    return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def build_service_sbom(
+    lock_payload: bytes,
+    packages: Mapping[str, Mapping[str, object]],
+    inventory: Mapping[str, Mapping[str, str]],
+    project_version: str,
+    source_date_epoch: int,
+    component: str,
+) -> Dict[str, object]:
+    if component not in {"api", "worker"}:
+        raise SbomFailure("invalid_service_component", "service SBOM component is unsupported")
+    if set(packages) != set(inventory):
+        missing = sorted(set(packages) - set(inventory))
+        extra = sorted(set(inventory) - set(packages))
+        detail = "service lock and license inventory differ"
+        if missing:
+            detail += "; missing=" + missing[0]
+        if extra:
+            detail += "; extra=" + extra[0]
+        raise SbomFailure("license_inventory_mismatch", detail)
+    lock_hash = hashlib.sha256(lock_payload).hexdigest()
+    project_id = "SPDXRef-Package-HBCB-Service-" + component.capitalize()
+    project_name = "headless-blender-character-builder-" + component
+    spdx_packages: List[Dict[str, object]] = [
+        {
+            "SPDXID": project_id,
+            "checksums": [{"algorithm": "SHA256", "checksumValue": lock_hash}],
+            "copyrightText": "NOASSERTION",
+            "downloadLocation": "https://github.com/joseph-robert-f/headless-blender-character-builder",
+            "filesAnalyzed": False,
+            "licenseConcluded": "GPL-3.0-or-later",
+            "licenseDeclared": "GPL-3.0-or-later",
+            "name": project_name,
+            "primaryPackagePurpose": "APPLICATION",
+            "versionInfo": project_version,
+        }
+    ]
+    relationships: List[Dict[str, str]] = [
+        {
+            "relatedSpdxElement": project_id,
+            "relationshipType": "DESCRIBES",
+            "spdxElementId": "SPDXRef-DOCUMENT",
+        }
+    ]
+    for name in sorted(packages):
+        package = packages[name]
+        reviewed = inventory[name]
+        if package["version"] != reviewed["version"]:
+            raise SbomFailure("license_inventory_mismatch", "reviewed version differs from lock: " + name)
+        identifier = "SPDXRef-Package-" + re.sub(r"[^A-Za-z0-9.-]", "-", name)
+        hashes = [
+            {"algorithm": "SHA256", "checksumValue": value}
+            for value in package["hashes"]  # type: ignore[union-attr]
+        ]
+        spdx_packages.append(
+            {
+                "SPDXID": identifier,
+                "checksums": hashes,
+                "copyrightText": "NOASSERTION",
+                "downloadLocation": reviewed["source_url"],
+                "filesAnalyzed": False,
+                "licenseConcluded": reviewed["license"],
+                "licenseDeclared": reviewed["license"],
+                "name": name,
+                "packageFileName": name + "==" + str(package["version"]),
+                "primaryPackagePurpose": "LIBRARY",
+                "versionInfo": package["version"],
+            }
+        )
+        relationships.append(
+            {
+                "relatedSpdxElement": identifier,
+                "relationshipType": "DEPENDS_ON",
+                "spdxElementId": project_id,
+            }
+        )
+    return {
+        "SPDXID": "SPDXRef-DOCUMENT",
+        "creationInfo": {
+            "created": _created(source_date_epoch),
+            "creators": ["Tool: hbcb-service-sbom/1"],
+        },
+        "dataLicense": "CC0-1.0",
+        "documentNamespace": (
+            "https://github.com/joseph-robert-f/headless-blender-character-builder/sbom/service/"
+            + component
+            + "/"
+            + lock_hash
+        ),
+        "name": project_name,
+        "packages": spdx_packages,
+        "relationships": relationships,
+        "spdxVersion": "SPDX-2.3",
+    }
+
+
+def build_notices(
+    packages: Mapping[str, Mapping[str, object]],
+    inventory: Mapping[str, Mapping[str, str]],
+    lock_hash: str,
+) -> bytes:
+    lines = [
+        "Headless Blender Character Builder service dependency notices",
+        "",
+        "Generated offline from docker/service-requirements.lock.",
+        "Lock SHA-256: " + lock_hash,
+        "The SPDX expressions below come from the reviewed static inventory.",
+        "Redistribution must also preserve license texts supplied in installed distributions.",
+        "",
+    ]
+    for name in sorted(packages):
+        lines.extend(
+            [
+                "%s %s" % (name, packages[name]["version"]),
+                "  License: " + inventory[name]["license"],
+                "  Source: " + inventory[name]["source_url"],
+                "",
+            ]
+        )
+    return ("\n".join(lines).rstrip() + "\n").encode("utf-8")
+
+
+def _json_bytes(document: object) -> bytes:
+    return (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def generate(root: Path, builder_sbom: Path, output_dir: Path, source_date_epoch: int) -> Dict[str, str]:
+    root = root.resolve()
+    lock_path = root / "docker" / "service-requirements.lock"
+    inventory_path = root / "release" / "service-dependency-licenses.json"
+    service_project = root / "service" / "pyproject.toml"
+    lock_payload = _regular_bytes(lock_path, 2 * 1024 * 1024)
+    inventory_payload = _regular_bytes(inventory_path, 2 * 1024 * 1024)
+    project_payload = _regular_bytes(service_project, 512 * 1024)
+    builder_payload = _regular_bytes(builder_sbom.resolve())
+    packages = parse_lock(lock_payload)
+    inventory = load_inventory(inventory_payload, lock_payload)
+    builder_document = validate_builder_sbom(builder_payload)
+    version = _project_version(project_payload)
+    api_document = build_service_sbom(
+        lock_payload, packages, inventory, version, source_date_epoch, "api"
+    )
+    worker_document = build_service_sbom(
+        lock_payload, packages, inventory, version, source_date_epoch, "worker"
+    )
+    builder_namespace = builder_document.get("documentNamespace")
+    if not isinstance(builder_namespace, str) or not builder_namespace.startswith("https://"):
+        raise SbomFailure("invalid_builder_sbom", "builder SBOM namespace is invalid")
+    worker_document["externalDocumentRefs"] = [
+        {
+            "checksum": {
+                "algorithm": "SHA256",
+                "checksumValue": hashlib.sha256(builder_payload).hexdigest(),
+            },
+            "externalDocumentId": "DocumentRef-Builder",
+            "spdxDocument": builder_namespace,
+        }
+    ]
+    worker_document["relationships"].append(  # type: ignore[union-attr]
+        {
+            "relatedSpdxElement": "DocumentRef-Builder:SPDXRef-Package-HBCB",
+            "relationshipType": "DEPENDS_ON",
+            "spdxElementId": "SPDXRef-Package-HBCB-Service-Worker",
+        }
+    )
+    notices = build_notices(packages, inventory, hashlib.sha256(lock_payload).hexdigest())
+    outputs = {
+        "api.spdx.json": _json_bytes(api_document),
+        "builder.spdx.json": _json_bytes(builder_document),
+        "SERVICE_THIRD_PARTY_NOTICES.txt": notices,
+        "worker.spdx.json": _json_bytes(worker_document),
+    }
+    output_dir = output_dir.resolve()
+    if output_dir.exists() or output_dir.is_symlink():
+        raise SbomFailure("output_exists", "refusing to overwrite SBOM output directory")
+    parent = output_dir.parent
+    if not parent.is_dir() or parent.is_symlink():
+        raise SbomFailure("output_parent_unsafe", "SBOM output parent is unavailable")
+    temporary = Path(tempfile.mkdtemp(prefix=".hbcb-sbom-", dir=str(parent)))
+    try:
+        temporary.chmod(0o700)
+        for name, payload in sorted(outputs.items()):
+            path = temporary / name
+            path.write_bytes(payload)
+            path.chmod(0o644)
+        os.replace(str(temporary), str(output_dir))
+        output_dir.chmod(0o755)
+    except Exception:
+        shutil.rmtree(str(temporary), ignore_errors=True)
+        raise
+    return {name: hashlib.sha256(payload).hexdigest() for name, payload in sorted(outputs.items())}
+
+
+def _arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=ROOT, help="source root (default: project root)")
+    parser.add_argument("--builder-sbom", type=Path, required=True, help="actual SPDX JSON extracted from the builder image")
+    parser.add_argument("--output-dir", type=Path, required=True, help="new output directory")
+    parser.add_argument("--source-date-epoch", type=int, default=0, help="portable reproducible timestamp")
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    try:
+        arguments = _arguments(argv)
+        hashes = generate(
+            arguments.root,
+            arguments.builder_sbom,
+            arguments.output_dir,
+            arguments.source_date_epoch,
+        )
+        print("SERVICE_SBOM: PASS (%d artifacts)" % len(hashes))
+        return 0
+    except SbomFailure as failure:
+        print("SERVICE_SBOM: FAIL[%s]: %s" % (failure.code, failure.detail), file=sys.stderr)
+        return 1
+    except Exception:
+        print("SERVICE_SBOM: FAIL[internal_error]: unexpected local SBOM failure", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

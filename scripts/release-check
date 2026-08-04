@@ -1,0 +1,292 @@
+#!/bin/sh
+set -eu
+
+umask 077
+
+fail() {
+  printf 'RELEASE_CHECK: %s\n' "$1" >&2
+  exit 1
+}
+
+usage() {
+  printf '%s\n' 'usage: scripts/release-check [--static]' >&2
+  exit 2
+}
+
+mode=full
+if [ "$#" -eq 1 ] && [ "$1" = --static ]; then
+  mode=static
+elif [ "$#" -ne 0 ]; then
+  usage
+fi
+
+python_bin=${PYTHON:-python3}
+docker_bin=${DOCKER:-docker}
+case "$python_bin:$docker_bin" in
+  *' '*) fail 'PYTHON and DOCKER must each name one executable' ;;
+esac
+command -v "$python_bin" >/dev/null 2>&1 || fail 'Python is unavailable'
+command -v git >/dev/null 2>&1 || fail 'Git is unavailable'
+command -v make >/dev/null 2>&1 || fail 'Make is unavailable'
+
+repo=$(git rev-parse --show-toplevel 2>/dev/null) || fail 'run from a Git worktree'
+repo=$(cd "$repo" && pwd -P)
+cd "$repo"
+
+if ! git diff --quiet --; then
+  fail 'unstaged tracked changes are not allowed; stage the intended release index'
+fi
+untracked=$(git ls-files --others --exclude-standard)
+if [ -n "$untracked" ]; then
+  fail 'untracked publication files are not allowed; stage or ignore them intentionally'
+fi
+git diff --check
+git diff --cached --check
+
+version=$(sed -n '1p' VERSION)
+case "$version" in
+  ''|*[!0-9A-Za-z.-]*) fail 'VERSION is invalid' ;;
+esac
+rc_version=${HBCB_RELEASE_VERSION:-$version-rc.1}
+case "$rc_version" in
+  ''|*[!0-9A-Za-z.-]*) fail 'HBCB_RELEASE_VERSION is invalid' ;;
+esac
+
+temporary_parent=${TMPDIR:-/tmp}
+temporary_parent=${temporary_parent%/}
+scratch=$(mktemp -d "$temporary_parent/hbcb-release-check.XXXXXXXX")
+chmod 0700 "$scratch"
+audit_source=$scratch/audited-source
+work_source=$scratch/work-source
+audit_report=$scratch/source-audit.json
+builder_container=
+service_attempted=0
+compose_project=
+
+compose() {
+  if [ -n "${HBCB_COMPOSE_BIN:-}" ]; then
+    "$HBCB_COMPOSE_BIN" "$@"
+  else
+    "$docker_bin" compose "$@"
+  fi
+}
+
+cleanup() {
+  status=$?
+  trap - 0 1 2 15
+  if [ "$service_attempted" -eq 1 ] && [ -n "$compose_project" ] && [ -f "$work_source/.env" ]; then
+    (
+      cd "$work_source"
+      export COMPOSE_PROJECT_NAME=$compose_project
+      BUILDER_IMAGE=${builder_work_image:-headless-blender-character-builder:unavailable} \
+        ./scripts/service-compose down >/dev/null 2>&1 || true
+      recipe_id=$(git hash-object docker/minio.Dockerfile 2>/dev/null || true)
+      export HBCB_BUILDER_IMAGE=headless-blender-character-builder:unavailable
+      export HBCB_BUILDER_IMAGE_REFERENCE=headless-blender-character-builder:unavailable
+      export HBCB_BUILDER_IMAGE_ID=sha256:0000000000000000000000000000000000000000000000000000000000000000
+      export HBCB_MINIO_RECIPE_ID=$recipe_id
+      compose --env-file .env down --volumes --remove-orphans >/dev/null 2>&1 || true
+    )
+  fi
+  if [ -n "$builder_container" ]; then
+    "$docker_bin" rm --force "$builder_container" >/dev/null 2>&1 || true
+  fi
+  case "$scratch" in
+    "$temporary_parent"/hbcb-release-check.*) rm -rf -- "$scratch" ;;
+  esac
+  exit "$status"
+}
+trap cleanup 0 1 2 15
+
+mkdir "$audit_source"
+(
+  # The 0700 scratch ancestor remains the access boundary.  Export the indexed
+  # files with normal Git checkout permissions so 100755 entries retain all
+  # execute bits required by the deployment/install contract.
+  umask 022
+  git checkout-index --all --force --prefix="$audit_source/"
+)
+test ! -e "$audit_source/.git" || fail 'checkout-index export unexpectedly contains .git'
+
+"$python_bin" "$audit_source/scripts/release-audit" \
+  --repo "$repo" \
+  --export "$audit_source" \
+  --report "$audit_report"
+
+(
+  cd "$audit_source"
+  PYTHONDONTWRITEBYTECODE=1 "$python_bin" -m unittest discover \
+    -s tests/release -p 'test_*.py' -v
+  "$python_bin" -m json.tool .github/workflows/ci.yml >/dev/null
+  "$python_bin" -m json.tool .github/workflows/release-candidate.yml >/dev/null
+)
+
+if [ "$mode" = static ]; then
+  printf '%s\n' 'RELEASE_STATIC: PASS'
+  exit 0
+fi
+
+command -v "$docker_bin" >/dev/null 2>&1 || fail 'Docker is unavailable'
+"$docker_bin" info >/dev/null 2>&1 || fail 'Docker daemon is unavailable'
+
+run_id=${HBCB_RELEASE_RUN_ID:-g9-final}
+case "$run_id" in
+  ''|*[!a-z0-9_-]*) fail 'HBCB_RELEASE_RUN_ID must be a safe lowercase identifier' ;;
+esac
+evidence_parent=$repo/build/release-check
+evidence=$evidence_parent/$run_id
+if [ -L "$repo/build" ] || [ -L "$evidence_parent" ] || [ -e "$evidence" ] || [ -L "$evidence" ]; then
+  fail 'release evidence target already exists or is unsafe'
+fi
+mkdir -p "$evidence_parent"
+chmod 0700 "$evidence_parent"
+mkdir "$evidence"
+chmod 0700 "$evidence"
+
+mkdir "$work_source"
+(
+  umask 022
+  git checkout-index --all --force --prefix="$work_source/"
+)
+test ! -e "$work_source/.git" || fail 'working checkout-index export unexpectedly contains .git'
+
+compose_project=hbcb-release-$run_id
+builder_work_image=headless-blender-character-builder:release-check-$run_id
+builder_release_image=headless-blender-character-builder:$rc_version
+api_release_image=headless-blender-character-builder-api:$rc_version
+worker_release_image=headless-blender-character-builder-worker:$rc_version
+
+service_attempted=1
+(
+  cd "$work_source"
+  export HBCB_INDEX_AUDITED=1
+  export COMPOSE_PROJECT_NAME=$compose_project
+  make check \
+    PYTHON="$python_bin" \
+    DOCKER="$docker_bin" \
+    BUILDER_IMAGE="$builder_work_image" \
+    TEST_IMAGE="$builder_work_image-test"
+  make demo \
+    DOCKER="$docker_bin" \
+    BUILDER_IMAGE="$builder_work_image"
+  make verify-demo \
+    DOCKER="$docker_bin" \
+    BUILDER_IMAGE="$builder_work_image"
+  make init-env
+  make service-up \
+    DOCKER="$docker_bin" \
+    BUILDER_IMAGE="$builder_work_image"
+  make service-smoke \
+    DOCKER="$docker_bin" \
+    BUILDER_IMAGE="$builder_work_image"
+  make g8-static \
+    PYTHON="$python_bin" \
+    HBCB_COMPOSE_BIN="${HBCB_COMPOSE_BIN:-}"
+  make g8-caddy PYTHON="$python_bin"
+  make g8-recovery \
+    BUILDER_IMAGE="$builder_work_image" \
+    HBCB_COMPOSE_BIN="${HBCB_COMPOSE_BIN:-}"
+  make operator-smoke
+)
+
+"$docker_bin" tag "$builder_work_image" "$builder_release_image"
+"$docker_bin" tag hbcb-service-api:dev "$api_release_image"
+"$docker_bin" tag hbcb-service-worker:dev "$worker_release_image"
+
+image_dir=$scratch/images
+mkdir "$image_dir"
+"$docker_bin" image inspect --platform linux/amd64 "$builder_release_image" > "$image_dir/builder.json"
+"$docker_bin" image inspect --platform linux/amd64 "$api_release_image" > "$image_dir/api.json"
+"$docker_bin" image inspect --platform linux/amd64 "$worker_release_image" > "$image_dir/worker.json"
+
+builder_container=$("$docker_bin" create --platform linux/amd64 "$builder_release_image")
+"$docker_bin" cp \
+  "$builder_container:/opt/builder/provenance/sbom.spdx.json" \
+  "$scratch/builder-sbom.spdx.json"
+"$docker_bin" rm "$builder_container" >/dev/null
+builder_container=
+
+supplements=$scratch/supplements
+"$python_bin" "$audit_source/scripts/service-sbom" \
+  --root "$audit_source" \
+  --builder-sbom "$scratch/builder-sbom.spdx.json" \
+  --output-dir "$supplements"
+
+"$python_bin" "$audit_source/scripts/release-artifacts" \
+  --source "$audit_source" \
+  --audit-report "$audit_report" \
+  --supplements-dir "$supplements" \
+  --demo-artifacts "$work_source/build/demo" \
+  --image-inspect "builder=$image_dir/builder.json" \
+  --image-inspect "api=$image_dir/api.json" \
+  --image-inspect "worker=$image_dir/worker.json" \
+  --output-dir "$evidence/release" \
+  --version "$rc_version"
+
+gate_dir=$evidence/gates
+mkdir "$gate_dir"
+chmod 0700 "$gate_dir"
+service_summary=$(find "$work_source/build/service-smoke" -type f -name g7-service-summary.json -print)
+recovery_summary=$(find "$work_source/build/g8-recovery" -type f -name g8-recovery-summary.json -print)
+if [ "$(printf '%s\n' "$service_summary" | sed '/^$/d' | wc -l | tr -d ' ')" -ne 1 ]; then
+  fail 'expected exactly one service-smoke summary'
+fi
+if [ "$(printf '%s\n' "$recovery_summary" | sed '/^$/d' | wc -l | tr -d ' ')" -ne 1 ]; then
+  fail 'expected exactly one recovery summary'
+fi
+cp "$service_summary" "$gate_dir/service-smoke-summary.json"
+cp "$recovery_summary" "$gate_dir/g8-recovery-summary.json"
+chmod 0600 "$gate_dir/service-smoke-summary.json" "$gate_dir/g8-recovery-summary.json"
+
+HBCB_RELEASE_METADATA=$evidence/release/release-metadata.json \
+HBCB_SERVICE_SUMMARY=$gate_dir/service-smoke-summary.json \
+HBCB_RECOVERY_SUMMARY=$gate_dir/g8-recovery-summary.json \
+HBCB_RELEASE_SUMMARY=$evidence/release-check-summary.json \
+"$python_bin" - <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+
+
+def load(name):
+    path = Path(os.environ[name])
+    payload = path.read_bytes()
+    return json.loads(payload.decode("utf-8")), hashlib.sha256(payload).hexdigest()
+
+
+release, release_sha = load("HBCB_RELEASE_METADATA")
+service, service_sha = load("HBCB_SERVICE_SUMMARY")
+recovery, recovery_sha = load("HBCB_RECOVERY_SUMMARY")
+if recovery.get("result") != "PASS":
+    raise SystemExit("recovery summary is not PASS")
+if service.get("result") != "PASS":
+    raise SystemExit("service summary is not PASS")
+summary = {
+    "format": "hbcb-release-check/v1",
+    "gates": [
+        "indexed-source-audit",
+        "unit-contract-security",
+        "real-blender",
+        "keyless-demo-and-fresh-verify",
+        "asynchronous-service",
+        "iam-and-redis",
+        "vps-static-and-caddy",
+        "backup-restore-retention",
+        "sbom-notices-and-packaging",
+    ],
+    "git_index_sha256": release["git_index_sha256"],
+    "image_ids": release["image_ids"],
+    "recovery_summary_sha256": recovery_sha,
+    "release_metadata_sha256": release_sha,
+    "result": "PASS",
+    "service_summary_sha256": service_sha,
+    "source_tree_sha256": release["source_tree_sha256"],
+    "version": release["version"],
+}
+output = Path(os.environ["HBCB_RELEASE_SUMMARY"])
+output.write_text(json.dumps(summary, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+output.chmod(0o600)
+PY
+
+printf 'RELEASE_CHECK: PASS evidence=%s\n' "$evidence"

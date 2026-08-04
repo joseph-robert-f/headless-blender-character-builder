@@ -1,9 +1,9 @@
 .git
-.github
 .agents
 .codex
 .env
 .env.*
+!.env.example
 deploy/vps/vps.env
 deploy/vps/release.lock.env
 backups
@@ -25,6 +25,7 @@ logs
 *.obj
 *.fbx
 *.png
+!docs/assets/facet-bot-preview.png
 *.mp4
 *.mov
 artifact.json

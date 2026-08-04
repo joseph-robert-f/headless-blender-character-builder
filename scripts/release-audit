@@ -1,0 +1,522 @@
+#!/usr/bin/env python3
+"""Offline, fail-closed audit of the Git publication index and its export."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import unicodedata
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+
+
+ROOT = Path(__file__).resolve().parents[1]
+MAX_GIT_OUTPUT = 32 * 1024 * 1024
+MAX_TRACKED_BYTES = 5 * 1024 * 1024
+MAX_BINARY_BYTES = 2 * 1024 * 1024
+ALLOWED_MODES = frozenset({"100644", "100755"})
+FORBIDDEN_TOP_LEVEL = frozenset(
+    {"artifacts", "build", "data", "dist", "logs", "output", "outputs", "renders"}
+)
+FORBIDDEN_COMPONENTS = frozenset(
+    {
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".coverage",
+        ".ds_store",
+        "__pycache__",
+        "htmlcov",
+        "node_modules",
+    }
+)
+FORBIDDEN_GENERATED_COMPONENTS = frozenset(
+    {"artifacts", "build", "dist", "output", "outputs", "renders"}
+)
+FORBIDDEN_GENERATED_SUFFIXES = frozenset(
+    {
+        ".3mf",
+        ".blend",
+        ".fbx",
+        ".glb",
+        ".gltf",
+        ".gz",
+        ".mov",
+        ".mp4",
+        ".obj",
+        ".stl",
+        ".tar",
+        ".tgz",
+        ".whl",
+        ".zip",
+    }
+)
+ALLOWED_BINARY_SUFFIXES = frozenset(
+    {".gif", ".jpeg", ".jpg", ".pdf", ".png", ".webp"}
+)
+SAFE_PLACEHOLDERS = (
+    "<random>",
+    "canary",
+    "disabled-local-fixture",
+    "dummy",
+    "example",
+    "forbidden",
+    "placeholder",
+    "redacted",
+    "replace-me",
+    "secret",
+    "test-only",
+)
+INDEX_RECORD = re.compile(rb"^([0-9]{6}) ([0-9a-f]{40,64}) ([0-3])\t(.*)$", re.DOTALL)
+BLEND_BACKUP = re.compile(r"\.blend(?:[0-9]+|@|~)$", re.IGNORECASE)
+PERSONAL_POSIX_PATH = re.compile(
+    r"(?<![A-Za-z0-9_])/(?:Users|home)/[A-Za-z0-9][A-Za-z0-9._-]{0,63}/"
+)
+PERSONAL_WINDOWS_PATH = re.compile(
+    r"(?i)\b[A-Z]:[\\/]+Users[\\/]+[A-Za-z0-9][A-Za-z0-9._-]{0,63}[\\/]"
+)
+CREDENTIAL_URL = re.compile(
+    r"(?i)\b[a-z][a-z0-9+.-]*://([^/@:\s]+):([^/@\s]+)@"
+)
+SECRET_ASSIGNMENT = re.compile(
+    r"(?m)\b[A-Z][A-Z0-9_]*(?:API_KEY|PASSWORD|SECRET|TOKEN)[A-Z0-9_]*"
+    r"\s*[:=]\s*[\"']?([A-Za-z0-9_./+=:-]{16,})"
+)
+KNOWN_SECRET_PATTERNS = (
+    re.compile(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{20,}\b"),
+)
+
+
+class AuditFailure(RuntimeError):
+    """A safe-to-display release audit failure."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code) is None:
+            code = "invalid_audit_failure"
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
+@dataclass(frozen=True)
+class IndexEntry:
+    mode: str
+    oid: str
+    path: str
+
+
+def _git(repo: Path, arguments: Sequence[str], timeout: int = 60) -> bytes:
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_TERMINAL_PROMPT": "0",
+            "LC_ALL": "C",
+        }
+    )
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(repo)] + list(arguments),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=timeout,
+            env=environment,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise AuditFailure("git_unavailable", "local Git command unavailable") from None
+    if len(completed.stdout) > MAX_GIT_OUTPUT or len(completed.stderr) > MAX_GIT_OUTPUT:
+        raise AuditFailure("git_output_too_large", "local Git output exceeded policy")
+    if completed.returncode != 0:
+        raise AuditFailure("git_command_failed", "local Git index command failed")
+    return completed.stdout
+
+
+def _validate_relative_path(value: str) -> None:
+    if not value or value != unicodedata.normalize("NFC", value):
+        raise AuditFailure("unsafe_path", "non-canonical indexed path")
+    if "\\" in value or any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise AuditFailure("unsafe_path", "indexed path contains a control or backslash")
+    path = PurePosixPath(value)
+    if path.is_absolute() or any(part in {"", ".", "..", ".git"} for part in path.parts):
+        raise AuditFailure("unsafe_path", "indexed path escapes the publication tree")
+
+
+def _index(repo: Path) -> List[IndexEntry]:
+    payload = _git(repo, ("ls-files", "--stage", "-z"))
+    entries: List[IndexEntry] = []
+    seen = set()
+    casefolded: Dict[str, str] = {}
+    for raw_record in payload.split(b"\0"):
+        if not raw_record:
+            continue
+        match = INDEX_RECORD.fullmatch(raw_record)
+        if match is None:
+            raise AuditFailure("invalid_index", "unparseable Git index entry")
+        mode = match.group(1).decode("ascii")
+        oid = match.group(2).decode("ascii")
+        stage = match.group(3).decode("ascii")
+        try:
+            path = match.group(4).decode("utf-8", "strict")
+        except UnicodeDecodeError:
+            raise AuditFailure("unsafe_path", "indexed path is not UTF-8") from None
+        _validate_relative_path(path)
+        if stage != "0" or path in seen:
+            raise AuditFailure("unmerged_index", "Git index is unmerged or duplicated")
+        folded = unicodedata.normalize("NFC", path).casefold()
+        if folded in casefolded:
+            raise AuditFailure("portable_path_collision", "indexed paths collide portably")
+        if mode not in ALLOWED_MODES:
+            raise AuditFailure("unsafe_index_mode", "indexed entry is a symlink, submodule, or special file")
+        seen.add(path)
+        casefolded[folded] = path
+        entries.append(IndexEntry(mode=mode, oid=oid, path=path))
+    if not entries:
+        raise AuditFailure("empty_index", "Git publication index is empty")
+    return sorted(entries, key=lambda item: item.path.encode("utf-8"))
+
+
+def _blob(repo: Path, entry: IndexEntry) -> bytes:
+    size_payload = _git(repo, ("cat-file", "-s", entry.oid))
+    try:
+        size = int(size_payload.strip())
+    except ValueError:
+        raise AuditFailure("invalid_index_blob", "indexed blob has an invalid size") from None
+    if size < 0 or size > MAX_TRACKED_BYTES:
+        raise AuditFailure("oversized_tracked_file", "indexed file exceeds the 5 MiB policy: " + entry.path)
+    payload = _git(repo, ("cat-file", "blob", entry.oid))
+    if len(payload) != size:
+        raise AuditFailure("invalid_index_blob", "indexed blob size changed while auditing")
+    return payload
+
+
+def _forbidden_name(entry: IndexEntry) -> None:
+    path = PurePosixPath(entry.path)
+    lower_parts = tuple(part.lower() for part in path.parts)
+    lower_name = path.name.lower()
+    if lower_parts[0] in FORBIDDEN_TOP_LEVEL or any(
+        part in FORBIDDEN_COMPONENTS
+        or part in FORBIDDEN_GENERATED_COMPONENTS
+        or part.endswith(".egg-info")
+        for part in lower_parts
+    ):
+        raise AuditFailure("generated_path_tracked", "generated/cache path is indexed: " + entry.path)
+    if lower_name == ".env" or (
+        (lower_name.startswith(".env.") or lower_name.endswith(".env"))
+        and not lower_name.endswith(".env.example")
+    ):
+        raise AuditFailure("environment_file_tracked", "non-template environment file is indexed: " + entry.path)
+    if (
+        lower_name.endswith((".bak", ".orig", ".pyc", ".pyo", ".swp", ".temp", ".tmp", "~"))
+        or BLEND_BACKUP.search(lower_name) is not None
+        or path.suffix.lower() in FORBIDDEN_GENERATED_SUFFIXES
+    ):
+        raise AuditFailure("generated_artifact_tracked", "generated artifact is indexed: " + entry.path)
+
+
+def _looks_like_placeholder(value: str) -> bool:
+    lowered = value.lower()
+    return (
+        "${" in value
+        or "{" in value
+        or any(marker in lowered for marker in SAFE_PLACEHOLDERS)
+        or lowered in {"password", "random", "secret"}
+    )
+
+
+def _scan_text(path: str, text: str) -> None:
+    if PERSONAL_POSIX_PATH.search(text) is not None or PERSONAL_WINDOWS_PATH.search(text) is not None:
+        raise AuditFailure("personal_path_tracked", "personal absolute path found in indexed text: " + path)
+    for pattern in KNOWN_SECRET_PATTERNS:
+        if pattern.search(text) is not None:
+            raise AuditFailure("secret_detected", "credential material found in indexed text: " + path)
+    for match in SECRET_ASSIGNMENT.finditer(text):
+        if not _looks_like_placeholder(match.group(1)):
+            raise AuditFailure("secret_detected", "credential-like assignment found in indexed text: " + path)
+    for match in CREDENTIAL_URL.finditer(text):
+        password = match.group(2).strip("\"'.,);]")
+        if not _looks_like_placeholder(password):
+            raise AuditFailure("credential_url_detected", "credential-bearing URL found in indexed text: " + path)
+
+
+def _validate_blob(entry: IndexEntry, payload: bytes) -> None:
+    _forbidden_name(entry)
+    binary = b"\0" in payload[:8192]
+    text = None
+    if not binary:
+        try:
+            text = payload.decode("utf-8", "strict")
+        except UnicodeDecodeError:
+            binary = True
+    if binary:
+        path = PurePosixPath(entry.path)
+        if (
+            len(payload) > MAX_BINARY_BYTES
+            or len(path.parts) < 3
+            or path.parts[:2] != ("docs", "assets")
+            or path.suffix.lower() not in ALLOWED_BINARY_SUFFIXES
+        ):
+            raise AuditFailure("binary_policy_violation", "unapproved or oversized binary is indexed: " + entry.path)
+        return
+    assert text is not None
+    if entry.mode == "100755" and not payload.startswith(b"#!"):
+        raise AuditFailure("unsafe_executable", "indexed executable lacks a shebang: " + entry.path)
+    _scan_text(entry.path, text)
+
+
+def _safe_export_file(root: Path, entry: IndexEntry) -> Tuple[bytes, int]:
+    path = root.joinpath(*PurePosixPath(entry.path).parts)
+    try:
+        metadata = path.lstat()
+    except OSError:
+        raise AuditFailure("export_missing_file", "export is missing indexed file: " + entry.path) from None
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise AuditFailure("unsafe_export_type", "export contains a symlink or special file: " + entry.path)
+    permissions = stat.S_IMODE(metadata.st_mode)
+    if permissions & 0o022:
+        raise AuditFailure("unsafe_export_mode", "exported file is group/world writable: " + entry.path)
+    executable = bool(permissions & 0o111)
+    if executable != (entry.mode == "100755"):
+        raise AuditFailure("export_mode_mismatch", "exported executable mode differs from Git index: " + entry.path)
+    if metadata.st_size < 0 or metadata.st_size > MAX_TRACKED_BYTES:
+        raise AuditFailure("oversized_export_file", "exported file exceeds policy: " + entry.path)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(str(path), flags)
+        with os.fdopen(descriptor, "rb") as stream:
+            payload = stream.read(MAX_TRACKED_BYTES + 1)
+    except OSError:
+        raise AuditFailure("export_unreadable", "exported file is unreadable: " + entry.path) from None
+    if len(payload) != metadata.st_size:
+        raise AuditFailure("export_changed", "exported file changed while auditing: " + entry.path)
+    return payload, permissions
+
+
+def _export_paths(root: Path) -> List[str]:
+    try:
+        metadata = root.lstat()
+    except OSError:
+        raise AuditFailure("export_unavailable", "export path is unavailable") from None
+    if root.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+        raise AuditFailure("unsafe_export_root", "export path must be a real directory")
+    paths: List[str] = []
+    for current, directories, files in os.walk(str(root), topdown=True, followlinks=False):
+        current_path = Path(current)
+        current_metadata = current_path.lstat()
+        if current_path.is_symlink() or not stat.S_ISDIR(current_metadata.st_mode):
+            raise AuditFailure("unsafe_export_type", "export contains a symlinked directory")
+        if stat.S_IMODE(current_metadata.st_mode) & 0o022:
+            raise AuditFailure("unsafe_export_mode", "export contains a writable directory")
+        for name in sorted(directories):
+            child = current_path / name
+            child_metadata = child.lstat()
+            if child.is_symlink() or not stat.S_ISDIR(child_metadata.st_mode):
+                raise AuditFailure("unsafe_export_type", "export contains a symlinked directory")
+        for name in sorted(files):
+            child = current_path / name
+            if child.is_symlink() or not stat.S_ISREG(child.lstat().st_mode):
+                raise AuditFailure("unsafe_export_type", "export contains a symlink or special file")
+            paths.append(child.relative_to(root).as_posix())
+    return sorted(paths, key=lambda item: item.encode("utf-8"))
+
+
+def _license_check(blobs: Mapping[str, bytes]) -> Tuple[str, str]:
+    policy_path = "release/license-policy.json"
+    if policy_path not in blobs:
+        raise AuditFailure("license_policy_missing", "tracked license policy is missing")
+    try:
+        policy = json.loads(blobs[policy_path].decode("utf-8", "strict"))
+    except (UnicodeDecodeError, ValueError):
+        raise AuditFailure("invalid_license_policy", "tracked license policy is invalid") from None
+    expected_keys = {
+        "asset_license",
+        "asset_policy_path",
+        "format",
+        "metadata_requirements",
+        "root_license_path",
+        "root_license_sha256",
+        "source_license",
+    }
+    if not isinstance(policy, dict) or set(policy) != expected_keys or policy.get("format") != "hbcb-license-policy/v1":
+        raise AuditFailure("invalid_license_policy", "tracked license policy has an unsupported contract")
+    root_path = policy["root_license_path"]
+    asset_path = policy["asset_policy_path"]
+    if (
+        not isinstance(root_path, str)
+        or not isinstance(asset_path, str)
+        or not isinstance(policy["root_license_sha256"], str)
+        or re.fullmatch(r"[0-9a-f]{64}", policy["root_license_sha256"]) is None
+        or not isinstance(policy["source_license"], str)
+        or not isinstance(policy["asset_license"], str)
+    ):
+        raise AuditFailure("invalid_license_policy", "tracked license policy value is invalid")
+    _validate_relative_path(root_path)
+    _validate_relative_path(asset_path)
+    if root_path not in blobs or asset_path not in blobs:
+        raise AuditFailure("license_file_missing", "required root or asset license policy is missing")
+    actual_hash = hashlib.sha256(blobs[root_path]).hexdigest()
+    if actual_hash != policy["root_license_sha256"]:
+        raise AuditFailure("root_license_mismatch", "root LICENSE differs from the reviewed GPL text")
+    source_license = policy["source_license"]
+    asset_license = policy["asset_license"]
+    if source_license != "GPL-3.0-or-later" or asset_license != "CC0-1.0":
+        raise AuditFailure("spdx_policy_mismatch", "license policy uses unexpected SPDX identifiers")
+    asset_text = blobs[asset_path].decode("utf-8", "strict")
+    if "CC0 1.0 Universal" not in asset_text:
+        raise AuditFailure("asset_license_mismatch", "asset policy does not declare CC0 1.0 Universal")
+    requirements = policy["metadata_requirements"]
+    if not isinstance(requirements, dict) or not requirements:
+        raise AuditFailure("invalid_license_policy", "SPDX metadata requirements are empty")
+    for path, fragments in sorted(requirements.items()):
+        if path not in blobs or not isinstance(fragments, list) or not fragments:
+            raise AuditFailure("spdx_metadata_missing", "required SPDX metadata path is absent: " + path)
+        text = blobs[path].decode("utf-8", "strict")
+        if any(not isinstance(fragment, str) or fragment not in text for fragment in fragments):
+            raise AuditFailure("spdx_metadata_mismatch", "source metadata disagrees with root license: " + path)
+    return source_license, asset_license
+
+
+def audit(repo: Path, export: Path) -> Dict[str, object]:
+    repo = repo.resolve()
+    export = export.resolve()
+    git_root = Path(_git(repo, ("rev-parse", "--show-toplevel")).decode("utf-8", "strict").strip()).resolve()
+    if git_root != repo:
+        raise AuditFailure("repository_root_required", "--repo must name the Git worktree root")
+    entries = _index(repo)
+    indexed_paths = [entry.path for entry in entries]
+    exported_paths = _export_paths(export)
+    if exported_paths != indexed_paths:
+        missing = sorted(set(indexed_paths) - set(exported_paths))
+        extra = sorted(set(exported_paths) - set(indexed_paths))
+        detail = "export file set differs from index"
+        if missing:
+            detail += "; missing=" + missing[0]
+        if extra:
+            detail += "; extra=" + extra[0]
+        raise AuditFailure("export_file_set_mismatch", detail)
+    blobs: Dict[str, bytes] = {}
+    files: List[Dict[str, object]] = []
+    tree_hash = hashlib.sha256()
+    index_hash = hashlib.sha256()
+    total = 0
+    for entry in entries:
+        payload = _blob(repo, entry)
+        _validate_blob(entry, payload)
+        exported, permissions = _safe_export_file(export, entry)
+        if exported != payload:
+            raise AuditFailure("export_content_mismatch", "export differs from Git index: " + entry.path)
+        digest = hashlib.sha256(payload).hexdigest()
+        path_bytes = entry.path.encode("utf-8")
+        canonical = (
+            entry.mode.encode("ascii")
+            + b"\0"
+            + path_bytes
+            + b"\0"
+            + str(len(payload)).encode("ascii")
+            + b"\0"
+            + digest.encode("ascii")
+            + b"\n"
+        )
+        tree_hash.update(canonical)
+        index_hash.update(entry.mode.encode("ascii") + b"\0" + entry.oid.encode("ascii") + b"\0" + path_bytes + b"\n")
+        total += len(payload)
+        blobs[entry.path] = payload
+        files.append(
+            {
+                "bytes": len(payload),
+                "git_mode": entry.mode,
+                "path": entry.path,
+                "sha256": digest,
+            }
+        )
+        if permissions & 0o022:
+            raise AuditFailure("unsafe_export_mode", "unsafe mode appeared during audit")
+    source_license, asset_license = _license_check(blobs)
+    try:
+        head = _git(repo, ("rev-parse", "--verify", "HEAD")).decode("ascii", "strict").strip()
+    except UnicodeDecodeError:
+        raise AuditFailure("invalid_git_head", "Git HEAD is not an ASCII object ID") from None
+    if re.fullmatch(r"[0-9a-f]{40,64}", head) is None:
+        raise AuditFailure("invalid_git_head", "Git HEAD is missing or invalid")
+    return {
+        "asset_license": asset_license,
+        "file_count": len(files),
+        "files": files,
+        "format": "hbcb-release-audit/v1",
+        "git_head": head,
+        "git_index_sha256": index_hash.hexdigest(),
+        "source_license": source_license,
+        "source_tree_sha256": tree_hash.hexdigest(),
+        "total_bytes": total,
+    }
+
+
+def _write_report(path: Path, payload: bytes) -> None:
+    if path.exists() or path.is_symlink():
+        raise AuditFailure("report_exists", "refusing to overwrite audit report")
+    parent = path.parent
+    if not parent.is_dir() or parent.is_symlink():
+        raise AuditFailure("report_parent_unsafe", "audit report parent is unavailable")
+    temporary = parent / ("." + path.name + ".tmp-" + str(os.getpid()))
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    try:
+        descriptor = os.open(str(temporary), flags, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(str(temporary), str(path))
+        path.chmod(0o644)
+    except OSError:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise AuditFailure("report_write_failed", "failed to write audit report") from None
+
+
+def _arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", type=Path, default=ROOT, help="Git worktree root (default: project root)")
+    parser.add_argument("--export", type=Path, required=True, help="git checkout-index export to audit")
+    parser.add_argument("--report", type=Path, help="new JSON report path; stdout when omitted")
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    try:
+        arguments = _arguments(argv)
+        report = audit(arguments.repo, arguments.export)
+        payload = (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        if arguments.report is None:
+            sys.stdout.buffer.write(payload)
+        else:
+            _write_report(arguments.report.resolve(), payload)
+            print(
+                "RELEASE_AUDIT: PASS (%d files, %d bytes)"
+                % (report["file_count"], report["total_bytes"])
+            )
+        return 0
+    except AuditFailure as failure:
+        print("RELEASE_AUDIT: FAIL[%s]: %s" % (failure.code, failure.detail), file=sys.stderr)
+        return 1
+    except Exception:
+        print("RELEASE_AUDIT: FAIL[internal_error]: unexpected local audit failure", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

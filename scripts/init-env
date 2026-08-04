@@ -38,16 +38,16 @@ random_hex() {
 }
 
 file_mode() {
-  stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
 }
 
 file_owner() {
-  stat -f '%u' "$1" 2>/dev/null || stat -c '%u' "$1" 2>/dev/null
+  stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1" 2>/dev/null
 }
 
 file_identity() {
-  stat -f '%d:%i:%Lp:%u:%z' "$1" 2>/dev/null || \
-    stat -c '%d:%i:%a:%u:%s' "$1" 2>/dev/null
+  stat -c '%d:%i:%a:%u:%s' "$1" 2>/dev/null || \
+    stat -f '%d:%i:%Lp:%u:%z' "$1" 2>/dev/null
 }
 
 is_hex_64() {

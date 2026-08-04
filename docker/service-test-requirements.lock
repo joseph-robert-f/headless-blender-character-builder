@@ -1,0 +1,9 @@
+# Linux amd64 / CPython 3.11 service-test-only dependencies.
+# Runtime dependencies come from service-requirements.lock; --no-deps keeps
+# this test supplement exact and prevents it from entering production images.
+httpcore2==2.7.0 \
+    --hash=sha256:1452f589fe23f55b44546cd884294c41a29330af902bc0b71a761fd52d18f92b
+httpx2==2.7.0 \
+    --hash=sha256:ed2a2719c696789e09493bd8e2bec3d8bd925cc6e26b68389ec25ade132f7bf4
+truststore==0.10.4 \
+    --hash=sha256:adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981

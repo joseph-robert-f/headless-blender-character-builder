@@ -1,0 +1,52 @@
+{
+  "name": "CI",
+  "on": {
+    "pull_request": {},
+    "push": {"branches": ["main"]},
+    "workflow_dispatch": {}
+  },
+  "permissions": {"contents": "read"},
+  "concurrency": {
+    "group": "ci-${{ github.workflow }}-${{ github.ref }}",
+    "cancel-in-progress": true
+  },
+  "jobs": {
+    "source": {
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 15,
+      "steps": [
+        {
+          "uses": "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+          "with": {"persist-credentials": false}
+        },
+        {"name": "Source, policy, license, SBOM, and workflow gates", "run": "make release-static"}
+      ]
+    },
+    "builder": {
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 120,
+      "steps": [
+        {
+          "uses": "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+          "with": {"persist-credentials": false}
+        },
+        {"name": "Container, unit, security, and real Blender gates", "run": "make check"}
+      ]
+    },
+    "service": {
+      "if": "github.event_name != 'pull_request'",
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 150,
+      "steps": [
+        {
+          "uses": "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+          "with": {"persist-credentials": false}
+        },
+        {
+          "name": "Asynchronous service gate",
+          "run": "trap 'make service-down' EXIT\nmake init-env\nmake service-up\nmake service-smoke"
+        }
+      ]
+    }
+  }
+}

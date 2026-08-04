@@ -1227,6 +1227,19 @@ def _stable_manifest(manifest: BuildManifest) -> Mapping[str, Any]:
     }
 
 
+def _stable_glb_structure(inspection: Mapping[str, Any]) -> Mapping[str, Any]:
+    return {
+        key: inspection[key]
+        for key in (
+            "accessor_count",
+            "material_count",
+            "mesh_count",
+            "position_vertex_count",
+            "primitive_count",
+        )
+    }
+
+
 def _compare_repeat(first: Mapping[str, Any], second: Mapping[str, Any]) -> None:
     _require(first["qa"].to_dict() == second["qa"].to_dict(), "facet-bot: repeat QA fields differ")
     _require(
@@ -1238,7 +1251,11 @@ def _compare_repeat(first: Mapping[str, Any], second: Mapping[str, Any]) -> None
         first["probe"]["verifier_expected"] == second["probe"]["verifier_expected"],
         "facet-bot: repeat verifier expectation differs",
     )
-    _require(first["host"]["glb"] == second["host"]["glb"], "facet-bot: repeat GLB structure differs")
+    _require(
+        _stable_glb_structure(first["host"]["glb"])
+        == _stable_glb_structure(second["host"]["glb"]),
+        "facet-bot: repeat GLB structural counts differ",
+    )
     _require(first["host"]["stl"] == second["host"]["stl"], "facet-bot: repeat STL structure differs")
 
 

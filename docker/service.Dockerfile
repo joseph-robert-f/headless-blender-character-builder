@@ -18,7 +18,7 @@ RUN set -eux; \
       --requirement /opt/hbcb/service-requirements.lock \
       --target /opt/hbcb/site-packages; \
     find /opt/hbcb/site-packages -type d -name __pycache__ -prune -exec rm -rf '{}' +; \
-    chmod -R a-w /opt/hbcb/site-packages /opt/hbcb/service-requirements.lock
+    chmod -R a+rX,a-w /opt/hbcb/site-packages /opt/hbcb/service-requirements.lock
 
 
 # The supervisor adds orchestration only.  The inherited builder executable,
@@ -37,8 +37,15 @@ LABEL org.opencontainers.image.title="Headless Blender Character Builder supervi
 USER 0:0
 COPY --from=service-dependencies /opt/hbcb/site-packages /opt/hbcb/site-packages
 COPY service/src /opt/hbcb/service/src
+COPY THIRD_PARTY_NOTICES.md /usr/share/licenses/headless-blender-character-builder/THIRD_PARTY_NOTICES.md
+COPY release/license-policy.json /opt/hbcb/provenance/license-policy.json
+COPY release/service-dependency-licenses.json /opt/hbcb/provenance/service-dependency-licenses.json
 RUN set -eux; \
-    chmod -R a-w /opt/hbcb/site-packages /opt/hbcb/service; \
+    chmod -R a+rX,a-w \
+      /opt/hbcb/site-packages \
+      /opt/hbcb/service \
+      /opt/hbcb/provenance \
+      /usr/share/licenses/headless-blender-character-builder; \
     test -x /usr/local/bin/builder; \
     test -f /opt/builder/provenance/source-tree.sha256
 
@@ -81,12 +88,16 @@ RUN set -eux; \
 
 COPY --from=service-dependencies /opt/hbcb/site-packages /opt/hbcb/site-packages
 COPY LICENSE /usr/share/licenses/headless-blender-character-builder/LICENSE
+COPY THIRD_PARTY_NOTICES.md /usr/share/licenses/headless-blender-character-builder/THIRD_PARTY_NOTICES.md
+COPY release/license-policy.json /opt/hbcb/provenance/license-policy.json
+COPY release/service-dependency-licenses.json /opt/hbcb/provenance/service-dependency-licenses.json
 COPY shared /opt/hbcb/source/shared
 COPY service/src /opt/hbcb/source/service/src
 
 RUN set -eux; \
-    chmod -R a-w \
+    chmod -R a+rX,a-w \
       /opt/hbcb/site-packages \
+      /opt/hbcb/provenance \
       /opt/hbcb/source \
       /usr/share/licenses/headless-blender-character-builder; \
     test ! -e /opt/blender; \
@@ -107,9 +118,38 @@ FROM service-base AS api
 ENTRYPOINT ["/usr/bin/python3", "-m", "hbcb_service.api_main"]
 
 
+FROM service-dependencies AS service-test-dependencies
+USER 0:0
+COPY docker/service-test-requirements.lock /opt/hbcb/service-test-requirements.lock
+RUN set -eux; \
+    /opt/blender/4.5/python/bin/python3.11 -m pip install \
+      --disable-pip-version-check \
+      --no-cache-dir \
+      --no-deps \
+      --only-binary=:all: \
+      --require-hashes \
+      --requirement /opt/hbcb/service-test-requirements.lock \
+      --target /opt/hbcb/test-site-packages; \
+    find /opt/hbcb/test-site-packages -type d -name __pycache__ -prune -exec rm -rf '{}' +; \
+    chmod -R a+rX,a-w \
+      /opt/hbcb/test-site-packages \
+      /opt/hbcb/service-test-requirements.lock
+
+
 FROM service-base AS service-test
 USER 0:0
+COPY --from=service-test-dependencies /opt/hbcb/test-site-packages /opt/hbcb/site-packages
+COPY .env.example /opt/hbcb/source/.env.example
+COPY examples /opt/hbcb/source/examples
+COPY scripts /opt/hbcb/source/scripts
 COPY tests /opt/hbcb/source/tests
-RUN chmod -R a-w /opt/hbcb/source/tests
+RUN set -eux; \
+    chmod -R a+rX,a-w \
+      /opt/hbcb/site-packages \
+      /opt/hbcb/source/.env.example \
+      /opt/hbcb/source/examples \
+      /opt/hbcb/source/scripts \
+      /opt/hbcb/source/tests; \
+    test -x /opt/hbcb/source/scripts/init-env
 USER 65532:65532
 ENTRYPOINT ["/usr/bin/python3"]

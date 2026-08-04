@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-03
 
-Overall status: **in progress**
+Overall status: **local v0.1 release candidate passed; external publication checks conditional**
 
 | Work package | Milestone | Status | Gate evidence |
 |---|---|---|---|
@@ -15,7 +15,7 @@ Overall status: **in progress**
 | G6 | M3 API and worker | passed | Auth-first bounded FastAPI, durable fenced worker lifecycle, exact immutable publication, stale-queue/outbox recovery, 154-test repository suite, Linux process-tree gate, and real PostgreSQL 16.9 gate passed |
 | G7 | M3 Compose service | passed | Hardened local stack, convergent scoped identities, real HTTP-to-Blender smoke, restart/idempotency/cancellation, Redis recovery, seven IAM denials, and direct/service parity passed |
 | G8 | M4 VPS package | passed | Digest-locked VPS overlay, HTTPS ingress, maintained external S3 boundary, scoped maintenance, fail-closed operator workflow, corrected real-service smoke, and isolated backup/restore/retention recovery gate passed |
-| G9 | M5 release candidate | pending | — |
+| G9 | M5 release candidate | passed | Complete clean-index rehearsal passed real Blender, keyless demo, live service, IAM/Redis, recovery, SBOM, source-audit, and deterministic packaging gates without remote publication |
 
 ## Evidence log
 
@@ -466,3 +466,68 @@ Deviation/condition:
 - No source, image, release, credential, artifact, or service was pushed, published, or deployed remotely.
 
 G8 gate result: **passed**. G9 release documentation, governance, CI, notices/SBOMs, preview assets, release artifacts, and clean-checkout release audit may begin.
+
+### G9 — public release candidate
+
+Status: **passed locally**; hosted CI, registry/GitHub publication, and live VPS checks remain conditional.
+
+Files and contracts introduced:
+
+- the README now leads with a 384×384 optimized image derived from the passing real-Blender service build and links a CC0 `docs/assets/manifest.json` that binds its source render, manifest, QA, generator, Blender version, transformation, bytes, and SHA-256;
+- `CHANGELOG.md`, `VERSION`, release notes, architecture, compatibility, backlog, release-process, licensing, threat-model, governance, maintainer, output-policy, third-party-notice, support, security, and contribution material define the complete public v0.1 boundary;
+- `.github/` contains CODEOWNERS, issue/pull-request templates, Dependabot policy, and JSON-form YAML workflows with read-only permissions, full-SHA-pinned checkout, no persisted credentials, no `pull_request_target`, and no self-hosted runner;
+- `scripts/release-audit` compares the final Git index to a pristine `git checkout-index` export and fails closed on secrets, credential URLs, personal paths, `.env`, generated/backup/oversized binary files, symlinks, unsafe modes, license drift, or unreviewed asset metadata;
+- `scripts/service-sbom` validates the actual builder SPDX document and deterministically produces builder, API, and worker SPDX 2.3 documents plus notices from checksum-locked requirements and a reviewed license inventory;
+- `scripts/release-artifacts` accepts only an audited pristine source export, a manifest/hash/image-bound passing demo tree, normalized distinct `linux/amd64` builder/API/worker image evidence, and the SBOM supplement set; it creates a deterministic source archive, exact sample artifacts, release metadata, and `SHA256SUMS` without publishing;
+- `scripts/release-check` keeps pristine and execution exports separate, runs every local release-blocking gate, creates versioned local `0.1.0-rc.1` image tags, packages sanitized evidence under `build/release-check/g9-final/`, and removes its isolated Compose containers/volumes and secret-bearing temporary export;
+- service images carry the reviewed license policy, complete service dependency inventory, and third-party notices; the test-only image receives the complete ignored-safe publication context so release tests run under the normal container unit gate without changing the G4 builder source revision.
+
+Verification:
+
+| Command | Result |
+|---|---|
+| `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/release -p 'test_*.py' -v` | exit `0`; 23 audit, policy, SBOM, packaging, wrapper, preview, documentation-link, and version tests passed |
+| `python3 -m json.tool .github/workflows/ci.yml` and `release-candidate.yml` | exit `0`; both workflow files are strict JSON and therefore valid YAML-subset syntax |
+| Independent real-demo release-packager probe | exit `0`; the existing 21.5 MB nine-file Blender build passed manifest, hash, QA, and builder-image binding |
+| `git diff --check` | exit `0` before final staging |
+| Full staged-index rehearsal, `HBCB_RELEASE_RUN_ID=g9-prelim7 make release-check` | exit `0`; every local G0–G9 release-blocking stage passed and isolated Compose resources were removed |
+
+Final rehearsal observations:
+
+| Property | Observed result |
+|---|---|
+| Pre-freeze indexed source audit | 210 regular source files, 2,126,303 bytes; source archive modes normalized to `0644`/`0755`; no links or special entries |
+| Test partitions | 23 release tests; 40 builder unit, 13 contract, 3 container, and 8 security tests; 121 service tests; 49 deployment/recovery tests |
+| Real model path | Native G2/G3 gates, repeatability policy, container demo, fresh Blender verification, and live API/worker build all passed |
+| Service boundary | `202` in `0.080630s`; 9 exact-version artifacts totaling 21,517,610 bytes; replay, conflict, cancellation, Redis recovery, and fresh artifact download passed |
+| Isolation and IAM | no provider key in Blender, no public worker egress, 10 PostgreSQL denials, and 3 storage denials |
+| Recovery | 9 artifact versions remapped, one Redis item reconstructed, 9 exact versions deleted by retention, source database unchanged, source services restored, no target host ports, and disposable target removed |
+| SBOMs | 166-package builder SPDX plus separate 26-package API and worker SPDX documents and notices |
+| Local candidate images | builder `sha256:6f08d85fb952a4663fd3fc5a94f0ee38657622c287c82a28a1b395d91451876c`; API `sha256:3dbe77357a1372867648b7c37fcdc619e4bdc3480202c7a5b367d0bd61f24293`; worker `sha256:044715d173112e4045479a157898f526ae32d54591a0dcf14f0ba2e269c0be0b` |
+| Bundle integrity | all 17 `SHA256SUMS` entries verified; deterministic source archive, sample, image metadata, release metadata, notices, audit, and SBOMs present |
+
+The final intended index is rerun under the default ignored evidence path
+`build/release-check/g9-final/`. Its `release-check-summary.json`,
+`release/release-metadata.json`, `release/source-audit.json`, and
+`release/SHA256SUMS` are the authoritative exact identities; embedding the final
+index hash in a tracked file would change that index recursively.
+
+Conditions and scope:
+
+- the gate ran `linux/amd64` images through Docker Desktop emulation on Apple
+  Silicon; native GitHub-hosted `amd64` CI remains a publication check;
+- GitHub license/security UI, registry pushes and immutable registry digests,
+  image signing, a signed Git tag, GitHub Release creation, and an independent
+  clean-room quickstart remain explicit operator actions;
+- public OCI pushes remain blocked until the exact image corresponding-source
+  inventory, delivery method, checksums, and retention policy pass independent
+  review; source publication is a separate gate;
+- live DNS, ACME/TLS, firewall, external provider IAM/egress, off-host backup,
+  and public operator smoke remain conditional on owner-supplied infrastructure
+  and authorization;
+- physical slicing and printing remain conditional and are not a v0.1 warranty;
+- no source, image, artifact, tag, release, credential, or service was pushed,
+  published, or deployed remotely during G9.
+
+G9 gate result: **passed locally**. G0–G9 are complete for the local v0.1
+release candidate.

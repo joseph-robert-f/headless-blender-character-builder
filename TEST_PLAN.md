@@ -1,6 +1,6 @@
 # Feature Testing and Owner Review Plan
 
-Status: **living verification plan; G0–G7 passed, G8–G9 pending**
+Status: **living verification plan; G0–G9 passed locally; external publication checks conditional**
 
 Last updated: **August 3, 2026**
 
@@ -21,9 +21,9 @@ Do not call an unimplemented feature blocked, and do not mark a gate passed from
 
 ## 2. Current state
 
-Work packages G0 through G7 have passed. The repository contains strict `BuildRequest`, `CharacterSpec`, QA, and manifest contracts plus a generic `geometric-character@1.0.0` registry/core. Two original requests generate real, materially different Blender geometry with stable structural fingerprints. The trusted builder saves `.blend`, exports display GLB and a raw-millimeter binary STL, renders four PNGs, measures complete geometry QA, verifies the model formats in a second fresh Blender process, and atomically publishes a success manifest last.
+Work packages G0 through G9 have passed every locally verifiable gate. The repository contains strict `BuildRequest`, `CharacterSpec`, QA, and manifest contracts plus a generic `geometric-character@1.0.0` registry/core. Two original requests generate real, materially different Blender geometry with stable structural fingerprints. The trusted builder saves `.blend`, exports display GLB and a raw-millimeter binary STL, renders four PNGs, measures complete geometry QA, verifies the model formats in a second fresh Blender process, and atomically publishes a success manifest last.
 
-The G4 `linux/amd64` image, narrow `builder build|verify` CLI, hardened one-shot Docker runtime, keyless Make targets, native fallback, baked provenance, notices, and SPDX SBOM are implemented and passed from a clean indexed source export. G5–G6 add Postgres/Redis/versioned-storage foundations, generated scoped configuration, the bounded authenticated FastAPI surface, production repository, fenced concurrency-one worker, stale Redis claim recovery, complete nested-process termination, immutable artifact publication, fixed-region signing, and secret-free structured logs without changing the G4 builder revision. G7 packages those components into a hardened local Compose service with convergent least-privilege initialization and a real HTTP-to-Blender-to-download gate. The VPS package and release CI remain unimplemented. The excluded hardcoded branded proof of concept is preserved baseline material, not v0.1 acceptance evidence.
+The G4 `linux/amd64` image, narrow `builder build|verify` CLI, hardened one-shot Docker runtime, keyless Make targets, native fallback, baked provenance, notices, and SPDX SBOM are implemented and passed from a clean indexed source export. G5–G6 add Postgres/Redis/versioned-storage foundations, generated scoped configuration, the bounded authenticated FastAPI surface, production repository, fenced concurrency-one worker, stale Redis claim recovery, complete nested-process termination, immutable artifact publication, fixed-region signing, and secret-free structured logs without changing the G4 builder revision. G7 packages those components into a hardened local Compose service with convergent least-privilege initialization and a real HTTP-to-Blender-to-download gate. G8 adds a digest-locked VPS overlay, HTTPS guidance, maintained external S3 boundary, retention, backup/restore, Redis reconstruction, upgrade/rollback handoff, and a passing isolated recovery drill. G9 adds the public documentation, governance, fork-safe CI definitions, license/SBOM inventory, real-model preview, source audit, and deterministic local release bundle; the final clean-index rehearsal passed without a remote operation. The excluded hardcoded branded proof of concept is preserved baseline material, not v0.1 acceptance evidence.
 
 Known local reviewer environment:
 
@@ -90,8 +90,8 @@ Record milestone summaries in `docs/progress.md` once implementation begins. Nev
 | T1 — schemas, generic engine, and artifacts | G1–G3 | `PASS` | Prove bounded requests create and independently verify real, varied Blender geometry |
 | T2 — keyless container quickstart | G4 | `PASS` | Prove the primary public experience from a clean source tree |
 | T3 — asynchronous service | G5–G7 | `PASS` | Prove durable API, queue, worker, auth, and artifacts |
-| T4 — VPS and recovery | G8 | `NOT_IMPLEMENTED` / `CONDITIONAL` | Prove deployability without making live infrastructure mandatory |
-| T5 — release candidate | G9 | `NOT_IMPLEMENTED` | Prove tests, security, licenses, docs, and packaging together |
+| T4 — VPS and recovery | G8 | `PASS` locally / live `CONDITIONAL` | Prove deployability without making live infrastructure mandatory |
+| T5 — release candidate | G9 | `PASS` locally | Prove tests, security, licenses, docs, and packaging together |
 
 Do not execute later stages to compensate for a failed dependency gate.
 
@@ -116,7 +116,7 @@ rg -n '/Users/|/home/|file://|BEGIN .*PRIVATE KEY|sk-[A-Za-z0-9_-]+' \
   --hidden -g '!.git/**' .
 ```
 
-Review every result. Documentation examples may mention prohibited patterns, but no real personal path, credential, signed URL, or private value may be tracked. Enable GitHub secret scanning and push protection after publication.
+Review every result. Documentation examples may mention prohibited patterns, but no real personal path, credential, signed URL, or private value may be tracked. Verify GitHub secret scanning and push protection as a conditional remote-repository setting.
 
 ### PUB-03: truthful documentation
 
@@ -272,11 +272,72 @@ Ignored local evidence is under `build/service-smoke/run.Lw4H0h/`, including dir
 
 ## 10. T4 — VPS, slicer, and physical-print tests
 
-VPS packaging is locally release-blocking after G8; a live deployment is conditional on owner-supplied infrastructure and authorization. Validate configuration, TLS/auth instructions, resource caps, retention, backup/restore, and upgrade/rollback locally before any live smoke test.
+G8 passed locally. The gate validated the merged VPS topology, Caddy 2.11.4
+configuration, digest-only release locks, root trust and operator locking,
+authenticated internal readiness, one deployment namespace, bounded resources
+and logs, distinct private/public S3 endpoints, least-privilege maintenance,
+retention, quiesced backup, empty-target restore, Redis reconstruction, and the
+target-bound forward-only upgrade handoff.
+
+The final isolated recovery run restored 72 exact-version artifacts totaling
+172,159,264 bytes, remapped all 72 version IDs, reconstructed one Redis item,
+deleted nine exact versions during retention, left the source database
+unchanged, restarted the source service, exposed no target host port, and
+removed the disposable target. The final IAM gate proved ten PostgreSQL and
+three storage denials. Evidence is recorded in `docs/progress.md`; ignored run
+outputs are under `build/g8-recovery/` and `build/service-smoke/`.
+
+A live deployment remains conditional on owner-supplied infrastructure and
+explicit authorization. Local success does not claim DNS, ACME issuance,
+firewall, provider IAM/egress, off-host backup, or public HTTPS behavior.
 
 Slicer and physical-print trials are separate conditional evidence. They require the owner's exact printer technology, material, nozzle/resin, layer profile, orientation, support strategy, and calibration data. They do not block geometry-only v0.1 and cannot create a print warranty.
 
-## 11. Security tests
+## 11. T5 — release candidate
+
+G9 must be run from the final intended Git index:
+
+```sh
+make release-static
+make release-check
+```
+
+The static gate exports the Git index, requires an exact file/mode match,
+rejects tracked secrets, environment files, credentials in URLs, personal
+paths, unsafe symlinks/modes, backups, generated output, and oversized binary
+artifacts, then validates licenses, the CC0 preview manifest, workflows, SBOM
+inputs, and release tools. The full gate uses a second clean indexed export and
+must pass the keyless demo/fresh verifier, ordinary and real-Blender tests,
+asynchronous service, IAM/Redis, VPS/Caddy/recovery, builder/API/worker SPDX
+generation, normalized local image evidence, deterministic source/sample
+packaging, and SHA-256 checksums without a remote operation.
+
+The ignored final evidence target is `build/release-check/g9-final/`. External
+GitHub-hosted CI, license detection, private vulnerability reporting, registry
+publication/digests, Release publication, and a live VPS remain conditional
+operator checks. Public OCI publication is additionally blocked until the exact
+image corresponding-source delivery and retention gate in
+`docs/release-process.md` is complete.
+
+The final intended index passed the complete gate on August 3, 2026. The staged
+rehearsal covered 23 release tests, 64 builder unit/contract/container/security
+tests, 121 service tests, 49 deployment/recovery tests, real Blender G2/G3
+generation and fresh-process verification, a live HTTP-to-Blender service build,
+Redis recovery, ten PostgreSQL and three storage denials, and the isolated G8
+backup/restore/retention drill. The service returned nine exact-version artifacts
+totaling 21,517,610 bytes, with no provider key in Blender and no public worker
+egress. The SBOM stage produced three SPDX documents—a 166-package builder SBOM
+and separate 26-package API and worker SBOMs—plus the reviewed service notices.
+
+The release bundle contains the 210-file audited source tree, the nine-file
+Blender sample, normalized `linux/amd64` evidence for three distinct images, and
+verified `SHA256SUMS`. The source archive contains only regular files and
+directories with normalized `0644`/`0755` modes. Exact indexed-tree byte count,
+hashes, image identities, gate summaries, artifacts, and checksums are kept in
+the ignored machine-readable `g9-final` evidence rather than copied into this
+indexed file, which would recursively change the candidate it describes.
+
+## 12. Security tests
 
 - Scan tracked files and history for secrets and personal paths.
 - Confirm `.env` is ignored and `.env.example` contains placeholders only.
@@ -287,7 +348,7 @@ Slicer and physical-print trials are separate conditional evidence. They require
 - Reject Python, shell fragments, paths, URLs, add-ons, environment variables, Blender flags, extra properties, traversal, symlinks, oversized payloads, and decompression abuse.
 - Verify pinned Blender checksum, release image digest, SBOM, dependency/container/license scans, and fork-safe least-privilege CI.
 
-## 12. Platform matrix
+## 13. Platform matrix
 
 | Platform | Target | Required coverage |
 |---|---|---|
@@ -300,7 +361,7 @@ Slicer and physical-print trials are separate conditional evidence. They require
 
 A platform is unsupported until a test record is attached.
 
-## 13. Failure report template
+## 14. Failure report template
 
 ```markdown
 ### Test ID
@@ -334,7 +395,7 @@ Release-blocking / regression / documentation / platform-specific
 Schema / generator / exporter / QA / container / API / supervisor / storage / security
 ```
 
-## 14. Release verdict
+## 15. Release verdict
 
 Local v0.1 is `PASS` only when:
 
@@ -343,7 +404,8 @@ Local v0.1 is `PASS` only when:
 - two requests prove genuinely varied schema-driven geometry;
 - artifact, authenticity, geometry, and print-QA checks pass;
 - `make service-smoke`, `make security-check`, and `make release-check` pass;
-- Linux `amd64` CI passes without repository secrets;
+- the local `linux/amd64` image gates pass without repository secrets; native
+  GitHub-hosted Linux CI remains a conditional publication check;
 - no required test is failed, blocked, unimplemented, or silently skipped;
 - external-only VPS and physical-print checks are explicitly conditional;
 - no secret, local path, generated backup, or large binary is tracked.

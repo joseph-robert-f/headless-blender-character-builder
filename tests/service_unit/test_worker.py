@@ -304,6 +304,7 @@ class FreshSubprocessLauncherTests(unittest.TestCase):
                 "    f'{os.getpid()} {os.getpgrp()} {child.pid} {os.getpgid(child.pid)}\\n',\n"
                 "    encoding='ascii',\n"
                 ")\n"
+                "(output / 'processes-ready').touch()\n"
                 "child.wait()\n",
                 encoding="utf-8",
             )
@@ -320,7 +321,7 @@ class FreshSubprocessLauncherTests(unittest.TestCase):
             result = launcher.execute(
                 b"{}",
                 UUID("22222222-2222-4222-8222-222222222222"),
-                lambda: any(scratch_root.glob("attempt-*/output/processes")),
+                lambda: any(scratch_root.glob("attempt-*/output/processes-ready")),
             )
             elapsed = time.monotonic() - started
             self.assertEqual(result.termination, LaunchTermination.CANCELED)

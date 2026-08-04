@@ -1,0 +1,657 @@
+#!/usr/bin/env python3
+"""Create a deterministic, local-only source release bundle and metadata."""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import gzip
+import hashlib
+import io
+import json
+import os
+import re
+import shutil
+import stat
+import sys
+import tarfile
+import tempfile
+from pathlib import Path, PurePosixPath
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+
+
+ROOT = Path(__file__).resolve().parents[1]
+MAX_FILE_BYTES = 256 * 1024 * 1024
+MAX_SOURCE_BYTES = 5 * 1024 * 1024
+SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+GIT_OID = re.compile(r"^[0-9a-f]{40,64}$")
+REQUIRED_SUPPLEMENTS = (
+    "api.spdx.json",
+    "builder.spdx.json",
+    "SERVICE_THIRD_PARTY_NOTICES.txt",
+    "worker.spdx.json",
+)
+IMAGE_ROLES = ("api", "builder", "worker")
+IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
+IMAGE_DIGEST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:+-]*@sha256:[0-9a-f]{64}$")
+IMAGE_REFERENCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:+-]{0,254}$")
+SAMPLE_ARTIFACTS = (
+    "diagnostics/back.png",
+    "diagnostics/front.png",
+    "diagnostics/side.png",
+    "manifest.json",
+    "model.blend",
+    "model.glb",
+    "model.stl",
+    "preview.png",
+    "qa.json",
+)
+MANIFEST_HASHED_ARTIFACTS = tuple(
+    path for path in SAMPLE_ARTIFACTS if path != "manifest.json"
+)
+
+
+class PackagingFailure(RuntimeError):
+    def __init__(self, code: str, detail: str) -> None:
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code) is None:
+            code = "invalid_packaging_failure"
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
+def _read_regular(path: Path, maximum: int) -> bytes:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        raise PackagingFailure("input_unavailable", "required input is unavailable: " + path.name) from None
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise PackagingFailure("unsafe_input", "required input must be a regular non-symlink: " + path.name)
+    if metadata.st_size < 0 or metadata.st_size > maximum:
+        raise PackagingFailure("input_size_invalid", "required input size is outside policy: " + path.name)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(str(path), flags)
+        with os.fdopen(descriptor, "rb") as stream:
+            payload = stream.read(maximum + 1)
+    except OSError:
+        raise PackagingFailure("input_unreadable", "required input cannot be read: " + path.name) from None
+    if len(payload) != metadata.st_size:
+        raise PackagingFailure("input_changed", "required input changed while packaging: " + path.name)
+    return payload
+
+
+def _safe_relative(value: str) -> PurePosixPath:
+    if not value or "\\" in value or any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise PackagingFailure("unsafe_source_path", "audit report contains an unsafe source path")
+    path = PurePosixPath(value)
+    if path.is_absolute() or any(part in {"", ".", "..", ".git"} for part in path.parts):
+        raise PackagingFailure("unsafe_source_path", "audit report source path escapes the tree")
+    return path
+
+
+def _load_audit(payload: bytes) -> Dict[str, object]:
+    try:
+        report = json.loads(payload.decode("utf-8", "strict"))
+    except (UnicodeDecodeError, ValueError):
+        raise PackagingFailure("invalid_audit_report", "release audit report is invalid JSON") from None
+    expected = {
+        "asset_license",
+        "file_count",
+        "files",
+        "format",
+        "git_head",
+        "git_index_sha256",
+        "source_license",
+        "source_tree_sha256",
+        "total_bytes",
+    }
+    if not isinstance(report, dict) or set(report) != expected or report.get("format") != "hbcb-release-audit/v1":
+        raise PackagingFailure("invalid_audit_report", "release audit report contract is unsupported")
+    if report.get("source_license") != "GPL-3.0-or-later" or report.get("asset_license") != "CC0-1.0":
+        raise PackagingFailure("invalid_audit_report", "release audit report license result is invalid")
+    if not isinstance(report.get("git_index_sha256"), str) or SHA256.fullmatch(report["git_index_sha256"]) is None:  # type: ignore[arg-type]
+        raise PackagingFailure("invalid_audit_report", "release audit index digest is invalid")
+    if not isinstance(report.get("source_tree_sha256"), str) or SHA256.fullmatch(report["source_tree_sha256"]) is None:  # type: ignore[arg-type]
+        raise PackagingFailure("invalid_audit_report", "release audit tree digest is invalid")
+    head = report.get("git_head")
+    if head is not None and (not isinstance(head, str) or GIT_OID.fullmatch(head) is None):
+        raise PackagingFailure("invalid_audit_report", "release audit Git revision is invalid")
+    files = report.get("files")
+    if not isinstance(files, list) or not files:
+        raise PackagingFailure("invalid_audit_report", "release audit file inventory is empty")
+    previous = b""
+    seen = set()
+    total = 0
+    for item in files:
+        if not isinstance(item, dict) or set(item) != {"bytes", "git_mode", "path", "sha256"}:
+            raise PackagingFailure("invalid_audit_report", "release audit file entry is invalid")
+        path = item.get("path")
+        mode = item.get("git_mode")
+        size = item.get("bytes")
+        digest = item.get("sha256")
+        if not isinstance(path, str):
+            raise PackagingFailure("invalid_audit_report", "release audit path is invalid")
+        _safe_relative(path)
+        encoded = path.encode("utf-8")
+        if encoded <= previous or path in seen:
+            raise PackagingFailure("invalid_audit_report", "release audit paths are unsorted or duplicated")
+        if mode not in {"100644", "100755"} or not isinstance(size, int) or size < 0 or size > MAX_SOURCE_BYTES:
+            raise PackagingFailure("invalid_audit_report", "release audit mode/size is invalid: " + path)
+        if not isinstance(digest, str) or SHA256.fullmatch(digest) is None:
+            raise PackagingFailure("invalid_audit_report", "release audit file digest is invalid: " + path)
+        previous = encoded
+        seen.add(path)
+        total += size
+    if report.get("file_count") != len(files) or report.get("total_bytes") != total:
+        raise PackagingFailure("invalid_audit_report", "release audit totals are inconsistent")
+    return report
+
+
+def _tree_paths(root: Path) -> List[str]:
+    try:
+        metadata = root.lstat()
+    except OSError:
+        raise PackagingFailure("source_unavailable", "source export is unavailable") from None
+    if root.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+        raise PackagingFailure("unsafe_source_root", "source export must be a real directory")
+    paths: List[str] = []
+    for current, directories, files in os.walk(str(root), topdown=True, followlinks=False):
+        current_path = Path(current)
+        if current_path.is_symlink() or not stat.S_ISDIR(current_path.lstat().st_mode):
+            raise PackagingFailure("unsafe_source_type", "source export contains a symlinked directory")
+        if stat.S_IMODE(current_path.lstat().st_mode) & 0o022:
+            raise PackagingFailure("unsafe_source_mode", "source export contains a writable directory")
+        for directory in sorted(directories):
+            child = current_path / directory
+            if child.is_symlink() or not stat.S_ISDIR(child.lstat().st_mode):
+                raise PackagingFailure("unsafe_source_type", "source export contains a symlinked directory")
+        for filename in sorted(files):
+            child = current_path / filename
+            if child.is_symlink() or not stat.S_ISREG(child.lstat().st_mode):
+                raise PackagingFailure("unsafe_source_type", "source export contains a symlink or special file")
+            paths.append(child.relative_to(root).as_posix())
+    return sorted(paths, key=lambda item: item.encode("utf-8"))
+
+
+def _verify_source(root: Path, report: Mapping[str, object]) -> List[Tuple[str, str, bytes]]:
+    items = report["files"]
+    assert isinstance(items, list)
+    expected_paths = [item["path"] for item in items]
+    if _tree_paths(root) != expected_paths:
+        raise PackagingFailure("source_file_set_mismatch", "source export changed after release audit")
+    verified: List[Tuple[str, str, bytes]] = []
+    tree_hash = hashlib.sha256()
+    total = 0
+    for item in items:
+        path_value = item["path"]
+        mode = item["git_mode"]
+        size = item["bytes"]
+        digest = item["sha256"]
+        assert isinstance(path_value, str)
+        assert isinstance(mode, str)
+        assert isinstance(size, int)
+        assert isinstance(digest, str)
+        path = root.joinpath(*_safe_relative(path_value).parts)
+        metadata = path.lstat()
+        permissions = stat.S_IMODE(metadata.st_mode)
+        if permissions & 0o022 or bool(permissions & 0o111) != (mode == "100755"):
+            raise PackagingFailure("source_mode_mismatch", "source export mode changed: " + path_value)
+        payload = _read_regular(path, MAX_SOURCE_BYTES)
+        actual = hashlib.sha256(payload).hexdigest()
+        if len(payload) != size or actual != digest:
+            raise PackagingFailure("source_content_mismatch", "source export changed: " + path_value)
+        canonical = (
+            mode.encode("ascii")
+            + b"\0"
+            + path_value.encode("utf-8")
+            + b"\0"
+            + str(size).encode("ascii")
+            + b"\0"
+            + digest.encode("ascii")
+            + b"\n"
+        )
+        tree_hash.update(canonical)
+        total += size
+        verified.append((path_value, mode, payload))
+    if tree_hash.hexdigest() != report["source_tree_sha256"] or total != report["total_bytes"]:
+        raise PackagingFailure("source_tree_mismatch", "source export does not match audited tree digest")
+    return verified
+
+
+def _validate_spdx(payload: bytes, expected_name: str) -> None:
+    try:
+        document = json.loads(payload.decode("utf-8", "strict"))
+    except (UnicodeDecodeError, ValueError):
+        raise PackagingFailure("invalid_supplement", "release SPDX supplement is invalid JSON") from None
+    if (
+        not isinstance(document, dict)
+        or document.get("spdxVersion") != "SPDX-2.3"
+        or document.get("dataLicense") != "CC0-1.0"
+        or document.get("SPDXID") != "SPDXRef-DOCUMENT"
+        or not isinstance(document.get("packages"), list)
+        or not document.get("packages")
+    ):
+        raise PackagingFailure("invalid_supplement", "release SPDX supplement header is invalid: " + expected_name)
+    expected_package = {
+        "api.spdx.json": "headless-blender-character-builder-api",
+        "builder.spdx.json": "headless-blender-character-builder",
+        "worker.spdx.json": "headless-blender-character-builder-worker",
+    }.get(expected_name)
+    package_names = {
+        package.get("name")
+        for package in document["packages"]
+        if isinstance(package, dict)
+    }
+    if expected_package not in package_names:
+        raise PackagingFailure("invalid_supplement", "release SPDX supplement describes the wrong component: " + expected_name)
+
+
+def _normalize_image_inspect(role: str, payload: bytes) -> Dict[str, object]:
+    try:
+        decoded = json.loads(payload.decode("utf-8", "strict"))
+    except (UnicodeDecodeError, ValueError):
+        raise PackagingFailure("invalid_image_metadata", "Docker image inspect JSON is invalid: " + role) from None
+    if isinstance(decoded, list) and len(decoded) == 1:
+        decoded = decoded[0]
+    if not isinstance(decoded, dict):
+        raise PackagingFailure("invalid_image_metadata", "Docker image inspect root is invalid: " + role)
+    image_id = decoded.get("Id")
+    architecture = decoded.get("Architecture")
+    operating_system = decoded.get("Os")
+    if (
+        not isinstance(image_id, str)
+        or IMAGE_ID.fullmatch(image_id) is None
+        or architecture != "amd64"
+        or operating_system != "linux"
+    ):
+        raise PackagingFailure("invalid_image_metadata", "release image identity/platform is invalid: " + role)
+    tags = decoded.get("RepoTags")
+    digests = decoded.get("RepoDigests")
+    if tags is None:
+        tags = []
+    if digests is None:
+        digests = []
+    if (
+        not isinstance(tags, list)
+        or not tags
+        or any(not isinstance(item, str) or IMAGE_REFERENCE.fullmatch(item) is None for item in tags)
+        or not isinstance(digests, list)
+        or any(not isinstance(item, str) or IMAGE_DIGEST.fullmatch(item) is None for item in digests)
+    ):
+        raise PackagingFailure("invalid_image_metadata", "release image references are invalid: " + role)
+    config = decoded.get("Config")
+    labels = config.get("Labels") if isinstance(config, dict) else None
+    if not isinstance(labels, dict):
+        raise PackagingFailure("invalid_image_metadata", "release image labels are missing: " + role)
+    required_labels = (
+        "org.opencontainers.image.licenses",
+        "org.opencontainers.image.source",
+        "org.opencontainers.image.version",
+    )
+    if any(not isinstance(labels.get(key), str) or not labels[key] for key in required_labels):
+        raise PackagingFailure("invalid_image_metadata", "release image labels are incomplete: " + role)
+    if (
+        labels["org.opencontainers.image.licenses"] != "GPL-3.0-or-later"
+        or not labels["org.opencontainers.image.source"].startswith("https://")
+        or SEMVER.fullmatch(labels["org.opencontainers.image.version"]) is None
+    ):
+        raise PackagingFailure("invalid_image_metadata", "release image labels violate policy: " + role)
+    selected_labels = {
+        key: labels[key]
+        for key in sorted(labels)
+        if key.startswith("org.opencontainers.image.")
+        or key.startswith("org.blender.")
+        or key.startswith("io.hbcb.")
+    }
+    if any(not isinstance(value, str) or len(value) > 1024 for value in selected_labels.values()):
+        raise PackagingFailure("invalid_image_metadata", "release image label value is invalid: " + role)
+    title = selected_labels.get("org.opencontainers.image.title", "").casefold()
+    role_title_valid = (
+        (role == "api" and "service" in title and "supervisor" not in title)
+        or (role == "worker" and "supervisor" in title)
+        or (
+            role == "builder"
+            and "headless blender character builder" in title
+            and "service" not in title
+            and "supervisor" not in title
+        )
+    )
+    if not role_title_valid:
+        raise PackagingFailure("invalid_image_metadata", "release image role/title mismatch: " + role)
+    rootfs = decoded.get("RootFS")
+    layers = rootfs.get("Layers") if isinstance(rootfs, dict) else None
+    if not isinstance(layers, list) or not layers or any(
+        not isinstance(layer, str) or IMAGE_ID.fullmatch(layer) is None for layer in layers
+    ):
+        raise PackagingFailure("invalid_image_metadata", "release image layer inventory is invalid: " + role)
+    return {
+        "architecture": architecture,
+        "image_id": image_id,
+        "labels": selected_labels,
+        "os": operating_system,
+        "repo_digests": sorted(set(digests)),
+        "repo_tags": sorted(set(tags)),
+        "rootfs_layers": layers,
+    }
+
+
+def _image_evidence(paths: Mapping[str, Path]) -> Dict[str, object]:
+    if set(paths) != set(IMAGE_ROLES):
+        raise PackagingFailure("image_evidence_incomplete", "builder, API, and worker image inspect inputs are required")
+    images = {}
+    for role in IMAGE_ROLES:
+        images[role] = _normalize_image_inspect(
+            role, _read_regular(paths[role].resolve(), MAX_FILE_BYTES)
+        )
+    ids = [images[role]["image_id"] for role in IMAGE_ROLES]
+    if len(set(ids)) != len(ids):
+        raise PackagingFailure("image_evidence_invalid", "builder, API, and worker image IDs must be distinct")
+    return {
+        "format": "hbcb-image-evidence/v1",
+        "images": images,
+        "platform": "linux/amd64",
+    }
+
+
+def _sample_artifacts(root: Path, builder_image_id: str) -> Dict[str, bytes]:
+    actual = _tree_paths(root)
+    if actual != list(SAMPLE_ARTIFACTS):
+        raise PackagingFailure("sample_artifact_set_mismatch", "verified demo artifact tree is incomplete or contains extras")
+    payloads = {}
+    for path in SAMPLE_ARTIFACTS:
+        artifact_path = root.joinpath(*PurePosixPath(path).parts)
+        permissions = stat.S_IMODE(artifact_path.lstat().st_mode)
+        if permissions & 0o133:
+            raise PackagingFailure("unsafe_sample_mode", "demo artifact has executable or writable public mode: " + path)
+        maximum = 2 * 1024 * 1024 if path.endswith(".json") else MAX_FILE_BYTES
+        payloads[path] = _read_regular(artifact_path, maximum)
+    try:
+        manifest = json.loads(payloads["manifest.json"].decode("utf-8", "strict"))
+        qa = json.loads(payloads["qa.json"].decode("utf-8", "strict"))
+    except (UnicodeDecodeError, ValueError):
+        raise PackagingFailure("invalid_sample_evidence", "demo manifest or QA is invalid JSON") from None
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("manifest_version") != "manifest/v1"
+        or not isinstance(manifest.get("artifacts"), dict)
+        or set(manifest["artifacts"]) != set(MANIFEST_HASHED_ARTIFACTS)
+        or not isinstance(manifest.get("execution"), dict)
+        or manifest["execution"].get("mode") != "container"
+        or manifest["execution"].get("worker_image_id") != builder_image_id
+        or not isinstance(manifest.get("qa"), dict)
+        or manifest["qa"].get("status") != "passed"
+        or not isinstance(qa, dict)
+        or qa.get("status") != "passed"
+    ):
+        raise PackagingFailure("invalid_sample_evidence", "demo manifest/QA does not prove a passing container build")
+    for path in MANIFEST_HASHED_ARTIFACTS:
+        entry = manifest["artifacts"].get(path)
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != {"bytes", "sha256"}
+            or entry.get("bytes") != len(payloads[path])
+            or entry.get("sha256") != hashlib.sha256(payloads[path]).hexdigest()
+        ):
+            raise PackagingFailure("sample_hash_mismatch", "demo artifact disagrees with manifest: " + path)
+    return payloads
+
+
+def _supplements(root: Path) -> Dict[str, bytes]:
+    try:
+        metadata = root.lstat()
+    except OSError:
+        raise PackagingFailure("supplements_unavailable", "SBOM supplements directory is unavailable") from None
+    if root.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+        raise PackagingFailure("unsafe_supplements", "SBOM supplements must be a real directory")
+    actual = sorted(path.name for path in root.iterdir())
+    if actual != sorted(REQUIRED_SUPPLEMENTS):
+        raise PackagingFailure("supplement_set_mismatch", "SBOM supplements directory has an unexpected file set")
+    result = {
+        name: _read_regular(root / name, MAX_FILE_BYTES) for name in REQUIRED_SUPPLEMENTS
+    }
+    _validate_spdx(result["api.spdx.json"], "api.spdx.json")
+    _validate_spdx(result["builder.spdx.json"], "builder.spdx.json")
+    _validate_spdx(result["worker.spdx.json"], "worker.spdx.json")
+    try:
+        notice = result["SERVICE_THIRD_PARTY_NOTICES.txt"].decode("utf-8", "strict")
+    except UnicodeDecodeError:
+        raise PackagingFailure("invalid_supplement", "service notices are not UTF-8") from None
+    if "Lock SHA-256:" not in notice or "License:" not in notice:
+        raise PackagingFailure("invalid_supplement", "service notices are incomplete")
+    return result
+
+
+def _timestamp(epoch: int) -> str:
+    if epoch < 0 or epoch > 2147483647:
+        raise PackagingFailure("invalid_source_date_epoch", "source date epoch is outside portable range")
+    return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _tar_bytes(
+    destination: Path,
+    prefix: str,
+    files: Sequence[Tuple[str, str, bytes]],
+    epoch: int,
+) -> None:
+    directories = set()
+    for path, _mode, _payload in files:
+        parent = PurePosixPath(path).parent
+        while str(parent) != ".":
+            directories.add(parent.as_posix())
+            parent = parent.parent
+    with destination.open("wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", compresslevel=9, fileobj=raw, mtime=epoch) as compressed:
+            with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive:
+                root_info = tarfile.TarInfo(prefix + "/")
+                root_info.type = tarfile.DIRTYPE
+                root_info.mode = 0o755
+                root_info.uid = 0
+                root_info.gid = 0
+                root_info.uname = "root"
+                root_info.gname = "root"
+                root_info.mtime = epoch
+                archive.addfile(root_info)
+                for directory in sorted(directories, key=lambda item: item.encode("utf-8")):
+                    info = tarfile.TarInfo(prefix + "/" + directory + "/")
+                    info.type = tarfile.DIRTYPE
+                    info.mode = 0o755
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = "root"
+                    info.gname = "root"
+                    info.mtime = epoch
+                    archive.addfile(info)
+                for path, mode, payload in files:
+                    info = tarfile.TarInfo(prefix + "/" + path)
+                    info.mode = 0o755 if mode == "100755" else 0o644
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = "root"
+                    info.gname = "root"
+                    info.mtime = epoch
+                    info.size = len(payload)
+                    archive.addfile(info, io.BytesIO(payload))
+
+
+def _json_bytes(value: object) -> bytes:
+    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def _write_file(path: Path, payload: bytes) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    descriptor = os.open(str(path), flags, 0o644)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    path.chmod(0o644)
+
+
+def package(
+    source: Path,
+    audit_report: Path,
+    supplements_dir: Path,
+    demo_artifacts: Path,
+    image_inspects: Mapping[str, Path],
+    output_dir: Path,
+    version: str,
+    source_date_epoch: int,
+) -> Dict[str, object]:
+    if SEMVER.fullmatch(version) is None:
+        raise PackagingFailure("invalid_version", "release version must be a safe semantic version")
+    created = _timestamp(source_date_epoch)
+    source = source.resolve()
+    output_dir = output_dir.resolve()
+    try:
+        output_dir.relative_to(source)
+    except ValueError:
+        pass
+    else:
+        raise PackagingFailure("unsafe_output_location", "release output cannot be inside the source export")
+    if output_dir.exists() or output_dir.is_symlink():
+        raise PackagingFailure("output_exists", "refusing to overwrite release output directory")
+    if not output_dir.parent.is_dir() or output_dir.parent.is_symlink():
+        raise PackagingFailure("output_parent_unsafe", "release output parent is unavailable")
+    audit_payload = _read_regular(audit_report.resolve(), MAX_FILE_BYTES)
+    report = _load_audit(audit_payload)
+    files = _verify_source(source, report)
+    supplements = _supplements(supplements_dir.resolve())
+    image_evidence = _image_evidence(image_inspects)
+    image_records = image_evidence["images"]
+    assert isinstance(image_records, dict)
+    builder_record = image_records["builder"]
+    assert isinstance(builder_record, dict)
+    builder_image_id = builder_record["image_id"]
+    assert isinstance(builder_image_id, str)
+    samples = _sample_artifacts(demo_artifacts.resolve(), builder_image_id)
+    temporary = Path(tempfile.mkdtemp(prefix=".hbcb-release-", dir=str(output_dir.parent)))
+    try:
+        temporary.chmod(0o700)
+        prefix = "headless-blender-character-builder-" + version
+        archive_name = prefix + ".tar.gz"
+        archive_path = temporary / archive_name
+        _tar_bytes(archive_path, prefix, files, source_date_epoch)
+        archive_path.chmod(0o644)
+        payloads: Dict[str, bytes] = {
+            "image-metadata.json": _json_bytes(image_evidence),
+            "source-audit.json": _json_bytes(report),
+        }
+        payloads.update(supplements)
+        payloads.update({"sample/" + name: payload for name, payload in samples.items()})
+        for name, payload in sorted(payloads.items()):
+            parent = (temporary / name).parent
+            parent.mkdir(parents=True, exist_ok=True)
+            current = parent
+            while current != temporary:
+                current.chmod(0o755)
+                current = current.parent
+            _write_file(temporary / name, payload)
+        described_names = [archive_name] + sorted(payloads)
+        described = []
+        for name in described_names:
+            payload = _read_regular(temporary / name, MAX_FILE_BYTES)
+            described.append(
+                {
+                    "bytes": len(payload),
+                    "name": name,
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                }
+            )
+        metadata = {
+            "artifacts": described,
+            "created": created,
+            "format": "hbcb-release-metadata/v1",
+            "git_head": report["git_head"],
+            "git_index_sha256": report["git_index_sha256"],
+            "image_ids": {
+                role: image_records[role]["image_id"] for role in IMAGE_ROLES
+            },
+            "project": "headless-blender-character-builder",
+            "sample_manifest_sha256": hashlib.sha256(samples["manifest.json"]).hexdigest(),
+            "source_date_epoch": source_date_epoch,
+            "source_file_count": report["file_count"],
+            "source_tree_sha256": report["source_tree_sha256"],
+            "version": version,
+        }
+        metadata_payload = _json_bytes(metadata)
+        _write_file(temporary / "release-metadata.json", metadata_payload)
+        checksum_names = described_names + ["release-metadata.json"]
+        checksum_lines = []
+        for name in sorted(checksum_names):
+            payload = _read_regular(temporary / name, MAX_FILE_BYTES)
+            checksum_lines.append(hashlib.sha256(payload).hexdigest() + "  " + name)
+        _write_file(
+            temporary / "SHA256SUMS",
+            ("\n".join(checksum_lines) + "\n").encode("ascii"),
+        )
+        os.replace(str(temporary), str(output_dir))
+        output_dir.chmod(0o755)
+    except Exception:
+        shutil.rmtree(str(temporary), ignore_errors=True)
+        raise
+    return metadata
+
+
+def _arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, required=True, help="audited checkout-index export")
+    parser.add_argument("--audit-report", type=Path, required=True, help="JSON from scripts/release-audit")
+    parser.add_argument("--supplements-dir", type=Path, required=True, help="output from scripts/service-sbom")
+    parser.add_argument("--demo-artifacts", type=Path, required=True, help="verified build/demo artifact tree")
+    parser.add_argument(
+        "--image-inspect",
+        action="append",
+        required=True,
+        metavar="ROLE=PATH",
+        help="local docker image inspect JSON for builder, api, or worker (repeat three times)",
+    )
+    parser.add_argument("--output-dir", type=Path, required=True, help="new local release directory")
+    parser.add_argument("--version", required=True, help="semantic release version")
+    parser.add_argument("--source-date-epoch", type=int, default=0, help="portable reproducible timestamp")
+    return parser.parse_args(argv)
+
+
+def _image_arguments(values: Sequence[str]) -> Dict[str, Path]:
+    result: Dict[str, Path] = {}
+    for value in values:
+        if "=" not in value:
+            raise PackagingFailure("invalid_image_argument", "--image-inspect must use ROLE=PATH")
+        role, raw_path = value.split("=", 1)
+        if role not in IMAGE_ROLES or role in result or not raw_path:
+            raise PackagingFailure("invalid_image_argument", "image inspect role is invalid or duplicated")
+        result[role] = Path(raw_path)
+    if set(result) != set(IMAGE_ROLES):
+        raise PackagingFailure("image_evidence_incomplete", "exactly builder, api, and worker image inspect inputs are required")
+    return result
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    try:
+        arguments = _arguments(argv)
+        image_inspects = _image_arguments(arguments.image_inspect)
+        metadata = package(
+            arguments.source,
+            arguments.audit_report,
+            arguments.supplements_dir,
+            arguments.demo_artifacts,
+            image_inspects,
+            arguments.output_dir,
+            arguments.version,
+            arguments.source_date_epoch,
+        )
+        print(
+            "RELEASE_ARTIFACTS: PASS (%d source files)" % metadata["source_file_count"]
+        )
+        return 0
+    except PackagingFailure as failure:
+        print("RELEASE_ARTIFACTS: FAIL[%s]: %s" % (failure.code, failure.detail), file=sys.stderr)
+        return 1
+    except Exception:
+        print("RELEASE_ARTIFACTS: FAIL[internal_error]: unexpected local packaging failure", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

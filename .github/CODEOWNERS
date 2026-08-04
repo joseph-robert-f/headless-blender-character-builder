@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The repository owner is the initial maintainer. GitHub applies these routes
+# together with the repository's configured branch-protection rules.
+
+* @joseph-robert-f
+
+# Versioned public contracts and deterministic builder
+/schemas/ @joseph-robert-f
+/shared/ @joseph-robert-f
+/builder_cli/ @joseph-robert-f
+/blender/ @joseph-robert-f
+
+# Service trust boundary, IAM, persistence, and deployment
+/service/ @joseph-robert-f
+/docker/ @joseph-robert-f
+/compose/ @joseph-robert-f
+/compose.yaml @joseph-robert-f
+/deploy/ @joseph-robert-f
+/scripts/ @joseph-robert-f
+
+# Security, release, licensing, and governance policy
+/.github/ @joseph-robert-f
+/LICENSE @joseph-robert-f
+/ASSET_LICENSE.md @joseph-robert-f
+/OUTPUT_POLICY.md @joseph-robert-f
+/THIRD_PARTY_NOTICES.md @joseph-robert-f
+/SECURITY.md @joseph-robert-f
+/CONTRIBUTING.md @joseph-robert-f
+/CODE_OF_CONDUCT.md @joseph-robert-f
+/GOVERNANCE.md @joseph-robert-f
+/MAINTAINERS.md @joseph-robert-f
+/docs/threat-model.md @joseph-robert-f
+/docs/licensing.md @joseph-robert-f

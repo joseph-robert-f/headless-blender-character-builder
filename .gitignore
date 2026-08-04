@@ -39,6 +39,7 @@ credentials/
 *.mp4
 *.mov
 /codex_*.png
+!/docs/assets/facet-bot-preview.png
 
 # Local branded prototype sources; preserve locally until generalized
 /create_codex_avatar.py

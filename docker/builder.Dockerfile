@@ -141,7 +141,7 @@ RUN set -eux; \
     chmod 0555 /input; \
     chmod 0777 /output; \
     chmod 1777 /work; \
-    chmod -R a-w /opt/blender /opt/builder /usr/share/licenses/blender \
+    chmod -R a+rX,a-w /opt/blender /opt/builder /usr/share/licenses/blender \
       /usr/share/licenses/headless-blender-character-builder
 
 ENV PATH="/opt/blender/4.5/python/bin:/opt/blender:/usr/local/bin:/usr/bin:/bin" \
@@ -165,9 +165,7 @@ FROM builder-base AS test
 USER 0:0
 
 COPY docker/test-requirements.lock /opt/builder/test-requirements.lock
-COPY schemas /opt/builder/source/schemas
-COPY examples /opt/builder/source/examples
-COPY tests /opt/builder/source/tests
+COPY . /opt/builder/source
 
 RUN set -eux; \
     /opt/blender/4.5/python/bin/python3.11 -m pip install \
@@ -176,10 +174,8 @@ RUN set -eux; \
       --only-binary=:all: \
       --require-hashes \
       --requirement /opt/builder/test-requirements.lock; \
-    chmod -R a-w \
-      /opt/builder/source/schemas \
-      /opt/builder/source/examples \
-      /opt/builder/source/tests \
+    chmod -R a+rX,a-w \
+      /opt/builder/source \
       /opt/builder/test-requirements.lock \
       /opt/blender/4.5/python/lib/python3.11/site-packages
 

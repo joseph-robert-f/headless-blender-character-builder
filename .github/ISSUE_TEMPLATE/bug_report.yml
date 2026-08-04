@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Bug report
+description: Report a reproducible, non-sensitive defect in a supported v0.1 path.
+title: "[Bug]: "
+labels:
+  - bug
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve the project. Do not report vulnerabilities,
+        credentials, private references, personal data, exploit details, or
+        signed artifact URLs here. Follow SECURITY.md for suspected security
+        issues. The labels above are proposed and may be applied only after the
+        public repository is configured.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected path
+      options:
+        - Keyless single-container demo
+        - Native Blender CLI
+        - Local Compose service
+        - VPS reference deployment
+        - Documentation or packaging
+        - Other supported v0.1 path
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or source revision
+      description: Release tag, commit SHA, or source revision from the manifest.
+      placeholder: v0.1.0 or full commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, architecture, Docker/Compose version, Blender version for native use, CPU/RAM, and relevant deployment mode.
+      placeholder: |
+        OS/architecture:
+        Docker/Compose:
+        Blender (native only):
+        CPU/RAM:
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest deterministic sequence and a sanitized bounded request when relevant.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include exit code/status and sanitized error text. Do not paste secrets or signed URLs.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Relevant manifest/QA fields, hashes, or log excerpts with tokens, endpoints, names, and private content removed.
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I reproduced this from a supported path with the smallest practical request.
+          required: true
+        - label: I removed credentials, private data, signed URLs, and material I cannot redistribute.
+          required: true
+        - label: This is not a private security vulnerability report.
+          required: true
