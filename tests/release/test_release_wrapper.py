@@ -115,6 +115,10 @@ class ReleaseWrapperTests(unittest.TestCase):
                 (ROOT / relative).read_text(encoding="utf-8"),
                 relative,
             )
+        for relative in ("scripts/service-compose", "scripts/service-smoke"):
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertIn("HBCB_BUILDER_IMAGE=$builder_image", text, relative)
+            self.assertNotIn("HBCB_BUILDER_IMAGE=$builder_id", text, relative)
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         self.assertRegex(makefile, r"(?m)^\s*\$\(DOCKER\) build .*--platform")
         self.assertIn('--platform "$(PLATFORM)"', makefile)

@@ -11,8 +11,9 @@ Changelog, and releases use Semantic Versioning.
   path-specific prerequisites and troubleshooting, and aligned planning/test
   language with the completed local release candidate.
 - Made image inspection compatible with pre-28.1 Docker clients while retaining
-  explicit `linux/amd64` validation, moved service smoke into pull-request CI,
-  and aligned Dependabot with the supported Compose/workflow formats.
+  explicit `linux/amd64` validation, kept local parent-image references portable
+  across BuildKit, moved service smoke into pull-request CI, and aligned
+  Dependabot with the supported Compose/workflow formats.
 
 ## [0.1.0-rc.1] (local candidate) - 2026-08-03
 

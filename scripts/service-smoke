@@ -34,7 +34,9 @@ case "$builder_id" in
     exit 4
     ;;
 esac
-HBCB_BUILDER_IMAGE=$builder_id
+# Compose passes this value to Dockerfile FROM, which requires a named image
+# reference.  The measured immutable ID remains separate for provenance checks.
+HBCB_BUILDER_IMAGE=$builder_image
 HBCB_BUILDER_IMAGE_REFERENCE=$builder_image
 HBCB_BUILDER_IMAGE_ID=$builder_id
 export HBCB_BUILDER_IMAGE HBCB_BUILDER_IMAGE_REFERENCE HBCB_BUILDER_IMAGE_ID

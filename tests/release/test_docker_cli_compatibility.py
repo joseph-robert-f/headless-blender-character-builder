@@ -58,6 +58,12 @@ exit 64
 FAKE_COMPOSE = r"""#!/bin/sh
 set -eu
 : "${FAKE_COMPOSE_LOG:?}"
+case "${HBCB_BUILDER_IMAGE:-}" in
+  sha256:*)
+    printf '%s\n' 'raw image IDs are not valid Dockerfile FROM references' >&2
+    exit 65
+    ;;
+esac
 printf '%s|%s|%s|%s\n' \
   "$*" \
   "${HBCB_BUILDER_IMAGE:-}" \
@@ -137,10 +143,16 @@ class DockerCliCompatibilityTests(unittest.TestCase):
             self.assertEqual(configured.returncode, 0, configured.stdout)
             docker_commands = docker_log.read_text(encoding="utf-8")
             self.assertNotIn("image inspect --platform", docker_commands)
-            compose_call = compose_log.read_text(encoding="utf-8")
-            self.assertIn("--env-file .env config --quiet", compose_call)
-            self.assertEqual(compose_call.count(IMAGE_ID), 2)
-            self.assertIn("fixture-builder:dev", compose_call)
+            compose_fields = compose_log.read_text(encoding="utf-8").strip().split("|")
+            self.assertEqual(
+                compose_fields,
+                [
+                    "--env-file .env config --quiet",
+                    "fixture-builder:dev",
+                    "fixture-builder:dev",
+                    IMAGE_ID,
+                ],
+            )
 
     def test_arm64_image_is_rebuilt_by_make_and_rejected_by_service(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

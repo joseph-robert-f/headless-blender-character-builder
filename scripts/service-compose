@@ -61,7 +61,10 @@ case "$builder_id" in
     ;;
 esac
 
-HBCB_BUILDER_IMAGE=$builder_id
+# BuildKit requires a named image reference in FROM; a raw local image ID is
+# parsed as a registry repository named "sha256".  Keep the separately measured
+# immutable ID for provenance while building from the reference it identifies.
+HBCB_BUILDER_IMAGE=$builder_image
 HBCB_BUILDER_IMAGE_REFERENCE=$builder_image
 HBCB_BUILDER_IMAGE_ID=$builder_id
 export HBCB_BUILDER_IMAGE HBCB_BUILDER_IMAGE_REFERENCE HBCB_BUILDER_IMAGE_ID
