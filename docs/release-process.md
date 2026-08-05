@@ -132,6 +132,21 @@ the draft Release. GitHub's current references are the
 [Container registry guide](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
 and [`gh release create` manual](https://cli.github.com/manual/gh_release_create).
 
+## Dependency maintenance
+
+Dependabot monitors the two Python lock surfaces, the Dockerfiles under
+`docker/`, and the root `compose.yaml`. Root Compose updates are limited to the
+external PostgreSQL and Redis images; local `hbcb-*` build tags are not registry
+dependencies. A Compose image update must also synchronize
+`tests/deployment/g8_recovery_compose.yaml`, its exact-pin assertions, and any
+affected notice or license evidence before merge.
+
+GitHub Actions remain full-commit-SHA pinned and are reviewed manually because
+the dependency-free JSON-form YAML workflows cannot be safely rewritten by the
+current Dependabot updater. Action-pin changes must retain
+`persist-credentials: false`, pass the release-policy tests, and record the
+reviewed upstream release/tag for the selected commit.
+
 ## Rollback
 
 For source and images, roll back by deploying a previously verified digest. Do

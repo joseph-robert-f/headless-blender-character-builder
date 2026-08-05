@@ -195,9 +195,12 @@ service_attempted=1
 
 image_dir=$scratch/images
 mkdir "$image_dir"
-"$docker_bin" image inspect --platform linux/amd64 "$builder_release_image" > "$image_dir/builder.json"
-"$docker_bin" image inspect --platform linux/amd64 "$api_release_image" > "$image_dir/api.json"
-"$docker_bin" image inspect --platform linux/amd64 "$worker_release_image" > "$image_dir/worker.json"
+# The packager validates Os/Architecture from each complete inspect document.
+# Avoid the newer platform-selection flag on image inspection; the supported
+# build/run/create platform controls remain explicit.
+"$docker_bin" image inspect "$builder_release_image" > "$image_dir/builder.json"
+"$docker_bin" image inspect "$api_release_image" > "$image_dir/api.json"
+"$docker_bin" image inspect "$worker_release_image" > "$image_dir/worker.json"
 
 builder_container=$("$docker_bin" create --platform linux/amd64 "$builder_release_image")
 "$docker_bin" cp \

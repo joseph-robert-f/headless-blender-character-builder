@@ -183,6 +183,29 @@ class ReleaseArtifactsTests(unittest.TestCase):
             self.assertEqual(image_failure.exception.code, "invalid_image_metadata")
 
             write(images["api"], image_inspect("api", 1))
+            wrong_platform = json.loads(images["api"].read_text(encoding="utf-8"))
+            wrong_platform[0]["Architecture"] = "arm64"
+            write(
+                images["api"],
+                (
+                    json.dumps(wrong_platform, sort_keys=True, separators=(",", ":"))
+                    + "\n"
+                ).encode("utf-8"),
+            )
+            with self.assertRaises(packager.PackagingFailure) as platform_failure:
+                packager.package(
+                    source,
+                    report,
+                    supplements,
+                    demo,
+                    images,
+                    root / "three",
+                    "0.1.0",
+                    0,
+                )
+            self.assertEqual(platform_failure.exception.code, "invalid_image_metadata")
+
+            write(images["api"], image_inspect("api", 1))
             output = root / "existing"
             output.mkdir()
             with self.assertRaises(packager.PackagingFailure) as clobber:
