@@ -95,6 +95,34 @@ class ReleaseWrapperTests(unittest.TestCase):
             self.assertIn(package, test_lock)
         self.assertEqual(test_lock.count("--hash=sha256:"), 3)
 
+    def test_image_inspection_supports_older_docker_clients(self) -> None:
+        inspected = (
+            "Makefile",
+            "scripts/service-compose",
+            "scripts/service-smoke",
+            "scripts/release-check",
+        )
+        for relative in inspected:
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertIsNone(
+                re.search(r"\bimage\s+inspect(?:[ \t]|\\\n)*--platform\b", text),
+                relative,
+            )
+
+        for relative in ("Makefile", "scripts/service-compose", "scripts/service-smoke"):
+            self.assertIn(
+                "{{.Os}}/{{.Architecture}}",
+                (ROOT / relative).read_text(encoding="utf-8"),
+                relative,
+            )
+        for relative in ("scripts/service-compose", "scripts/service-smoke"):
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertIn("HBCB_BUILDER_IMAGE=$builder_image", text, relative)
+            self.assertNotIn("HBCB_BUILDER_IMAGE=$builder_id", text, relative)
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertRegex(makefile, r"(?m)^\s*\$\(DOCKER\) build .*--platform")
+        self.assertIn('--platform "$(PLATFORM)"', makefile)
+
     def test_preview_provenance_and_required_public_files(self) -> None:
         required = (
             "CHANGELOG.md",

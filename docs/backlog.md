@@ -71,7 +71,7 @@ Blender child, artifacts, or logs.
 
 ## Issue label catalog
 
-`bug`, `documentation`, `security`, `generator`, `component`, `exporter`, `qa`,
-`deployment`, `release`, `schema`, `good first issue`, `help wanted`,
-`needs-triage`, and `needs-design`. Repository settings—not local build or
-release tooling—own this catalog.
+`bug`, `documentation`, `dependencies`, `security`, `generator`, `component`,
+`exporter`, `qa`, `deployment`, `release`, `schema`, `good first issue`,
+`help wanted`, `needs-triage`, and `needs-design`. Repository settings—not local
+build or release tooling—own this catalog.

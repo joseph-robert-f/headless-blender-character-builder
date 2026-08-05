@@ -35,6 +35,10 @@ class ReleasePolicyTests(unittest.TestCase):
                 self.assertEqual(document.get("permissions"), {"contents": "read"})
                 self.assertNotIn("pull_request_target", document.get("on", {}))
                 self.assertTrue(document.get("jobs"))
+                if path.name == "ci.yml":
+                    service_job = document["jobs"].get("service")
+                    self.assertIsInstance(service_job, dict)
+                    self.assertNotIn("if", service_job)
 
     def test_external_actions_are_full_sha_pinned_and_checkout_drops_credentials(self) -> None:
         for path in WORKFLOWS:
@@ -74,6 +78,13 @@ class ReleasePolicyTests(unittest.TestCase):
             "shell=True",
         ):
             self.assertNotIn(forbidden, combined)
+
+    def test_dependabot_targets_only_rewritable_dependency_surfaces(self) -> None:
+        text = (ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+        self.assertIn("package-ecosystem: docker-compose", text)
+        self.assertIn("dependency-name: postgres", text)
+        self.assertIn("dependency-name: redis", text)
+        self.assertNotIn("package-ecosystem: github-actions", text)
 
 
 if __name__ == "__main__":

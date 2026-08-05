@@ -38,7 +38,10 @@ image:
 	$(DOCKER) build --file docker/builder.Dockerfile --target builder --tag "$(BUILDER_IMAGE)" --platform "$(PLATFORM)" .
 
 ensure-image:
-	@if ! $(DOCKER) image inspect --platform "$(PLATFORM)" "$(BUILDER_IMAGE)" >/dev/null 2>&1; then \
+	@if image_platform=`$(DOCKER) image inspect --format '{{.Os}}/{{.Architecture}}' "$(BUILDER_IMAGE)" 2>/dev/null` && \
+	  test "$$image_platform" = "$(PLATFORM)"; then \
+	  :; \
+	else \
 	  $(MAKE) image; \
 	fi
 
@@ -57,7 +60,9 @@ demo: image
 	  if test "$$runtime_uid" = 0; then runtime_uid=65532; fi; \
 	  if test "$$runtime_gid" = 0; then runtime_gid=65532; fi; \
 	  if test "$$host_uid" = 0; then chown "$$runtime_uid:$$runtime_gid" "$(BUILD_PARENT)"; fi; \
-	  image_id=`$(DOCKER) image inspect --platform "$(PLATFORM)" --format '{{.Id}}' "$(BUILDER_IMAGE)"`; \
+	  image_metadata=`$(DOCKER) image inspect --format '{{.Os}}/{{.Architecture}}|{{.Id}}' "$(BUILDER_IMAGE)"`; \
+	  image_platform=$${image_metadata%%|*}; image_id=$${image_metadata#*|}; \
+	  test "$$image_platform" = "$(PLATFORM)"; \
 	  $(DOCKER) run \
 	    --rm \
 	    --init \
@@ -86,7 +91,9 @@ verify-demo:
 	  runtime_uid=`id -u`; runtime_gid=`id -g`; \
 	  if test "$$runtime_uid" = 0; then runtime_uid=65532; fi; \
 	  if test "$$runtime_gid" = 0; then runtime_gid=65532; fi; \
-	  image_id=`$(DOCKER) image inspect --platform "$(PLATFORM)" --format '{{.Id}}' "$(BUILDER_IMAGE)"`; \
+	  image_metadata=`$(DOCKER) image inspect --format '{{.Os}}/{{.Architecture}}|{{.Id}}' "$(BUILDER_IMAGE)"`; \
+	  image_platform=$${image_metadata%%|*}; image_id=$${image_metadata#*|}; \
+	  test "$$image_platform" = "$(PLATFORM)"; \
 	  $(DOCKER) run \
 	    --rm \
 	    --init \

@@ -19,7 +19,14 @@ if [ ! -f .env ]; then
 fi
 
 builder_image=${BUILDER_IMAGE:-headless-blender-character-builder:dev}
-builder_id=$(docker image inspect --platform linux/amd64 --format '{{.Id}}' "$builder_image")
+builder_metadata=$(docker image inspect \
+  --format '{{.Os}}/{{.Architecture}}|{{.Id}}' "$builder_image")
+builder_platform=${builder_metadata%%|*}
+builder_id=${builder_metadata#*|}
+if [ "$builder_platform" != linux/amd64 ]; then
+  printf '%s\n' 'SERVICE_SMOKE: builder image platform must be linux/amd64' >&2
+  exit 4
+fi
 case "$builder_id" in
   sha256:????????????????????????????????????????????????????????????????) ;;
   *)
@@ -27,7 +34,9 @@ case "$builder_id" in
     exit 4
     ;;
 esac
-HBCB_BUILDER_IMAGE=$builder_id
+# Compose passes this value to Dockerfile FROM, which requires a named image
+# reference.  The measured immutable ID remains separate for provenance checks.
+HBCB_BUILDER_IMAGE=$builder_image
 HBCB_BUILDER_IMAGE_REFERENCE=$builder_image
 HBCB_BUILDER_IMAGE_ID=$builder_id
 export HBCB_BUILDER_IMAGE HBCB_BUILDER_IMAGE_REFERENCE HBCB_BUILDER_IMAGE_ID

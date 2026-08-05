@@ -42,7 +42,7 @@ updates:
           - minor
           - patch
 
-  - package-ecosystem: docker
+  - package-ecosystem: docker-compose
     directory: "/"
     schedule:
       interval: weekly
@@ -52,6 +52,9 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
+    allow:
+      - dependency-name: postgres
+      - dependency-name: redis
     commit-message:
       prefix: deps-compose
 
@@ -68,15 +71,6 @@ updates:
     commit-message:
       prefix: deps-images
 
-  - package-ecosystem: github-actions
-    directory: "/"
-    schedule:
-      interval: weekly
-      day: monday
-      time: "09:40"
-      timezone: America/New_York
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-    commit-message:
-      prefix: deps-actions
+# GitHub Actions remain full-SHA pinned and maintainer-updated. Dependabot can
+# parse, but cannot safely rewrite, the repository's dependency-free JSON-form
+# YAML workflows.

@@ -45,7 +45,14 @@ if [ ! -f .env ]; then
   exit 3
 fi
 
-builder_id=$(docker image inspect --platform linux/amd64 --format '{{.Id}}' "$builder_image")
+builder_metadata=$(docker image inspect \
+  --format '{{.Os}}/{{.Architecture}}|{{.Id}}' "$builder_image")
+builder_platform=${builder_metadata%%|*}
+builder_id=${builder_metadata#*|}
+if [ "$builder_platform" != linux/amd64 ]; then
+  printf '%s\n' 'SERVICE_COMPOSE: builder image platform must be linux/amd64' >&2
+  exit 4
+fi
 case "$builder_id" in
   sha256:????????????????????????????????????????????????????????????????) ;;
   *)
@@ -54,7 +61,10 @@ case "$builder_id" in
     ;;
 esac
 
-HBCB_BUILDER_IMAGE=$builder_id
+# BuildKit requires a named image reference in FROM; a raw local image ID is
+# parsed as a registry repository named "sha256".  Keep the separately measured
+# immutable ID for provenance while building from the reference it identifies.
+HBCB_BUILDER_IMAGE=$builder_image
 HBCB_BUILDER_IMAGE_REFERENCE=$builder_image
 HBCB_BUILDER_IMAGE_ID=$builder_id
 export HBCB_BUILDER_IMAGE HBCB_BUILDER_IMAGE_REFERENCE HBCB_BUILDER_IMAGE_ID
@@ -87,16 +97,20 @@ case "$action" in
     esac
     minio_cached=0
     if [ "$rebuild_minio" = 0 ]; then
-      cached_version=$(docker image inspect --platform linux/amd64 \
+      cached_platform=$(docker image inspect \
+        --format '{{.Os}}/{{.Architecture}}' \
+        "$minio_image" 2>/dev/null || true)
+      cached_version=$(docker image inspect \
         --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' \
         "$minio_image" 2>/dev/null || true)
-      cached_revision=$(docker image inspect --platform linux/amd64 \
+      cached_revision=$(docker image inspect \
         --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
         "$minio_image" 2>/dev/null || true)
-      cached_recipe_id=$(docker image inspect --platform linux/amd64 \
+      cached_recipe_id=$(docker image inspect \
         --format '{{ index .Config.Labels "io.hbcb.recipe-id" }}' \
         "$minio_image" 2>/dev/null || true)
-      if [ "$cached_version" = "$minio_version" ] && \
+      if [ "$cached_platform" = linux/amd64 ] && \
+         [ "$cached_version" = "$minio_version" ] && \
          [ "$cached_revision" = "$minio_revision" ] && \
          [ "$cached_recipe_id" = "$minio_recipe_id" ]; then
         version_output=$(docker run --rm --platform linux/amd64 \
