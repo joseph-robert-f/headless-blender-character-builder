@@ -16,7 +16,7 @@ x-service-build: &service-build
 
 services:
   postgres:
-    image: postgres:16.9-bookworm@sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94
+    image: postgres:18.3-bookworm@sha256:80630f83606d8db77d30b3851b16a9f78be2d0d4dda6f7b82a1fdca5ebe3acba
     platform: linux/amd64
     restart: unless-stopped
     environment:
