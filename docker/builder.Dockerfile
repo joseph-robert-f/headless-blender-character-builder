@@ -1,6 +1,6 @@
 # The release target is deliberately single-platform until an official,
 # checksum-pinned Blender arm64 Linux distribution is validated.
-FROM --platform=linux/amd64 debian:bookworm-20260713-slim@sha256:63a496b5d3b99214b39f5ed70eb71a61e590a77979c79cbee4faf991f8c0783e AS blender-unpack
+FROM --platform=linux/amd64 debian:bookworm-20260803-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241 AS blender-unpack
 
 ARG DEBIAN_SNAPSHOT=20260714T000000Z
 
@@ -32,7 +32,7 @@ RUN set -eux; \
     test -x /opt/blender/blender
 
 
-FROM --platform=linux/amd64 debian:bookworm-20260713-slim@sha256:63a496b5d3b99214b39f5ed70eb71a61e590a77979c79cbee4faf991f8c0783e AS builder-base
+FROM --platform=linux/amd64 debian:bookworm-20260803-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241 AS builder-base
 
 ARG DEBIAN_SNAPSHOT=20260714T000000Z
 
