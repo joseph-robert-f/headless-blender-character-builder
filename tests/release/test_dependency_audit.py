@@ -488,9 +488,7 @@ class DependencyAuditTests(unittest.TestCase):
         source = (ROOT / "tests" / "deployment" / "g8_caddy_gate.py").read_text(
             encoding="utf-8"
         )
-        self.assertNotIn(
-            '"image",\n            "inspect",\n            "--platform"', source
-        )
+        self.assertNotIn('"inspect",\n        "--platform"', source)
 
         with self.subTest(surface="emitted version evidence"), tempfile.TemporaryDirectory() as temporary:
             root = fixture_root(Path(temporary))
@@ -510,7 +508,7 @@ class DependencyAuditTests(unittest.TestCase):
             replace_once(
                 root,
                 "tests/deployment/g8_caddy_gate.py",
-                '[docker, "pull", "--platform", "linux/amd64", CADDY_REFERENCE]',
+                '[docker, "pull", "--platform", CADDY_PLATFORM, CADDY_REFERENCE]',
                 '[docker, "pull", "--platform", "linux/arm64", CADDY_REFERENCE]',
             )
             report = audit_tool.run_audit(root, online=False)
@@ -518,43 +516,257 @@ class DependencyAuditTests(unittest.TestCase):
                 report, "literal-image-caddy", "pull command"
             )
 
-        with self.subTest(surface="unsupported inspect platform flag"), tempfile.TemporaryDirectory() as temporary:
+        with self.subTest(surface="pull executable"), tempfile.TemporaryDirectory() as temporary:
             root = fixture_root(Path(temporary))
             replace_once(
                 root,
                 "tests/deployment/g8_caddy_gate.py",
-                '            "inspect",\n            "--format",',
-                '            "inspect",\n            "--platform",\n            "linux/amd64",\n            "--format",',
+                '[docker, "pull", "--platform", CADDY_PLATFORM, CADDY_REFERENCE]',
+                '["podman", "pull", "--platform", CADDY_PLATFORM, CADDY_REFERENCE]',
             )
             report = audit_tool.run_audit(root, online=False)
             self.assert_check_failure(
-                report, "literal-image-caddy", "unsupported --platform"
+                report, "literal-image-caddy", "pull command"
             )
 
-        with self.subTest(surface="inspected platform"), tempfile.TemporaryDirectory() as temporary:
+        with self.subTest(surface="pull platform ordering"), tempfile.TemporaryDirectory() as temporary:
             root = fixture_root(Path(temporary))
             replace_once(
                 root,
                 "tests/deployment/g8_caddy_gate.py",
-                'inspected[0] != "linux/amd64"',
-                'inspected[0] != "linux/arm64"',
+                '[docker, "pull", "--platform", CADDY_PLATFORM, CADDY_REFERENCE]',
+                '[docker, "pull", CADDY_REFERENCE, "--platform", CADDY_PLATFORM]',
             )
             report = audit_tool.run_audit(root, online=False)
             self.assert_check_failure(
-                report, "literal-image-caddy", "inspected linux/amd64 platform"
+                report, "literal-image-caddy", "pull command"
             )
 
-        with self.subTest(surface="inspected OCI version"), tempfile.TemporaryDirectory() as temporary:
+        with self.subTest(surface="runtime identity command"), tempfile.TemporaryDirectory() as temporary:
             root = fixture_root(Path(temporary))
             replace_once(
                 root,
                 "tests/deployment/g8_caddy_gate.py",
-                "or inspected[2] != CADDY_OCI_VERSION",
-                'or inspected[2] != "v2.11.3"',
+                "'printf \\'%s\\\\n\\' \"$CADDY_VERSION\"\\ncaddy version\\nuname -s\\nuname -m'",
+                "'caddy version'",
             )
             report = audit_tool.run_audit(root, online=False)
             self.assert_check_failure(
-                report, "literal-image-caddy", "inspected OCI identity"
+                report, "literal-image-caddy", "fixed runtime identity probe"
+            )
+
+        with self.subTest(surface="unused runtime identity decoy"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                "'printf \\'%s\\\\n\\' \"$CADDY_VERSION\"\\ncaddy version\\nuname -s\\nuname -m'",
+                "'caddy version'",
+            )
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                "\n\nclass GateFailure",
+                "\n\nUNUSED_PROBE = [\n"
+                '    "/bin/sh",\n'
+                '    "-eu",\n'
+                '    "-c",\n'
+                "    'printf \\'%s\\\\n\\' \"$CADDY_VERSION\"\\ncaddy version\\nuname -s\\nuname -m',\n"
+                "]\n\n\nclass GateFailure",
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "literal-image-caddy", "fixed runtime identity probe"
+            )
+
+        with self.subTest(surface="inspect platform flag"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                '[docker, "image", "inspect", CADDY_REFERENCE]',
+                '[docker, "image", "inspect", "--platform", "linux/amd64", CADDY_REFERENCE]',
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "literal-image-caddy", "legacy-compatible image inspection"
+            )
+
+        with self.subTest(surface="inspected digest"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                'f"sha256:{CADDY_DIGEST}" not in digest_candidates',
+                '"sha256:" + "0" * 64 not in digest_candidates',
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "literal-image-caddy", "inspected digest identity"
+            )
+
+        with self.subTest(surface="inspected digest decoy"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                '    if f"sha256:{CADDY_DIGEST}" not in digest_candidates:\n',
+                '    if CADDY_DIGEST == "":\n'
+                '        pass\n'
+                '    if "sha256:" + "0" * 64 not in digest_candidates:\n',
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "literal-image-caddy", "inspected digest identity"
+            )
+
+        with self.subTest(surface="runtime platform"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                'or runtime_identity[3] != "x86_64"',
+                'or runtime_identity[3] != "aarch64"',
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "literal-image-caddy", "runtime Linux/x86_64 platform"
+            )
+
+        with self.subTest(surface="permissive runtime platform operator"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                'or runtime_identity[3] != "x86_64"',
+                'or runtime_identity[3] not in ("x86_64", "aarch64")',
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "literal-image-caddy", "runtime Linux/x86_64 platform"
+            )
+
+        with self.subTest(surface="runtime command platform"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                '        "--platform",\n        CADDY_PLATFORM,',
+                '        "--platform",\n        "linux/arm64",',
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "literal-image-caddy", "run command"
+            )
+
+        with self.subTest(surface="duplicate runtime platform"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                '        CADDY_PLATFORM,\n        "--network",',
+                '        CADDY_PLATFORM,\n        "--platform=linux/arm64",\n        "--network",',
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "literal-image-caddy", "run command"
+            )
+
+        with self.subTest(surface="runtime reference ordering"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                '        CADDY_PLATFORM,\n        "--network",',
+                '        CADDY_PLATFORM,\n        CADDY_REFERENCE,\n        "--network",',
+            )
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                "        CADDY_REFERENCE,\n        *command,",
+                "        *command,",
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "literal-image-caddy", "run command"
+            )
+
+        with self.subTest(surface="main identity orchestration"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                "    _inspect_digest(docker)\n    _runtime_identity(docker)",
+                "    pass",
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "literal-image-caddy", "identity gates from main"
+            )
+
+        with self.subTest(surface="runtime environment version"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                "or runtime_identity[0] != CADDY_OCI_VERSION",
+                'or runtime_identity[0] != "v2.11.3"',
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "literal-image-caddy", "runtime binary identity"
+            )
+
+        with self.subTest(surface="permissive runtime environment version"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                "or runtime_identity[0] != CADDY_OCI_VERSION",
+                "or runtime_identity[0] not in (CADDY_OCI_VERSION,)",
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "literal-image-caddy", "runtime binary identity"
+            )
+
+        with self.subTest(surface="runtime binary version"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                "or runtime_identity[1].split()[0] != CADDY_OCI_VERSION",
+                'or runtime_identity[1].split()[0] != "v2.11.3"',
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "literal-image-caddy", "runtime binary identity"
+            )
+
+        with self.subTest(surface="permissive runtime binary version"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                "or runtime_identity[1].split()[0] != CADDY_OCI_VERSION",
+                "or runtime_identity[1].split()[0] not in (CADDY_OCI_VERSION,)",
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "literal-image-caddy", "runtime binary identity"
+            )
+
+        with self.subTest(surface="emitted platform evidence"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            replace_once(
+                root,
+                "tests/deployment/g8_caddy_gate.py",
+                '"platform": CADDY_PLATFORM',
+                '"platform": "linux/arm64"',
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "literal-image-caddy", "emitted evidence"
             )
 
     def test_compose_and_docker_provenance_mutations_are_detected(self) -> None:

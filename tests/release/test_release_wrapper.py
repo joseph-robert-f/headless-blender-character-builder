@@ -124,13 +124,22 @@ class ReleaseWrapperTests(unittest.TestCase):
             "scripts/g8-recovery-drill",
             "scripts/service-compose",
             "scripts/service-smoke",
-            "tests/deployment/g8_caddy_gate.py",
         ):
             self.assertIn(
                 "{{.Os}}/{{.Architecture}}",
                 (ROOT / relative).read_text(encoding="utf-8"),
                 relative,
             )
+        caddy_gate = (ROOT / "tests/deployment/g8_caddy_gate.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('[docker, "image", "inspect", CADDY_REFERENCE]', caddy_gate)
+        self.assertIn('CADDY_PLATFORM = "linux/amd64"', caddy_gate)
+        self.assertIn('"$CADDY_VERSION"', caddy_gate)
+        self.assertIn("caddy version", caddy_gate)
+        self.assertIn("uname -s", caddy_gate)
+        self.assertIn("uname -m", caddy_gate)
+        self.assertIn('"platform": CADDY_PLATFORM', caddy_gate)
         for relative in ("scripts/service-compose", "scripts/service-smoke"):
             text = (ROOT / relative).read_text(encoding="utf-8")
             self.assertIn("HBCB_BUILDER_IMAGE=$builder_image", text, relative)
