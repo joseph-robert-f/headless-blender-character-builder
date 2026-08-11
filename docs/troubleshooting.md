@@ -1,74 +1,179 @@
 # Troubleshooting
 
-## One-shot demo
+Start with the read-only preflight from the repository root:
 
-A complete run ends with these markers:
+```sh
+./scripts/doctor
+```
+
+Use `./scripts/doctor --service` for the local API stack or
+`./scripts/doctor --native` for the best-effort native Blender path. The doctor
+does not install or download packages, pull images, start containers, or change
+Docker state. It only queries the configured clients and Docker daemon, which
+may be remote if your active Docker context is remote. Fix every `FAIL` before
+retrying the longer command.
+
+## What success looks like
+
+A request-only check ends with:
+
+```text
+BUILDER_VALIDATE: PASS
+```
+
+A complete one-shot run and independent reopen end with:
 
 ```text
 BUILDER_BUILD: PASS
 BUILDER_VERIFY: PASS
 ```
 
-The verified artifact tree is under `build/demo/`. If a build fails before the
-success manifest is published, the builder removes its private staging data and
-does not present a partial result as successful.
+The exit status must also be `0`, and `qa.json` must say `"status":"passed"`.
+EGL, OpenGL, emulation, or audio warnings can appear during headless Blender
+startup; warnings are not the authority. A nonzero exit, a `BUILDER: FAIL[n]`
+line, missing `manifest.json`, or non-passing QA means the result was not
+published successfully.
 
-Common local issues:
+The builder stages privately and refuses to overwrite output. If generation or
+QA fails, it removes its stage and must not leave a partial named result.
 
-- **Docker is unavailable:** start Docker Engine/Desktop and confirm
-  `docker info` succeeds for the current user.
-- **The first build cannot download dependencies:** the image build needs
-  outbound access to pinned Blender and Debian sources. Generation and
-  verification themselves run without network access.
-- **`build/demo` already exists:** the builder refuses to overwrite output.
-  Preserve it under a new name, for example
-  `mv build/demo build/demo.previous`, before rebuilding.
-- **Apple Silicon is slow:** the release image is `linux/amd64`; Docker Desktop
-  runs it through emulation on Apple Silicon. Confirm `linux/amd64` emulation is
-  available and allow more time than on native `amd64` Linux.
-- **Native mode refuses the output:** native and Docker demos share
-  `build/demo/`. Native mode additionally requires Python 3.11+ and exact
-  Blender 4.5.12 LTS.
+## Quick diagnosis
 
-## Asynchronous service
+| Symptom | Likely cause | Safe next action |
+|---|---|---|
+| `Docker is unavailable` | Docker CLI is not installed or not on `PATH` | Install Docker Desktop/Engine, open it, then rerun `./scripts/doctor` |
+| `Docker daemon is not reachable` or socket permission error | Docker is stopped, the current user lacks daemon access, or the selected context is unavailable | Make `docker info` succeed as the current user; on Linux follow [Docker's non-root guidance](https://docs.docker.com/engine/install/linux-postinstall/) and its root-equivalent group warning rather than using broad `sudo` workarounds |
+| Failure while downloading Blender/Debian inputs | The **image build** needs outbound HTTPS/DNS access to pinned sources | Check proxy/DNS/firewall settings and retry `make image`; do not weaken checksum or digest verification |
+| BuildKit/frontend error | Docker is too old or BuildKit/Buildx is unavailable | Upgrade Docker; `docker build` must support `--platform` and the pinned Dockerfile frontend |
+| `linux/amd64` platform or emulation error | The release image is amd64 and emulation is unavailable | Enable Docker Desktop's amd64 emulation or use an amd64 Linux host |
+| Very slow first build on Apple Silicon | Blender and its base image run through amd64 emulation | Allow extra time; later builds reuse verified local layers |
+| Exit `137` or daemon reports OOM | Docker killed Blender under memory pressure | Close heavy workloads, give Docker at least 4 GiB for the one-shot path, and retry with a fresh output name |
+| `no space left on device` | Image layers, build cache, or outputs filled Docker/host storage | Inspect `docker system df` and host free space; remove only independently identified disposable data—never blindly prune service volumes |
+| Bind mount/file-sharing error on macOS | The checkout is outside Docker Desktop's shared paths | Move/share the repository path in Docker Desktop, then rerun the doctor |
+| Output files are inaccessible | A prior root-run or unusual Docker mapping owns them | Do not rerun the builder as root; inspect ownership and move the old result aside before a new named build |
+| `output must not already exist` / `FAIL[4]` | Publication is intentionally no-clobber | Choose a new safe `OUTPUT_NAME`, or move the complete old directory somewhere outside `build/` |
+| `manifest request provenance mismatch` / `FAIL[11]` | Verification used a different JSON request than the build | Verify with the exact request that produced the manifest; compare its recorded request hash |
+| `BuildRequest was rejected` / `FAIL[3]` | JSON, field, enum, size, or runtime contract violation | Run `make validate REQUEST=/absolute/path/request.json`; compare with the [character guide](character-spec.md) |
+| `needs_review` / exit `11` with no output | Mandatory geometry evidence was unknown or below policy | Adjust the bounded recipe and try a new output name; do not manufacture a success manifest |
+| Native Blender exits during Metal initialization | Host Blender/backend incompatibility occurred before project code | Prefer the Docker path; native macOS is best effort even with exact Blender 4.5.12 |
 
-A complete service smoke ends with:
+## Named builds and reruns
+
+The README quickstart uses `build/facet-bot`; the older `make demo` alias uses
+`build/demo`. Custom work should use a distinct output name so results coexist:
+
+```sh
+make validate REQUEST="$PWD/examples/requests/facet-bot.json"
+make build REQUEST="$PWD/examples/requests/facet-bot.json" OUTPUT_NAME=facet-bot-2
+make verify REQUEST="$PWD/examples/requests/facet-bot.json" OUTPUT_NAME=facet-bot-2
+```
+
+`OUTPUT_NAME` is one lowercase, hyphen-separated directory name of at most 48
+characters. Paths, slashes, `.`/`..`, spaces, shell syntax, and uppercase names
+are rejected. Published output is immutable by design; the builder has no
+overwrite switch.
+
+## Exit-code reference
+
+| Exit | Meaning |
+|---:|---|
+| `0` | Requested operation passed |
+| `2` | Invalid CLI usage or unsupported option |
+| `3` | Request could not be accepted |
+| `4` | Input/output filesystem or no-clobber failure |
+| `10` | Blender executable/startup failure |
+| `11` | Geometry/artifact verification failed or needs review |
+| `12` | Internal trusted-launcher failure |
+| `124` | Controlled timeout |
+| `128`–`255` | Child process ended by a signal or equivalent platform status |
+
+Unexpected failures deliberately suppress tracebacks, host paths, environment
+values, and exception details at the public CLI boundary.
+
+## Local asynchronous service
+
+Check the larger prerequisite set first:
+
+```sh
+./scripts/doctor --service
+make service-config
+```
+
+The local stack needs Python 3.11+, Docker Compose 2.24.4+, and free loopback ports
+`8080` (API) and `9000` (artifact fixture). Useful read-only checks are:
+
+```sh
+docker compose --env-file .env ps
+docker compose --env-file .env logs --tail 100 api worker
+```
+
+Sanitize logs before sharing them. Never paste `.env`, bearer tokens, database
+or Redis URLs, storage credentials, private references, signed artifact URLs,
+or unredacted request/model content into a public issue.
+
+Common service cases:
+
+- **`.env` is missing on a fresh checkout:** run `make init-env` once. It
+  creates an ignored, mode-`0600` file and refuses to overwrite anything.
+- **`.env` exists:** keep it. `make service-down` preserves PostgreSQL, Redis,
+  and MinIO volumes whose credentials are tied to that file.
+- **`.env` is missing but old named volumes remain:** restore the original
+  `.env` from a secure local backup. Generating new credentials does not rotate
+  credentials inside existing data volumes.
+- **The old data is intentionally disposable:** stop the stack, confirm there
+  is no needed local data or backup, then remove only this Compose project's
+  named volumes through Docker Compose/Desktop. This is irreversible. Only
+  after those volumes are gone should you move aside the old `.env` and run
+  `make init-env` again. The project intentionally provides no one-command
+  reset that could erase volumes accidentally.
+- **Port conflict:** find and stop the local program using `127.0.0.1:8080` or
+  `127.0.0.1:9000`. Do not change the bind address to a public interface.
+- **Trusted builder source changed:** run `make image` before `make service-up`.
+  The service deliberately reuses an existing local `:dev` builder image.
+- **A dependency stays unhealthy:** inspect bounded `ps`/tail logs, preserve
+  `.env` and volumes, then use `make service-down` followed by
+  `make service-up`. Avoid volume pruning as a generic repair.
+
+A successful end-to-end check ends with:
 
 ```text
 SERVICE_SMOKE: PASS evidence=.../build/service-smoke/run.XXXXXX
 ```
 
-Before starting it:
+The local Compose stack is loopback evaluation infrastructure, not a public
+deployment. See [HTTP API v1](api.md) for a copy-paste client path.
 
-- confirm `docker compose version` reports Compose v2 and `python3 --version`
-  reports Python 3.11 or newer;
-- confirm loopback ports `8080` and `9000` are free;
-- run `make init-env` once. It intentionally refuses to overwrite an existing
-  `.env`; reuse the existing mode-`0600` file or deliberately rename it before
-  generating a replacement;
-- after changing trusted builder or generator source, run `make image` before
-  `make service-up`. The service reuses an existing local `:dev` builder tag;
-- run `make service-down` after testing. It stops the stack while preserving
-  the named development volumes.
+## Release and deployment checks
 
-Never paste `.env`, tokens, signed artifact URLs, private references, or
-unredacted service logs into a public issue.
-
-## Release checks
-
-`make release-static` is the fast publication-policy check. The complete
-`make release-check` additionally builds images, runs real Blender and service
-gates, exercises recovery, and packages local evidence; it needs Compose v2,
-Python 3.11+, more time/disk than the one-shot demo, and a clean intended Git
+`make release-static` is the fast, offline publication-policy check. The full
+`make release-check` builds images, runs real Blender and service gates,
+exercises recovery, and packages sanitized evidence. It requires Docker,
+Python 3.11+, Compose 2.24.4+, substantial time/disk, and a clean intended Git
 index.
 
-Release evidence is never overwritten. If an earlier run ID already exists,
-choose a new one explicitly:
+Evidence is no-clobber. Choose a unique lowercase run ID if the default already
+exists:
 
 ```sh
-HBCB_RELEASE_RUN_ID=g9-local2 make release-check
+HBCB_RELEASE_RUN_ID=public-check-2 make release-check
 ```
 
-For a reproducible report, include the commit, platform, Docker/Compose/Python
-versions, exact command, exit code, and sanitized terminal error. Follow
-[SECURITY.md](../SECURITY.md) for anything sensitive.
+Do not operate the VPS reference until publisher-supplied image digests, source
+metadata, and a usable release lock exist. The checked-in example lock contains
+intentional placeholders and the operator tooling rejects it. Deployment
+failures and recovery rules are covered in the [deployment guide](deployment.md).
+
+## Ask for help with safe evidence
+
+For a reproducible public bug report, include:
+
+```sh
+./scripts/doctor                 # or --service / --native
+git rev-parse HEAD
+uname -a
+```
+
+Also include the exact command, exit code, final `PASS`/`FAIL[n]` marker, and
+only relevant sanitized manifest/QA fields. Do not attach a complete build if
+you do not have redistribution rights. Suspected vulnerabilities belong in the
+private process described by [SECURITY.md](../SECURITY.md), not a public issue.

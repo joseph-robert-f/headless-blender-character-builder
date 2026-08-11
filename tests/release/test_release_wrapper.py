@@ -106,9 +106,11 @@ class ReleaseWrapperTests(unittest.TestCase):
     def test_image_inspection_supports_older_docker_clients(self) -> None:
         inspected = (
             "Makefile",
+            "scripts/g8-recovery-drill",
             "scripts/service-compose",
             "scripts/service-smoke",
             "scripts/release-check",
+            "tests/deployment/g8_caddy_gate.py",
         )
         for relative in inspected:
             text = (ROOT / relative).read_text(encoding="utf-8")
@@ -117,7 +119,13 @@ class ReleaseWrapperTests(unittest.TestCase):
                 relative,
             )
 
-        for relative in ("Makefile", "scripts/service-compose", "scripts/service-smoke"):
+        for relative in (
+            "Makefile",
+            "scripts/g8-recovery-drill",
+            "scripts/service-compose",
+            "scripts/service-smoke",
+            "tests/deployment/g8_caddy_gate.py",
+        ):
             self.assertIn(
                 "{{.Os}}/{{.Architecture}}",
                 (ROOT / relative).read_text(encoding="utf-8"),

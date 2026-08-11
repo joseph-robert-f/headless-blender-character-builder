@@ -1,6 +1,6 @@
 # v0.1 Build Progress
 
-Last updated: 2026-08-03
+Last updated: 2026-08-10
 
 Overall status: **local v0.1 release candidate passed; external publication checks conditional**
 
@@ -242,6 +242,9 @@ Files and contracts introduced:
 
 - `docker/builder.Dockerfile` builds the production `linux/amd64` image from a digest-pinned Debian snapshot and the checksum-verified official Blender 4.5.12 LTS archive; its separate test target adds only hash-locked wheels and tracked test inputs;
 - `scripts/builder` and `builder_cli/` expose only `builder build --request PATH --output PATH` and `builder verify --request PATH --output PATH`, with bounded input/evidence, a fixed Blender argv/environment, process-group timeout handling, redacted unexpected failures, and the application exit contract;
+- the later public-readiness layer adds `builder validate --request PATH`, which
+  performs the same bounded request decoding without starting Blender or
+  writing output; it does not broaden accepted request data or build behavior;
 - `blender/published_verifier.py` freshly loads the published `.blend`, resets and imports GLB/STL, and validates the exact artifact, scene, geometry, topology, hash, provenance, and QA contract;
 - `shared/source_revision.py` produces framed, content-addressed native/container source revisions; the image bakes its source revision, Blender version and binary hash, upstream notices, and an SPDX 2.3 SBOM;
 - `Makefile` provides the keyless `demo`/`verify-demo`, native fallbacks, isolated test-image targets, and the fixed one-shot runtime envelope;
@@ -525,6 +528,14 @@ The final intended index is rerun under the default ignored evidence path
 `release/release-metadata.json`, `release/source-audit.json`, and
 `release/SHA256SUMS` are the authoritative exact identities; embedding the final
 index hash in a tracked file would change that index recursively.
+
+That `g9-final` record authenticates the historical G9 index only. It is not
+evidence for later documentation, launcher, Make, VPS, dependency, or workflow
+changes. Every subsequent release-facing pull request must run
+`make release-check` against its own final committed index under a new
+`HBCB_RELEASE_RUN_ID`; the pull request verification record names that run and
+result. This avoids retroactively relabeling preserved evidence or changing the
+index after its gate has passed.
 
 Conditions and scope:
 

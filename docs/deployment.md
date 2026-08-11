@@ -1,17 +1,31 @@
 # VPS deployment and operations
 
-This runbook describes the supported v0.1 production reference: one
+This runbook describes a production-oriented v0.1 reference topology: one
 `linux/amd64` Linux VPS running the reviewed Docker Compose overlay, with one
 API process, one concurrency-one worker, local PostgreSQL and Redis, Caddy at
-the public edge, and an external versioned S3-compatible artifact service.
-It is suitable for a single operator and one deployment namespace. It is not
-a multi-tenant platform, a high-availability design, or a managed-cloud
-template.
+the public edge, and an external versioned S3-compatible artifact service. It
+is designed for a single operator and one deployment namespace. It is not a
+multi-tenant platform, high-availability design, or managed-cloud template.
 
-The repository contains a deployment package, not a live deployment. Running
-`up`, changing DNS or firewall rules, issuing certificates, publishing or
-pulling private images, operating storage, and running an external smoke build
-are operator actions against explicitly authorized infrastructure. Local G8
+## Availability
+
+The repository currently contains source, container build definitions, local
+release tooling, and the deployment reference. It does **not** publish the
+three required application images, a populated digest release lock, a signed
+source release, or a live service. Consequently, these instructions are not yet a copy-paste
+path to a public production deployment.
+
+Do not substitute mutable images, a locally edited all-zero lock example, or a
+Git clone of `main` for those missing release inputs. Until a publisher makes
+the complete matching set available, use the
+[locally verifiable deployment package](#locally-verifiable-deployment-package)
+only. When a release is published, its notes must identify the exact verified
+source package, image digests, release lock, checksum/signature process, and
+corresponding-source materials before the live steps below become actionable.
+
+Running `up`, changing DNS or firewall rules, issuing certificates, pulling
+private images, operating storage, and running an external smoke build are
+operator actions against explicitly authorized infrastructure. Local G8
 validation does not perform any of those actions.
 
 ## Supported topology
@@ -75,9 +89,11 @@ credential.
 
 Bring all of the following before a live preflight:
 
-- A dedicated `linux/amd64` VPS with a supported Docker Engine and Docker
-  Compose v2 plugin. The host must enforce CPU, memory, PID, disk, and network
-  controls used by the overlay.
+- A dedicated `linux/amd64` VPS with a maintained Docker Engine and
+  Docker Compose 2.24.4 or newer. The minimum is required for the `!reset` and
+  `!override` tags used by the overlay; see Docker's
+  [Compose merge reference](https://docs.docker.com/reference/compose-file/merge/).
+  The host must enforce its CPU, memory, PID, disk, and network controls.
 - Capacity for the configured limits plus host overhead. The planning baseline
   is 8 vCPU and 32 GiB RAM for one ordinary worker.
 - A reviewed source release installed in a root-owned, non-writable release
@@ -129,9 +145,10 @@ The following is the reference layout. Substitute paths only by changing
 | `/var/lib/hbcb/caddy-config` | UID/GID `1000:1000` | `0700` | Caddy runtime state |
 | `/var/backups/hbcb` | `root:root` | `0700` | Protected staging for backup bundles |
 
-Create the directories before copying configuration:
+Create the parent directories before installing a release:
 
 ```sh
+sudo install -d -o root -g root -m 0755 /opt/hbcb
 sudo install -d -o root -g root -m 0755 /opt/hbcb/release
 sudo install -d -o root -g root -m 0700 /etc/hbcb /etc/hbcb/secrets
 sudo install -d -o root -g root -m 0755 /var/lib/hbcb
@@ -140,15 +157,43 @@ sudo install -d -o 1000 -g 1000 -m 0700 \
 sudo install -d -o root -g root -m 0700 /var/backups/hbcb
 ```
 
-Install the two non-secret files as regular files, not symlinks:
+For an initial installation, `/opt/hbcb/release` must be empty. First verify
+the publisher's exact source package using the checksum/signature procedure in
+that release's notes. Then copy the already extracted, verified tree into the
+root-owned directory. The path below is intentionally a placeholder;
+no such published source package exists yet:
 
 ```sh
+test -f /absolute/path/to/verified-source/VERSION
+test -x /absolute/path/to/verified-source/scripts/vps
+sudo cp -a /absolute/path/to/verified-source/. /opt/hbcb/release/
+sudo chown -R root:root /opt/hbcb/release
+sudo chmod -R go-w /opt/hbcb/release
+sudo chmod 0555 /opt/hbcb/release/scripts/vps
+sudo chmod 0555 /opt/hbcb/release/scripts/operator-smoke
+```
+
+Do not copy a working tree with uncommitted changes, clone a moving branch on
+the VPS, or overlay new source on an existing release directory. Upgrades use a
+separately staged exact release and the forward-only handoff procedure.
+
+Next install the non-secret configuration template from the installed release
+and the publisher-supplied lock for that exact release as regular files, not
+symlinks:
+
+```sh
+cd /opt/hbcb/release
 sudo install -o root -g root -m 0644 deploy/vps/vps.env.example \
   /etc/hbcb/vps.env
-sudo install -o root -g root -m 0644 deploy/vps/release.lock.env.example \
+sudo install -o root -g root -m 0644 \
+  /absolute/path/to/publisher-supplied/release.lock.env \
   /etc/hbcb/release.lock.env
-sudo chmod 0555 /opt/hbcb/release/scripts/vps
 ```
+
+Edit `/etc/hbcb/vps.env` for the authorized host. Do not install
+`deploy/vps/release.lock.env.example`: its zero digests are deliberately
+invalid and preflight rejects them. Populate the protected role files exactly
+as described in [VPS secret files](../deploy/vps/SECRETS.md).
 
 When it runs as root, the wrapper rejects a release tree, VPS configuration,
 release lock, secrets directory or file, state parent, backup root, or backup
@@ -159,9 +204,10 @@ state directories exactly `0700` and owned by UID 1000. Configuration values
 use plain `NAME=value` syntax. Do not use quotes, interpolation, backticks,
 surrounding whitespace, duplicate keys, or multiline values.
 
-See [VPS secret files](../deploy/vps/SECRETS.md) for the exact role files. Use
-independent URL-safe random values; 64 lowercase hexadecimal characters are a
-safe representation for database and Redis passwords. `HBCB_API_TOKEN` and
+See [VPS secret files](../deploy/vps/SECRETS.md) for the exact role files and
+named values that must match across them. Use independent URL-safe random
+values; 64 lowercase hexadecimal characters are a safe representation for
+database and Redis passwords. `HBCB_API_TOKEN` and
 `HBCB_IDEMPOTENCY_SECRET` must each be exactly 64 lowercase hexadecimal
 characters and must be different from every other secret.
 

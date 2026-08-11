@@ -52,6 +52,8 @@ Blender child, artifacts, or logs.
 
 ### Operations and cloud
 
+- bind a candidate distribution version across image tags, OCI labels, service
+  metadata, release locks, and publication evidence before the first OCI push;
 - one maintained managed-cloud reference target;
 - per-build worker jobs and independent API scaling;
 - metrics, budgets, abuse controls, and deletion workflows;

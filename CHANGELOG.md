@@ -10,6 +10,9 @@ Changelog, and releases use Semantic Versioning.
 - Reorganized public onboarding and documentation navigation, clarified
   path-specific prerequisites and troubleshooting, and aligned planning/test
   language with the completed local release candidate.
+- Added a read-only prerequisite doctor, request-only validation, safe named
+  build/verify outputs, and immutable compatibility aliases for the original
+  `build/demo` workflow.
 - Made image inspection compatible with pre-28.1 Docker clients while retaining
   explicit `linux/amd64` validation, kept local parent-image references portable
   across BuildKit, and moved service smoke into pull-request CI.

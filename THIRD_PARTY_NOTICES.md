@@ -59,16 +59,23 @@ These services are separate programs and retain their own licenses:
 
 | Component | v0.1 use | Notice |
 |---|---|---|
-| PostgreSQL | `postgres:16.9-bookworm` local state service | PostgreSQL License plus the base image's Debian notices. |
-| Redis server | `redis:8.0.1-bookworm` local queue/coordination service | Use is governed by the selectable terms and notices shipped with that exact Redis 8 source/image release. Preserve those upstream files when redistributing the image. |
+| PostgreSQL | `postgres:16.9-bookworm` local and VPS-reference state service | PostgreSQL License plus the base image's Debian notices. The VPS overlay inherits this pin from the base Compose model. |
+| Redis server | `redis:8.0.1-bookworm` local and VPS-reference queue/coordination service | Use is governed by the selectable terms and notices shipped with that exact Redis 8 source/image release. Preserve those upstream files when redistributing the image. The VPS overlay inherits this pin from the base Compose model. |
 | MinIO server | Source-built `RELEASE.2025-10-15T17-29-55Z`, local compatibility fixture only | `AGPL-3.0-or-later`; the image copies upstream `LICENSE` and `CREDITS` to `/licenses/minio/`. This final Community release is not the recommended production object store. |
 | MinIO client (`mc`) | `RELEASE.2025-08-13T08-35-41Z`, health and initialization helper | `AGPL-3.0-or-later`; retain the upstream client license when redistributing the binary. |
 | Go toolchain | 1.24.8, MinIO build stage only | Go's BSD-style license; the toolchain is not copied into the MinIO runtime stage. |
 | Caddy | `caddy:2.11.4-alpine`, operator-supplied digest-pinned VPS edge image | `Apache-2.0`; the repository does not vendor or publish a Caddy image. |
 
-The local MinIO, PostgreSQL, and Redis containers are development fixtures.
-Production operators bring and license their own maintained database, queue,
-object-storage, gateway, and edge components.
+The source-built MinIO server is a development compatibility fixture only. The
+production-oriented VPS overlay instead requires an operator-managed external
+versioned S3 service and private gateway, while retaining the pinned
+PostgreSQL and Redis services and requiring a digest-pinned Caddy image.
+
+This repository does not currently publish or redistribute the builder,
+service, database, queue, storage, or edge images as a release set. An operator
+who assembles or redistributes that set is responsible for reviewing the exact
+upstream terms, retaining required notices and corresponding source, tracking
+security support, and updating pins as one coordinated release change.
 
 ## Optional and post-v0.1 services
 

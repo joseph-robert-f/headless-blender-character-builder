@@ -379,6 +379,52 @@ class VpsOperatorTests(unittest.TestCase):
             self.assertEqual(environment["HOME"], "/root")
             self.assertEqual(environment["XDG_CONFIG_HOME"], "/root/.config")
 
+    def test_compose_version_preflight_requires_2_24_4_or_newer(self) -> None:
+        environment = {"PATH": "/usr/bin:/bin"}
+        for rendered in (
+            "2.24.4",
+            "v2.24.4",
+            "2.24.4-desktop.1",
+            "2.25.0",
+            "3.0.0",
+        ):
+            completed = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=(rendered + "\n").encode("ascii"),
+                stderr=b"",
+            )
+            with self.subTest(rendered=rendered), mock.patch.object(
+                VPS.subprocess, "run", return_value=completed
+            ) as run:
+                VPS._validate_compose_version(["/usr/bin/docker", "compose"], environment)
+                self.assertEqual(
+                    run.call_args.args[0],
+                    ["/usr/bin/docker", "compose", "version", "--short"],
+                )
+                self.assertEqual(run.call_args.kwargs["timeout"], 30)
+
+        for rendered in ("1.29.2", "2.24.3", "2.24", "Docker Compose 2.24.4", ""):
+            completed = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=(rendered + "\n").encode("ascii"),
+                stderr=b"",
+            )
+            with self.subTest(rendered=rendered), mock.patch.object(
+                VPS.subprocess, "run", return_value=completed
+            ):
+                with self.assertRaisesRegex(VPS.OperatorError, "2.24.4 or newer"):
+                    VPS._validate_compose_version(["compose"], environment)
+
+        failed = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout=b"", stderr=b"private"
+        )
+        with mock.patch.object(VPS.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(VPS.OperatorError, "2.24.4 or newer") as raised:
+                VPS._validate_compose_version(["compose"], environment)
+        self.assertNotIn("private", str(raised.exception))
+
     def test_operator_lock_is_private_persistent_and_excludes_another_process(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             state = Path(temporary) / "state"

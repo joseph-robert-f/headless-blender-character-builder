@@ -16,8 +16,21 @@
           "with": {"persist-credentials": false, "fetch-depth": 0}
         },
         {
+          "env": {
+            "HBCB_RELEASE_RUN_ID": "github-${{ github.run_id }}-${{ github.run_attempt }}"
+          },
           "name": "Full clean-index release gate",
           "run": "make release-check"
+        },
+        {
+          "name": "Retain checksum-verified release evidence",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "if-no-files-found": "error",
+            "name": "release-candidate-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "build/release-check/github-${{ github.run_id }}-${{ github.run_attempt }}",
+            "retention-days": 7
+          }
         }
       ]
     }

@@ -1,6 +1,8 @@
 # HTTP API v1
 
-Status: implemented and exercised end to end by the G7 local Docker Compose gate.
+The source checkout includes a loopback-only asynchronous service used for
+integration testing and self-hosting experiments. It is not a hosted public
+API and no production images are currently published.
 
 The API is a small asynchronous control surface over the same immutable G4 builder contract. It accepts only `BuildRequest v1` JSON, never arbitrary Python, Blender arguments, paths, URLs, uploads, or provider keys.
 
@@ -16,6 +18,126 @@ make service-down
 ```
 
 The first command creates a private local bearer token and other scoped credentials in ignored `.env`; it prints no secret and refuses to overwrite an existing file. The API binds to `http://127.0.0.1:8080`. `make service-smoke` performs the equivalent authenticated HTTP workflow below, downloads all nine artifacts into an ignored evidence directory, and independently verifies them. The local stack is for loopback evaluation only; do not publish its ports or treat it as the G8 production deployment.
+
+## Copy-paste local client journey
+
+Run these commands from the repository root after `make service-up`. They use a
+mode-`0700` temporary directory and a private curl header file so the bearer
+token is not printed or placed directly in curl's process arguments:
+
+```sh
+HBCB_API_BASE=http://127.0.0.1:8080
+HBCB_API_TMP=$(mktemp -d "${TMPDIR:-/tmp}/hbcb-api.XXXXXX")
+chmod 700 "$HBCB_API_TMP"
+awk -F= '$1 == "HBCB_API_TOKEN" { print "Authorization: Bearer " $2 }' \
+  .env > "$HBCB_API_TMP/auth.header"
+chmod 600 "$HBCB_API_TMP/auth.header"
+test "$(wc -l < "$HBCB_API_TMP/auth.header" | tr -d ' ')" = 1
+```
+
+Submit Facet Bot. The response is written to a private file rather than echoed
+to the terminal:
+
+```sh
+curl --fail-with-body --silent --show-error \
+  --header @"$HBCB_API_TMP/auth.header" \
+  --header 'Content-Type: application/json' \
+  --header 'Idempotency-Key: facet-request-0001' \
+  --data-binary @examples/requests/facet-bot.json \
+  --output "$HBCB_API_TMP/build.json" \
+  "$HBCB_API_BASE/v1/builds"
+
+HBCB_BUILD_ID=$(python3 -c \
+  'import json,sys; from uuid import UUID; print(UUID(json.load(open(sys.argv[1], encoding="utf-8"))["build_id"]))' \
+  "$HBCB_API_TMP/build.json")
+export HBCB_API_BASE HBCB_API_TMP HBCB_BUILD_ID
+printf 'queued build %s\n' "$HBCB_BUILD_ID"
+```
+
+Poll against a ten-minute deadline, with each HTTP request capped at 15 seconds.
+The loop breaks on a terminal state, a request or response error, or the
+deadline; it does not call `exit`, so it is safe to paste into an interactive
+shell:
+
+```sh
+HBCB_BUILD_STATUS=unknown
+HBCB_POLL_ATTEMPT=0
+HBCB_POLL_DEADLINE=$(( $(date +%s) + 600 ))
+while test "$HBCB_POLL_ATTEMPT" -lt 300 && \
+  test "$(date +%s)" -lt "$HBCB_POLL_DEADLINE"; do
+  if ! curl --fail-with-body --silent --show-error \
+    --connect-timeout 5 \
+    --max-time 15 \
+    --header @"$HBCB_API_TMP/auth.header" \
+    --output "$HBCB_API_TMP/status.json" \
+    "$HBCB_API_BASE/v1/builds/$HBCB_BUILD_ID"; then
+    HBCB_BUILD_STATUS=request_error
+    break
+  fi
+  if ! HBCB_BUILD_STATUS=$(python3 -c \
+    'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["status"])' \
+    "$HBCB_API_TMP/status.json"); then
+    HBCB_BUILD_STATUS=response_error
+    break
+  fi
+  printf 'status: %s\n' "$HBCB_BUILD_STATUS"
+  case "$HBCB_BUILD_STATUS" in
+    succeeded|failed|canceled|needs_review) break ;;
+  esac
+  HBCB_POLL_ATTEMPT=$((HBCB_POLL_ATTEMPT + 1))
+  sleep 2
+done
+case "$HBCB_BUILD_STATUS" in
+  succeeded) printf 'build succeeded\n' ;;
+  *) printf 'build did not succeed; stop before downloading artifacts (status: %s)\n' \
+    "$HBCB_BUILD_STATUS" ;;
+esac
+```
+
+Continue only if the final line says `build succeeded`. List the immutable
+artifacts and download the preview without putting its short-lived signed URL
+in the shell command line:
+
+```sh
+curl --fail-with-body --silent --show-error \
+  --header @"$HBCB_API_TMP/auth.header" \
+  --output "$HBCB_API_TMP/artifacts.json" \
+  "$HBCB_API_BASE/v1/builds/$HBCB_BUILD_ID/artifacts"
+
+python3 -c '
+import json, pathlib, sys, urllib.request
+document = json.load(open(sys.argv[1], encoding="utf-8"))
+preview = next(item for item in document["artifacts"] if item["path"] == "preview.png")
+with urllib.request.urlopen(preview["download_url"], timeout=30) as response:
+    pathlib.Path(sys.argv[2]).write_bytes(response.read())
+' "$HBCB_API_TMP/artifacts.json" "$HBCB_API_TMP/preview.png"
+
+printf 'downloaded %s\n' "$HBCB_API_TMP/preview.png"
+```
+
+To cancel instead, run the following while a build is `queued` or `running`:
+
+```sh
+curl --fail-with-body --silent --show-error \
+  --request POST \
+  --header @"$HBCB_API_TMP/auth.header" \
+  --header 'Content-Length: 0' \
+  --output "$HBCB_API_TMP/cancel.json" \
+  "$HBCB_API_BASE/v1/builds/$HBCB_BUILD_ID/cancel"
+```
+
+When finished, stop the stack and remove only this command's private scratch
+directory:
+
+```sh
+make service-down
+rm -r "$HBCB_API_TMP"
+unset HBCB_API_BASE HBCB_API_TMP HBCB_BUILD_ID HBCB_BUILD_STATUS
+```
+
+`make service-down` preserves the named local data volumes and their matching
+credentials. The [troubleshooting guide](troubleshooting.md) explains the safe
+choices if `.env` is missing or those volumes are no longer wanted.
 
 ## Authentication and response policy
 

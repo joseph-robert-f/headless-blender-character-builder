@@ -66,6 +66,55 @@ def inventory(version: str) -> dict[str, object]:
 
 
 class RecoveryDrillTests(unittest.TestCase):
+    def test_image_identity_uses_legacy_compatible_inspection_and_checks_platform(self) -> None:
+        image_id = "sha256:" + "a" * 64
+        calls: list[tuple[object, object, object]] = []
+
+        def inspect(command: object, *, label: object, timeout: object) -> object:
+            calls.append((command, label, timeout))
+            return recovery.CommandResult(
+                ("linux/amd64|" + image_id + "\n").encode("ascii")
+            )
+
+        self.assertEqual(
+            recovery._image_id(
+                SimpleNamespace(run=inspect), "fixture:dev", "fixture_image"
+            ),
+            image_id,
+        )
+        self.assertEqual(
+            calls,
+            [
+                (
+                    (
+                        "docker",
+                        "image",
+                        "inspect",
+                        "--format",
+                        "{{.Os}}/{{.Architecture}}|{{.Id}}",
+                        "fixture:dev",
+                    ),
+                    "fixture_image",
+                    60,
+                )
+            ],
+        )
+        self.assertNotIn("--platform", calls[0][0])
+
+        for output in (
+            "linux/arm64|" + image_id,
+            image_id,
+            "linux/amd64|not-an-image-id",
+        ):
+            runner = SimpleNamespace(
+                run=lambda *_args, value=output, **_kwargs: recovery.CommandResult(
+                    (value + "\n").encode("ascii")
+                )
+            )
+            with self.subTest(output=output):
+                with self.assertRaisesRegex(recovery.GateError, "fixture_image_invalid"):
+                    recovery._image_id(runner, "fixture:dev", "fixture_image")
+
     def test_disposable_compose_has_no_build_or_port_and_one_internal_network(self) -> None:
         text = COMPOSE.read_text(encoding="utf-8")
         self.assertNotIn("\n    ports:", text)

@@ -6,7 +6,7 @@ Release, deploy a VPS, or use registry/cloud credentials.
 
 ## Local release candidate
 
-Prerequisites are Git, Docker Engine/Desktop, Docker Compose v2, GNU Make,
+Prerequisites are Git, Docker Engine/Desktop, Docker Compose 2.24.4+, GNU Make,
 roughly four CPU cores, 8 GB RAM, and sufficient disk for pinned images plus
 temporary build evidence.
 
@@ -29,11 +29,22 @@ Redis isolation, VPS topology/Caddy checks, isolated backup/restore, SBOM and
 notice validation, documentation/workflow validation, versioned local image
 tags, and deterministic release checksums.
 
+The manually dispatched GitHub release-candidate workflow assigns a unique
+run/attempt evidence ID. After a successful full gate it uploads the complete
+sanitized evidence directory as a GitHub Actions artifact for seven days. A
+local run and a failed hosted run do not create any release automatically.
+
 ## Version and local image identity
 
 `VERSION` contains the base application version. Release-candidate local tags
 use `0.1.0-rc.1`; a final publication may use `0.1.0` only after all required
-reviews pass. A mutable tag is never sufficient deployment identity.
+reviews pass. Python metadata, service runtime metadata, and current OCI labels
+record the base `0.1.0` application compatibility version; the `-rc.1` suffix
+identifies the candidate distribution rehearsal. This distinction is recorded
+for source-only evaluation, but public OCI publication stays blocked until the
+candidate distribution identifier is injected into and checked against every
+published image label, tag, and release metadata field. A mutable tag is never
+sufficient deployment identity.
 
 Record for each builder, API, and worker image:
 
@@ -77,7 +88,10 @@ review for a different distribution method.
 ## Conditional publication
 
 Publication requires explicit owner authorization and authenticated GitHub and
-GHCR access. A release operator then:
+GHCR access. The candidate-identity binding described above is an additional
+unimplemented publication prerequisite; the current repository is therefore
+source-only. After that gate is implemented and reviewed, a release operator
+then:
 
 1. verifies branch protection, required checks, CODEOWNERS, secret scanning,
    push protection, and private vulnerability reporting;

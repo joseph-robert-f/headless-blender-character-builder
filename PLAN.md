@@ -607,10 +607,13 @@ Exit criteria:
 Deliverables:
 
 - pinned Blender 4.5 LTS builder image with recorded download checksum;
-- narrow `builder build --request ... --output ...` entrypoint with the Section 5 exit-code contract;
+- narrow `builder validate --request ...` and
+  `builder build --request ... --output ...` entrypoints with the Section 5
+  exit-code contract;
 - non-root runtime user plus support for an arbitrary host UID/GID;
 - read-only root filesystem support, all capabilities dropped, no-new-privileges, bounded `/work`, and runtime networking disabled;
-- `Makefile` targets `demo`, `verify-demo`, `test-unit`, `test-blender`, and `check`;
+- `Makefile` targets `validate`, named `build`/`verify`, compatibility aliases
+  `demo`/`verify-demo`, `test-unit`, `test-blender`, and `check`;
 - local artifact storage adapter;
 - documented native-Blender fallback;
 - container smoke and invalid-input fixtures.

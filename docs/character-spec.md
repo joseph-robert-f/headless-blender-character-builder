@@ -1,24 +1,47 @@
-# v0.1 JSON Contracts
+# Character request guide and v0.1 contracts
 
-Status: contracts passed in G1, deterministic geometry generation passed in G2, native artifact publication plus complete geometry QA passed in G3, and the pinned keyless container plus trusted `builder build|verify` wrapper passed in G4.
+Use a bounded JSON recipe to choose a reviewed geometric character generator,
+its proportions and accessories, and fixed output/quality profiles. This is a
+declarative character format—not a way to submit Python, Blender operations,
+paths, URLs, add-ons, environment variables, or renderer flags.
 
 The one-shot builder and later HTTP service accept the same complete `BuildRequest`. Callers choose a reviewed generator and bounded profiles; they do not submit Python, Blender operations, paths, URLs, add-ons, environment variables, or renderer flags.
 
-## Try the contracts
+## Validate a request
 
-Python 3.11 or newer is required for the project test environment.
+The fastest supported check uses the pinned builder image and does not start
+Blender:
+
+```sh
+make validate REQUEST="$PWD/examples/requests/facet-bot.json"
+```
+
+`BUILDER_VALIDATE: PASS` means the request satisfies the structural and runtime
+input contract. It does **not** mean the generated geometry will pass
+publication QA. Only a successful `make build` followed by `make verify` proves
+that for a particular request and source revision.
+
+Contributors who are changing the contract can run its focused host tests with
+Python 3.11 or newer:
 
 ```sh
 python3.11 -m venv .venv
 .venv/bin/python -m pip install -e '.[test]'
-.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m unittest \
+  tests.unit.test_request_contract \
+  tests.contract.test_json_schemas -v
 ```
 
-The tests execute all four schemas with a Draft 2020-12 validator, resolve the local `BuildRequest` to `CharacterSpec` reference, validate both examples, and exercise runtime-only cross-field rules.
+The full Docker-backed suite, including the separately packaged service, is
+`make test-unit`. See [Contributing](../CONTRIBUTING.md) for the test matrix.
 
 ## Request envelope
 
-See [facet-bot.json](../examples/requests/facet-bot.json) for the canonical starter and [moss-hopper.json](../examples/requests/moss-hopper.json) for a materially different second character.
+See [Facet Bot](../examples/requests/facet-bot.json) for the passing canonical
+starter and [Moss Hopper](../examples/requests/moss-hopper.json) for a
+materially different, intentionally `needs_review` request. The
+[examples guide](../examples/README.md) gives exact commands and expected
+outcomes.
 
 ```json
 {
@@ -46,18 +69,39 @@ The complete UTF-8 request is limited to 64 KiB. Every object rejects extra prop
 
 ## Supported character controls
 
-| Field | v0.1 contract |
-|---|---|
-| `name` / `slug` | Display name of ASCII letters, digits, spaces, apostrophes, and hyphens up to 64 characters; explicit or safely derived lowercase slug up to 48 |
-| `style` | `geometric`, `low_poly`, or `chibi` |
-| `height_mm` | 25–250 mm |
-| `pose` | `standing`, `wave`, or `heroic` |
-| `palette` | 1–8 unique uppercase `#RRGGBB` colors |
-| `proportions` | Bounded head, body, and limb scales |
-| `material_preset` | `matte`, `satin`, or `glossy` |
-| `eye_preset` | `round`, `visor`, or `sleepy` |
-| `components` | Up to 16 unique values from the schema allowlist; `stub-tail` and `swept-tail` are mutually exclusive |
-| `base` | `none`, `round`, `square`, or `hexagonal` with bounded millimeter dimensions |
+| Field | Required? | Values and limits | Default |
+|---|---:|---|---|
+| `spec_version` | yes | Exactly `character/v1` | — |
+| `name` | yes | 1–64 ASCII letters, digits, spaces, apostrophes, or hyphens; must begin and end with a letter or digit | — |
+| `slug` | no | 1–48 lowercase letters/digits separated by single hyphens | Safely derived from `name` |
+| `style` | yes | `geometric`, `low_poly`, or `chibi` | — |
+| `height_mm` | yes | 25–250 mm; includes the base | — |
+| `pose` | yes | `standing`, `wave`, or `heroic` | — |
+| `palette` | yes | 1–8 unique uppercase `#RRGGBB` colors | — |
+| `proportions.head_scale` | yes | 0.7–1.6 | — |
+| `proportions.body_scale` | no | 0.7–1.4 | `1` |
+| `proportions.limb_scale` | yes | 0.7–1.3 | — |
+| `material_preset` | no | `matte`, `satin`, or `glossy` | `matte` |
+| `eye_preset` | no | `round`, `visor`, or `sleepy` | `round` |
+| `components` | no | Unique reviewed component names; at most 16 | `[]` |
+| `base` | no | Complete base object described below | Round, 48 × 48 × 5 mm |
+
+The component allowlist is:
+
+```text
+antenna-pair  backpack     chest-badge   long-horns    pointed-ears
+round-ears    short-horns  stub-tail     swept-tail
+```
+
+`stub-tail` and `swept-tail` are mutually exclusive. Component order is
+normalized before hashing.
+
+A base object always supplies `preset`, `width_mm`, `depth_mm`, and
+`height_mm`. For `round`, `square`, or `hexagonal`, width and depth are 20–160
+mm and height is 2–25 mm. For `none`, all three dimensions must be `0`.
+The generator preflight also requires `height_mm - base.height_mm >= 18`; some
+extreme but structurally valid proportion/base combinations can still be
+rejected because the reviewed body layout does not fit.
 
 The schemas in [`schemas/`](../schemas/) are the portable structural contracts. The immutable models in [`shared/`](../shared/) add strict decoding and semantic rules.
 

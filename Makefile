@@ -13,12 +13,17 @@ DEPENDENCY_OUTPUT ?= $(CURDIR)/build/dependency-audit
 
 REQUEST := $(CURDIR)/examples/requests/facet-bot.json
 BUILD_PARENT := $(CURDIR)/build
+OUTPUT_NAME ?= demo
 DEMO_OUTPUT := $(BUILD_PARENT)/demo
+export REQUEST BUILD_PARENT OUTPUT_NAME
 
-.PHONY: help image ensure-image test-image service-test-image demo verify-demo demo-native verify-demo-native init-env service-up service-smoke service-down service-config g8-static g8-caddy g8-recovery g8-gate operator-smoke lint test-unit test-blender dependency-check dependency-audit dependency-scan security-check release-static release-check check
+.PHONY: help image ensure-image test-image service-test-image validate build verify demo verify-demo demo-native verify-demo-native _validate-output-name init-env service-up service-smoke service-down service-config g8-static g8-caddy g8-recovery g8-gate operator-smoke lint test-unit test-blender dependency-check dependency-audit dependency-scan security-check release-static release-check check
 
 help:
 	@echo "Headless Blender Character Builder"
+	@echo "  make validate      Validate REQUEST without starting Blender"
+	@echo "  make build         Build REQUEST under build/OUTPUT_NAME"
+	@echo "  make verify        Reopen and verify build/OUTPUT_NAME"
 	@echo "  make demo          Build the keyless Docker demo"
 	@echo "  make verify-demo   Reopen and verify the published artifacts"
 	@echo "  make init-env      Generate ignored local-service credentials"
@@ -55,15 +60,57 @@ test-image:
 service-test-image: image
 	$(DOCKER) build --file docker/service.Dockerfile --target service-test --build-arg "HBCB_BUILDER_IMAGE=$(BUILDER_IMAGE)" --tag "$(SERVICE_TEST_IMAGE)" --platform "$(PLATFORM)" .
 
-demo: image
+validate: ensure-image
 	@set -eu; \
-	  test -f "$(REQUEST)"; \
-	  test ! -e "$(DEMO_OUTPUT)"; \
-	  mkdir -p "$(BUILD_PARENT)"; \
+	  request=$$REQUEST; \
+	  test -f "$$request"; \
+	  runtime_uid=`id -u`; runtime_gid=`id -g`; \
+	  if test "$$runtime_uid" = 0; then runtime_uid=65532; fi; \
+	  if test "$$runtime_gid" = 0; then runtime_gid=65532; fi; \
+	  $(DOCKER) run \
+	    --rm \
+	    --init \
+	    --platform "$(PLATFORM)" \
+	    --network none \
+	    --read-only \
+	    --cap-drop ALL \
+	    --security-opt no-new-privileges:true \
+	    --pids-limit 64 \
+	    --cpus 1 \
+	    --memory 512m \
+	    --user "$$runtime_uid:$$runtime_gid" \
+	    --tmpfs /work:rw,nosuid,nodev,noexec,size=64m,mode=1777 \
+	    --mount "type=bind,source=$$request,target=/input/request.json,readonly" \
+	    "$(BUILDER_IMAGE)" \
+	    validate --request /input/request.json
+
+_validate-output-name:
+	@set -eu; \
+	  LC_ALL=C; export LC_ALL; \
+	  output_name=$${OUTPUT_NAME-}; \
+	  case "$$output_name" in \
+	    ''|-*|*-|*--*|*[!a-z0-9-]*) \
+	      echo "OUTPUT_NAME must be a 1-48 character lowercase safe slug" >&2; \
+	      exit 2 \
+	      ;; \
+	  esac; \
+	  if test "$${#output_name}" -gt 48; then \
+	    echo "OUTPUT_NAME must be a 1-48 character lowercase safe slug" >&2; \
+	    exit 2; \
+	  fi
+
+build: _validate-output-name
+	@set -eu; \
+	  request=$$REQUEST; output_parent=$$BUILD_PARENT; output_name=$$OUTPUT_NAME; \
+	  output_path=$$output_parent/$$output_name; \
+	  test -f "$$request"; \
+	  test ! -e "$$output_path"; \
+	  $(MAKE) image; \
+	  mkdir -p "$$output_parent"; \
 	  host_uid=`id -u`; runtime_uid=$$host_uid; runtime_gid=`id -g`; \
 	  if test "$$runtime_uid" = 0; then runtime_uid=65532; fi; \
 	  if test "$$runtime_gid" = 0; then runtime_gid=65532; fi; \
-	  if test "$$host_uid" = 0; then chown "$$runtime_uid:$$runtime_gid" "$(BUILD_PARENT)"; fi; \
+	  if test "$$host_uid" = 0; then chown "$$runtime_uid:$$runtime_gid" "$$output_parent"; fi; \
 	  image_metadata=`$(DOCKER) image inspect --format '{{.Os}}/{{.Architecture}}|{{.Id}}' "$(BUILDER_IMAGE)"`; \
 	  image_platform=$${image_metadata%%|*}; image_id=$${image_metadata#*|}; \
 	  test "$$image_platform" = "$(PLATFORM)"; \
@@ -80,18 +127,20 @@ demo: image
 	    --memory 4g \
 	    --user "$$runtime_uid:$$runtime_gid" \
 	    --tmpfs /work:rw,nosuid,nodev,noexec,size=2g,mode=1777 \
-	    --mount "type=bind,source=$(REQUEST),target=/input/request.json,readonly" \
-	    --mount "type=bind,source=$(BUILD_PARENT),target=/output" \
+	    --mount "type=bind,source=$$request,target=/input/request.json,readonly" \
+	    --mount "type=bind,source=$$output_parent,target=/output" \
 	    --env HBCB_EXECUTION_MODE=container \
 	    --env "HBCB_WORKER_IMAGE_REFERENCE=$(BUILDER_IMAGE)" \
 	    --env "HBCB_WORKER_IMAGE_ID=$$image_id" \
 	    "$(BUILDER_IMAGE)" \
-	    build --request /input/request.json --output /output/demo
+	    build --request /input/request.json --output "/output/$$output_name"
 
-verify-demo:
+verify: _validate-output-name
 	@set -eu; \
-	  test -f "$(REQUEST)"; \
-	  test -d "$(DEMO_OUTPUT)"; \
+	  request=$$REQUEST; output_parent=$$BUILD_PARENT; output_name=$$OUTPUT_NAME; \
+	  output_path=$$output_parent/$$output_name; \
+	  test -f "$$request"; \
+	  test -d "$$output_path"; \
 	  runtime_uid=`id -u`; runtime_gid=`id -g`; \
 	  if test "$$runtime_uid" = 0; then runtime_uid=65532; fi; \
 	  if test "$$runtime_gid" = 0; then runtime_gid=65532; fi; \
@@ -111,13 +160,19 @@ verify-demo:
 	    --memory 4g \
 	    --user "$$runtime_uid:$$runtime_gid" \
 	    --tmpfs /work:rw,nosuid,nodev,noexec,size=2g,mode=1777 \
-	    --mount "type=bind,source=$(REQUEST),target=/input/request.json,readonly" \
-	    --mount "type=bind,source=$(BUILD_PARENT),target=/output,readonly" \
+	    --mount "type=bind,source=$$request,target=/input/request.json,readonly" \
+	    --mount "type=bind,source=$$output_parent,target=/output,readonly" \
 	    --env HBCB_EXECUTION_MODE=container \
 	    --env "HBCB_WORKER_IMAGE_REFERENCE=$(BUILDER_IMAGE)" \
 	    --env "HBCB_WORKER_IMAGE_ID=$$image_id" \
 	    "$(BUILDER_IMAGE)" \
-	    verify --request /input/request.json --output /output/demo
+	    verify --request /input/request.json --output "/output/$$output_name"
+
+demo verify-demo: override OUTPUT_NAME := demo
+
+demo: build
+
+verify-demo: verify
 
 demo-native:
 	@set -eu; \

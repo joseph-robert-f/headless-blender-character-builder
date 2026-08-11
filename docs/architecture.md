@@ -5,6 +5,11 @@
 Headless Blender Character Builder has two public execution lanes around one
 trusted Blender build contract.
 
+> The code and container definitions for both lanes are present. No container
+> image, GitHub Release, or hosted service is published yet. The VPS material
+> describes a production-oriented target architecture, not a currently
+> installable public deployment.
+
 ```text
 Lane A: keyless one-shot builder
 
@@ -13,7 +18,7 @@ BuildRequest JSON -> bounded CLI -> fresh headless Blender -> local artifact tre
                          |                  +-> compile, render, export, QA
                          +-> strict schemas      and immutable manifest
 
-Lane B: durable self-hosted service
+Lane B: durable local service / future self-hosted deployment
 
 client -> authenticated API -> PostgreSQL + Redis -> worker supervisor
                  |                    |                    |
@@ -25,8 +30,10 @@ client -> authenticated API -> PostgreSQL + Redis -> worker supervisor
 
 Lane A is the primary quickstart and remains independent of FastAPI,
 PostgreSQL, Redis, object storage, Compose, OpenAI, and MCP. Lane B adds durable
-coordination but invokes the same immutable builder image and artifact
-contract. A service failure cannot change or disable the one-shot builder.
+coordination but invokes the same builder CLI and artifact contract. The local
+service records the measured builder image identity; the future VPS path
+requires digest-pinned release images. A service failure cannot change or
+disable the one-shot builder.
 
 ## Trusted inputs and outputs
 
@@ -72,19 +79,32 @@ transaction in service mode.
 
 ## Security and network boundaries
 
-The Blender child runs non-root with a read-only root filesystem, dropped Linux
-capabilities, `no-new-privileges`, bounded CPU/RAM/PIDs/scratch, disabled
-auto-execution, and no network. It receives no API token, database password,
-Redis credential, object-storage secret, provider key, Docker socket, or host
-home mount. These controls are defense in depth around trusted generator code;
-Blender is not treated as a sandbox for hostile scripts or files.
+The two lanes have deliberately different network controls:
 
-The local stack binds API and object downloads to loopback. PostgreSQL and
-Redis are not published. The worker has only the internal network. The VPS
-package terminates HTTPS with Caddy, keeps storage operations private, requires
-distinct public signed-download and internal object endpoints, and uses an
-operator-maintained versioned S3-compatible service rather than the bundled
-local MinIO compatibility fixture.
+- **One-shot build and verify:** each container runs with `--network none`.
+  The container is non-root and has a read-only root filesystem, dropped Linux
+  capabilities, `no-new-privileges`, and bounded CPU, RAM, PIDs, and scratch.
+- **Local service:** the API publishes only to host loopback. PostgreSQL and
+  Redis are not published, and the worker is attached only to the
+  `internal: true` service network used for database, queue, and local object
+  storage access.
+- **VPS reference:** Caddy is the only public edge. The worker is attached to
+  separate internal database and queue networks plus an operator-provided
+  `Internal=true` storage network; it has no edge network or general public
+  egress route.
+
+In service mode the worker launches Blender as a fresh subprocess, not as a
+nested container. That child therefore shares the supervisor container's
+network namespace: it is internal-only, not `--network none`. The subprocess
+environment is scrubbed so it receives no API token, database password, Redis
+credential, object-storage secret, provider key, or Docker credential. The
+worker container has no Docker socket, host home mount, device, or SSH agent.
+
+Auto-execution is disabled in every lane. These controls are defense in depth
+around trusted generator code; Blender is not treated as a sandbox for hostile
+scripts or files. The VPS reference additionally requires distinct public
+signed-download and internal object endpoints, and an operator-maintained
+versioned S3-compatible service rather than the bundled local MinIO fixture.
 
 See [threat-model.md](threat-model.md) and [deployment.md](deployment.md) for
 the detailed controls and operator invariants.

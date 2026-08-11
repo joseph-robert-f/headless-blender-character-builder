@@ -316,19 +316,22 @@ def _image_id(runner: CommandRunner, reference: str, label: str) -> str:
             "docker",
             "image",
             "inspect",
-            "--platform",
-            "linux/amd64",
             "--format",
-            "{{.Id}}",
+            "{{.Os}}/{{.Architecture}}|{{.Id}}",
             reference,
         ),
         label=label,
         timeout=60,
     )
     value = result.stdout.decode("ascii", "strict").strip()
-    if IMAGE_ID.fullmatch(value) is None:
+    fields = value.split("|", 1)
+    if (
+        len(fields) != 2
+        or fields[0] != "linux/amd64"
+        or IMAGE_ID.fullmatch(fields[1]) is None
+    ):
         raise GateError(label + "_invalid")
-    return value
+    return fields[1]
 
 
 def _target_environment(

@@ -73,6 +73,12 @@ def _request(raw_path: str) -> tuple[Path, BuildRequest]:
         raise BuilderCliFailure(int(ExitCode.INVALID_REQUEST), "BuildRequest was rejected") from exc
 
 
+def validate_request(request_path: str) -> None:
+    """Validate one bounded BuildRequest without starting Blender or writing output."""
+
+    _request(request_path)
+
+
 def _new_output(raw_path: str) -> Path:
     try:
         output = Path(raw_path).expanduser().resolve(strict=False)
@@ -465,4 +471,9 @@ def verify_artifacts(request_path: str, output_path: str) -> None:
             raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "could not remove verifier scratch") from exc
 
 
-__all__ = ["BuilderCliFailure", "build_artifacts", "verify_artifacts"]
+__all__ = [
+    "BuilderCliFailure",
+    "build_artifacts",
+    "validate_request",
+    "verify_artifacts",
+]

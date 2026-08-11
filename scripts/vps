@@ -36,6 +36,10 @@ IMAGE_DIGEST = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._/:+-]*@sha256:([0-9a-f]{64})$"
 )
 SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
+COMPOSE_VERSION = re.compile(
+    r"^v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:[-+][0-9A-Za-z.-]+)?$"
+)
+MINIMUM_COMPOSE_VERSION = (2, 24, 4)
 STORAGE_ENDPOINT = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::[0-9]{1,5})?$"
 )
@@ -646,6 +650,38 @@ def _compose_command(
     return [docker, "compose"]
 
 
+def _validate_compose_version(
+    command: Sequence[str],
+    environment: Mapping[str, str],
+) -> None:
+    message = "Docker Compose 2.24.4 or newer is required"
+    try:
+        result = subprocess.run(
+            list(command) + ["version", "--short"],
+            cwd=ROOT,
+            env=dict(environment),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise OperatorError(message) from exc
+    if result.returncode != 0 or len(result.stdout) > 1024 or len(result.stderr) > 4096:
+        raise OperatorError(message)
+    try:
+        rendered = result.stdout.decode("ascii", "strict").strip()
+    except UnicodeDecodeError as exc:
+        raise OperatorError(message) from exc
+    match = COMPOSE_VERSION.fullmatch(rendered)
+    if match is None:
+        raise OperatorError(message)
+    version = tuple(int(field) for field in match.groups())
+    if version < MINIMUM_COMPOSE_VERSION:
+        raise OperatorError(message)
+
+
 def _run_safe(
     command: Sequence[str],
     *,
@@ -1174,6 +1210,10 @@ def preflight(
         owner_uid=ROOT_OPERATOR_UID if root_trust else None,
     )
     environment = _operator_environment(vps, lock, root_trust=root_trust)
+    _validate_compose_version(
+        _compose_command(compose_bin, root_trust=root_trust),
+        environment,
+    )
     prefix = _compose_prefix(
         config_path,
         lock_path,

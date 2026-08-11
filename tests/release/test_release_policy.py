@@ -133,6 +133,36 @@ class ReleasePolicyTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, combined)
 
+    def test_release_candidate_retains_uniquely_named_checksum_evidence(self) -> None:
+        path = ROOT / ".github" / "workflows" / "release-candidate.yml"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        job = document.get("jobs", {}).get("release-check")
+        self.assertIsInstance(job, dict)
+        steps = job.get("steps")
+        self.assertIsInstance(steps, list)
+        gate = next(
+            step
+            for step in steps
+            if isinstance(step, dict) and step.get("run") == "make release-check"
+        )
+        run_id = "github-${{ github.run_id }}-${{ github.run_attempt }}"
+        self.assertEqual(gate.get("env", {}).get("HBCB_RELEASE_RUN_ID"), run_id)
+        upload = next(
+            step
+            for step in steps
+            if isinstance(step, dict)
+            and str(step.get("uses", "")).startswith("actions/upload-artifact@")
+        )
+        self.assertEqual(upload.get("uses"), UPLOAD_ARTIFACT_ACTION)
+        self.assertEqual(upload.get("with", {}).get("if-no-files-found"), "error")
+        self.assertEqual(upload.get("with", {}).get("retention-days"), 7)
+        self.assertEqual(
+            upload.get("with", {}).get("path"),
+            "build/release-check/" + run_id,
+        )
+        self.assertIn("${{ github.run_id }}", upload.get("with", {}).get("name", ""))
+        self.assertIn("${{ github.run_attempt }}", upload.get("with", {}).get("name", ""))
+
 
 if __name__ == "__main__":
     unittest.main()
