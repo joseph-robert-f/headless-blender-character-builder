@@ -30,7 +30,8 @@ SCANNER_ASSETS = {
     ("linux", "x86_64"): ("osv-scanner_linux_amd64", "bc98e15319ed0d515e3f9235287ba53cdc5535d576d24fd573978ecfe9ab92dc"),
 }
 MAX_SCANNER_BYTES = 80 * 1024 * 1024
-MAX_REPORT_BYTES = 4 * 1024 * 1024
+MAX_OSV_REPORT_BYTES = 8 * 1024 * 1024
+MAX_AUDIT_REPORT_BYTES = 4 * 1024 * 1024
 MAX_OUTPUT_BYTES = 32 * 1024 * 1024
 REPORT_RESERVE_BYTES = 1024 * 1024
 MAX_POLICY_BYTES = 1024 * 1024
@@ -338,7 +339,7 @@ def validate_scan_report(path: Path, code: int) -> tuple:
     try:
         if path.is_symlink() or not path.is_file():
             return (127 if code in (0, 1) else code), None
-        if path.stat().st_size <= 0 or path.stat().st_size > MAX_REPORT_BYTES:
+        if path.stat().st_size <= 0 or path.stat().st_size > MAX_OSV_REPORT_BYTES:
             path.unlink()
             return 127, None
         document = json.loads(path.read_text(encoding="utf-8"))
@@ -348,7 +349,7 @@ def validate_scan_report(path: Path, code: int) -> tuple:
         payload = json.dumps(sanitize_report_value(document), indent=2, sort_keys=True) + "\n"
         payload_bytes = len(payload.encode("utf-8"))
         if (
-            payload_bytes > MAX_REPORT_BYTES
+            payload_bytes > MAX_OSV_REPORT_BYTES
             or directory_bytes(path.parent, exclude=path) + payload_bytes
             > MAX_OUTPUT_BYTES - REPORT_RESERVE_BYTES
         ):
@@ -508,7 +509,7 @@ def execute(output: Path, include_images: bool, scanner_override: Optional[Path]
             candidate.is_symlink()
             or not candidate.is_file()
             or candidate.stat().st_size <= 0
-            or candidate.stat().st_size > MAX_REPORT_BYTES
+            or candidate.stat().st_size > MAX_AUDIT_REPORT_BYTES
         ):
             if candidate.exists() or candidate.is_symlink():
                 candidate.unlink()

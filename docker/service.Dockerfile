@@ -60,9 +60,9 @@ ENTRYPOINT ["/opt/blender/4.5/python/bin/python3.11", "-m", "hbcb_service.worker
 
 # The HTTP/control-plane image deliberately contains no Blender executable.
 # Debian resolution is frozen to the same immutable snapshot as the G4 image.
-FROM --platform=linux/amd64 debian:bookworm-20260713-slim@sha256:63a496b5d3b99214b39f5ed70eb71a61e590a77979c79cbee4faf991f8c0783e AS service-base
+FROM --platform=linux/amd64 debian:bookworm-20260803-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241 AS service-base
 
-ARG DEBIAN_SNAPSHOT=20260714T000000Z
+ARG DEBIAN_SNAPSHOT=20260804T000000Z
 
 LABEL org.opencontainers.image.title="Headless Blender Character Builder service" \
       org.opencontainers.image.source="https://github.com/joseph-robert-f/headless-blender-character-builder" \
