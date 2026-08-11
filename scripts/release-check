@@ -117,7 +117,9 @@ test ! -e "$audit_source/.git" || fail 'checkout-index export unexpectedly conta
   cd "$audit_source"
   PYTHONDONTWRITEBYTECODE=1 "$python_bin" -m unittest discover \
     -s tests/release -p 'test_*.py' -v
+  PYTHONDONTWRITEBYTECODE=1 "$python_bin" scripts/dependency-audit
   "$python_bin" -m json.tool .github/workflows/ci.yml >/dev/null
+  "$python_bin" -m json.tool .github/workflows/dependency-audit.yml >/dev/null
   "$python_bin" -m json.tool .github/workflows/release-candidate.yml >/dev/null
 )
 

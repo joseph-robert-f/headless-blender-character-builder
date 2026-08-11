@@ -37,6 +37,12 @@ credentials, file parsing, or permissions must update `docs/threat-model.md`
 and the corresponding tests. Generated evidence belongs in ignored
 test-output directories or release assets rather than normal source commits.
 
+Dependency changes follow
+[`docs/dependency-maintenance.md`](docs/dependency-maintenance.md). Update the
+declaration, hashes, reviewed licenses/notices, provenance, recovery fixtures,
+and migration evidence as one coherent change; a version-discovery report is
+not approval to merge an isolated pin bump.
+
 Do not add claims of automatic IP clearance or guaranteed physical printing.
 The required output and rights boundary is documented in `OUTPUT_POLICY.md`;
 governance and review rules are in `GOVERNANCE.md`.

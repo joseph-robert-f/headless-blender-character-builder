@@ -39,6 +39,7 @@ class ReleaseWrapperTests(unittest.TestCase):
             "make g8-static",
             "make g8-caddy",
             "make g8-recovery",
+            "scripts/dependency-audit",
             "scripts/service-sbom",
             "scripts/release-artifacts",
             "--demo-artifacts",
@@ -59,7 +60,14 @@ class ReleaseWrapperTests(unittest.TestCase):
 
     def test_make_and_docker_release_wiring_is_explicit(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-        for target in ("release-static", "security-check", "release-check"):
+        for target in (
+            "dependency-check",
+            "dependency-audit",
+            "dependency-scan",
+            "release-static",
+            "security-check",
+            "release-check",
+        ):
             self.assertRegex(makefile, rf"(?m)^{re.escape(target)}:")
         self.assertIn("HBCB_INDEX_AUDITED", makefile)
         self.assertIn("env -u HBCB_COMPOSE_BIN", makefile)
@@ -134,12 +142,17 @@ class ReleaseWrapperTests(unittest.TestCase):
             "docs/architecture.md",
             "docs/backlog.md",
             "docs/compatibility.md",
+            "docs/dependency-maintenance.md",
             "docs/licensing.md",
             "docs/release-process.md",
             "docs/release-notes/v0.1.0-rc.1.md",
             ".github/CODEOWNERS",
-            ".github/dependabot.yml",
             ".github/pull_request_template.md",
+            ".github/workflows/dependency-audit.yml",
+            "release/dependency-policy.json",
+            "scripts/dependency-audit",
+            "scripts/dependency-lock-from-wheels",
+            "scripts/dependency-scan",
         )
         for relative in required:
             self.assertTrue((ROOT / relative).is_file(), relative)

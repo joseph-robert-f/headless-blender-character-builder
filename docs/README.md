@@ -33,6 +33,8 @@ implementation plan in order to build a model.
   permissions, lifecycle operations, backup, restore, and upgrades
 - [Release process](release-process.md) — local release proof, conditional
   publication, corresponding source, and operator checklist
+- [Dependency maintenance](dependency-maintenance.md) — offline consistency,
+  scheduled vulnerability reports, and coordinated manual updates
 - [v0.1.0-rc.1 release notes](release-notes/v0.1.0-rc.1.md) — candidate scope and
   limitations
 

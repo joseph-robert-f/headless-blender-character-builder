@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Create a hash-lock candidate from one reviewed directory of wheel files."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+import re
+import sys
+import zipfile
+from email.parser import BytesParser
+from email.policy import compat32
+from pathlib import Path
+from typing import Dict, Optional, Sequence, Tuple
+
+
+MAX_WHEELS = 256
+MAX_WHEEL_BYTES = 256 * 1024 * 1024
+MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
+MAX_METADATA_BYTES = 1024 * 1024
+SAFE_VERSION = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.!+_-]{0,126}[A-Za-z0-9])?$")
+
+
+class LockError(RuntimeError):
+    pass
+
+
+def canonical_name(value: str) -> str:
+    name = re.sub(r"[-_.]+", "-", value).lower()
+    if re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", name) is None:
+        raise LockError("wheel metadata contains an invalid distribution name")
+    return name
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while True:
+            chunk = stream.read(1024 * 1024)
+            if not chunk:
+                return digest.hexdigest()
+            digest.update(chunk)
+
+
+def wheel_identity(path: Path) -> Tuple[str, str]:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            metadata = [
+                item
+                for item in archive.infolist()
+                if item.filename.endswith(".dist-info/METADATA")
+                and "/" not in item.filename[: -len(".dist-info/METADATA")]
+            ]
+            if len(metadata) != 1 or metadata[0].file_size > MAX_METADATA_BYTES:
+                raise LockError("wheel must contain one bounded top-level dist-info/METADATA: " + path.name)
+            document = BytesParser(policy=compat32).parsebytes(archive.read(metadata[0]))
+    except (OSError, zipfile.BadZipFile, RuntimeError) as failure:
+        raise LockError("wheel is unreadable or invalid: " + path.name) from failure
+    raw_name = document.get("Name")
+    version = document.get("Version")
+    if not isinstance(raw_name, str) or not isinstance(version, str):
+        raise LockError("wheel metadata lacks Name or Version: " + path.name)
+    if SAFE_VERSION.fullmatch(version) is None:
+        raise LockError("wheel metadata contains an invalid version: " + path.name)
+    name = canonical_name(raw_name)
+    filename_parts = path.name[:-4].split("-")
+    if len(filename_parts) < 5 or canonical_name(filename_parts[0]) != name or filename_parts[1] != version:
+        raise LockError("wheel filename and metadata identity disagree: " + path.name)
+    return name, version
+
+
+def render(wheels: Path) -> str:
+    if wheels.is_symlink() or not wheels.is_dir():
+        raise LockError("wheel input must be a real directory")
+    candidates = sorted(wheels.iterdir(), key=lambda item: item.name)
+    if not candidates or len(candidates) > MAX_WHEELS:
+        raise LockError("wheel directory must contain between 1 and %d files" % MAX_WHEELS)
+    records: Dict[str, Tuple[str, str]] = {}
+    total = 0
+    for path in candidates:
+        if path.is_symlink() or not path.is_file() or path.suffix != ".whl":
+            raise LockError("wheel directory contains a linked, non-file, or non-wheel entry")
+        size = path.stat().st_size
+        total += size
+        if size <= 0 or size > MAX_WHEEL_BYTES or total > MAX_TOTAL_BYTES:
+            raise LockError("wheel input exceeds the reviewed size limits")
+        name, version = wheel_identity(path)
+        if name in records:
+            raise LockError("wheel directory contains duplicate distribution: " + name)
+        records[name] = (version, sha256(path))
+    lines = [
+        "# Candidate hash lock generated from reviewed Linux amd64 CPython 3.11 wheels.",
+        "# Review the resolver output, licenses, notices, and platform before replacing a tracked lock.",
+    ]
+    for name in sorted(records):
+        version, digest = records[name]
+        lines.extend([name + "==" + version + " \\", "    --hash=sha256:" + digest])
+    return "\n".join(lines) + "\n"
+
+
+def main(arguments: Optional[Sequence[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--wheels", required=True, type=Path, help="directory containing only reviewed wheel files")
+    parser.add_argument("--output", required=True, type=Path, help="new candidate lock path; existing files are refused")
+    options = parser.parse_args(arguments)
+    os.umask(0o077)
+    try:
+        payload = render(options.wheels.resolve())
+        with options.output.open("x", encoding="utf-8", newline="\n") as stream:
+            stream.write(payload)
+    except (LockError, OSError) as failure:
+        sys.stderr.write("DEPENDENCY_LOCK: %s\n" % failure)
+        return 2
+    sys.stdout.write("DEPENDENCY_LOCK: wrote candidate %s\n" % options.output)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

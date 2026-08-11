@@ -82,17 +82,32 @@ GHCR access. A release operator then:
 1. verifies branch protection, required checks, CODEOWNERS, secret scanning,
    push protection, and private vulnerability reporting;
 2. reruns the local release check on the exact commit;
-3. creates a signed `v0.1.0-rc.1` tag;
-4. builds `linux/amd64` builder, API, and worker images from that tag;
-5. completes the container corresponding-source gate above;
-6. pushes immutable version tags to GHCR, captures registry digests, and never
+3. runs `make dependency-scan` from that exact commit using a new output
+   directory; requires exit `0`; reviews the retained reports; and performs
+   publication no more than seven days after that scan;
+4. creates a signed `v0.1.0-rc.1` tag;
+5. builds `linux/amd64` builder, API, and worker images from that tag;
+6. completes the container corresponding-source gate above;
+7. pushes immutable version tags to GHCR, captures registry digests, and never
    deploys by `latest`;
-7. attaches the generated sample bundle, checksums, SBOMs, notices,
+8. attaches the generated sample bundle, checksums, SBOMs, notices,
    corresponding source, and release notes to a draft GitHub Release;
-8. verifies the published image by digest in a clean environment;
-9. publishes the release only after the digest-based smoke passes.
+9. verifies the published image by digest in a clean environment;
+10. publishes the release only after the digest-based smoke passes.
 
-No step above is performed by `make release-check`. Exact registry and GitHub
+Run the dependency-scan step from the clean release worktree with a unique,
+ignored destination and retain that directory until publication review:
+
+```sh
+release_commit=$(git rev-parse HEAD)
+dependency_evidence="$PWD/build/dependency-audit-release-${release_commit}"
+test ! -e "$dependency_evidence"
+make dependency-scan DEPENDENCY_OUTPUT="$dependency_evidence"
+test "$(git rev-parse HEAD)" = "$release_commit"
+```
+
+`make release-check` performs only the local gate in step 2; it does not run the
+networked dependency scan or any publication step. Exact registry and GitHub
 commands are intentionally operator-run so credentials and irreversible public
 actions cannot be triggered by a local test target. After reviewing every
 placeholder and receiving explicit publication authorization, the command
@@ -134,18 +149,26 @@ and [`gh release create` manual](https://cli.github.com/manual/gh_release_create
 
 ## Dependency maintenance
 
-Dependabot monitors the two Python lock surfaces, the Dockerfiles under
-`docker/`, and the root `compose.yaml`. Root Compose updates are limited to the
-external PostgreSQL and Redis images; local `hbcb-*` build tags are not registry
-dependencies. A Compose image update must also synchronize
-`tests/deployment/g8_recovery_compose.yaml`, its exact-pin assertions, and any
-affected notice or license evidence before merge.
+`make dependency-check` is the offline, release-blocking consistency gate. It
+binds Python declarations to hash locks and reviewed evidence, every Debian
+base stage to OCI/SPDX provenance, and root PostgreSQL/Redis pins to recovery
+Compose, exact assertions, and notices. It also binds the Caddy gate reference
+to the operator lock example and notice. The scheduled/manual
+`dependency-audit.yml` workflow has read-only repository permission. It reports
+upstream status and vulnerability findings without creating branches, issues,
+or pull requests.
+
+Dependency updates are prepared as coordinated maintainer changes. A Compose
+image update must synchronize `tests/deployment/g8_recovery_compose.yaml`, its
+exact-pin assertions, migration/recovery behavior, and affected notice or
+license evidence before merge. A database major version is a migration project,
+not an automated image bump. The complete process and exit meanings are in
+[dependency-maintenance.md](dependency-maintenance.md).
 
 GitHub Actions remain full-commit-SHA pinned and are reviewed manually because
-the dependency-free JSON-form YAML workflows cannot be safely rewritten by the
-current Dependabot updater. Action-pin changes must retain
-`persist-credentials: false`, pass the release-policy tests, and record the
-reviewed upstream release/tag for the selected commit.
+workflow permissions and external code require explicit trust review. Action-
+pin changes must retain `persist-credentials: false`, pass the release-policy
+tests, and record the reviewed upstream release/tag for the selected commit.
 
 ## Rollback
 
@@ -159,6 +182,8 @@ verified pre-upgrade backup into a validated empty namespace. See
 
 - [ ] Outside clean-room quickstart completed, if a reviewer is available.
 - [ ] GitHub-hosted CI passed on the published commit.
+- [ ] A complete dependency scan exited `0` on this exact commit within the
+      last seven days, and its reports were reviewed.
 - [ ] GitHub license detection recognizes GPL-3.0.
 - [ ] Private vulnerability reporting and secret protection are enabled.
 - [ ] The exact image corresponding-source inventory, delivery method,

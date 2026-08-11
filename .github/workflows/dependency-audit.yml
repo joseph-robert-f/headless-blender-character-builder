@@ -1,0 +1,48 @@
+{
+  "name": "Dependency audit",
+  "on": {
+    "schedule": [
+      {"cron": "23 13 * * 1"}
+    ],
+    "workflow_dispatch": {}
+  },
+  "permissions": {"contents": "read"},
+  "concurrency": {
+    "group": "dependency-audit-${{ github.ref }}",
+    "cancel-in-progress": true
+  },
+  "jobs": {
+    "audit": {
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 180,
+      "steps": [
+        {
+          "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+          "with": {"persist-credentials": false}
+        },
+        {
+          "id": "scan",
+          "name": "Audit dependency policy, freshness, and vulnerabilities",
+          "run": "set +e\n./scripts/dependency-scan --output build/dependency-audit --images\nscan_status=$?\nset -e\nif test -f build/dependency-audit/scan-summary.md; then\n  cat build/dependency-audit/scan-summary.md >> \"$GITHUB_STEP_SUMMARY\"\nelse\n  printf '%s\\n' '# Networked dependency scan' '' 'Status: **incomplete**' >> \"$GITHUB_STEP_SUMMARY\"\n  scan_status=2\nfi\nprintf 'status=%s\\n' \"$scan_status\" >> \"$GITHUB_OUTPUT\"\nexit 0"
+        },
+        {
+          "if": "${{ always() }}",
+          "name": "Retain bounded audit reports",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "if-no-files-found": "error",
+            "name": "dependency-audit-${{ github.run_id }}",
+            "path": "build/dependency-audit",
+            "retention-days": 7
+          }
+        },
+        {
+          "env": {"SCAN_STATUS": "${{ steps.scan.outputs.status }}"},
+          "if": "${{ always() }}",
+          "name": "Enforce complete vulnerability result",
+          "run": "case \"$SCAN_STATUS\" in\n  0) printf '%s\\n' 'DEPENDENCY_AUDIT: PASS' ;;\n  1) printf '%s\\n' 'DEPENDENCY_AUDIT: FINDINGS' >&2; exit 1 ;;\n  *) printf '%s\\n' 'DEPENDENCY_AUDIT: INCOMPLETE' >&2; exit 1 ;;\nesac"
+        }
+      ]
+    }
+  }
+}

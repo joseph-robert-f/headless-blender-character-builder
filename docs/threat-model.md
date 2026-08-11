@@ -116,7 +116,7 @@ The following are release invariants, not optional recommendations:
 | Retry/cancellation race | Attempt fencing, cancellation-wins publication locking, nested-process termination, private attempt keys, and success-last publication. | Host loss at a boundary can leave private/orphaned versions for maintenance cleanup. |
 | Cross-attempt or cross-tenant artifact disclosure | Canonical attempt-scoped keys, exact object versions, authorization, private buckets, version-pinned URLs, and separate API/worker/maintenance storage roles. | v0.1 is one deployment namespace and not a fully designed multi-tenant service. |
 | Artifact corruption or false success | Private staging, atomic/local or immutable/object publication, SHA-256 and byte-size evidence, fresh Blender reload, GLB/STL re-import, and success-only manifest. | Hashes prove recorded bytes, not artistic quality, legal clearance, or manufacturing fitness. |
-| Dependency or image compromise | Digest-pinned base/service images, checksum-pinned Blender and downloads, hash-locked wheels, immutable Debian snapshot, generated SPDX SBOM, preserved notices, and clean-source release gates. | Upstream compromise before pinning and vulnerabilities in pinned native code remain possible. Maintain supported-version and patch review. |
+| Dependency or image compromise | Digest-pinned base/service images, checksum-pinned Blender and downloads, hash-locked wheels, immutable Debian snapshot, generated SPDX SBOM, preserved notices, clean-source release gates, and a scheduled checksum-pinned vulnerability scan. | Upstream compromise before pinning, scanner/database errors, and vulnerabilities absent from current advisory data remain possible. Maintain supported-version and patch review. |
 | Container escape or host compromise | Non-root containers, read-only roots, dropped capabilities, no-new-privileges, fixed mounts, resource limits, and no Docker socket. | Containers share the host kernel. A kernel/runtime/native-code exploit can cross the boundary; use a dedicated patched host and stronger isolation for future hostile-file processing. |
 | Database/queue/storage privilege escalation | Generated distinct API, worker, migrator, and maintenance identities; explicit grants; negative permission probes; private/internal networks. | Operator misconfiguration or provider-side IAM mistakes remain possible and must be checked during deployment. |
 | Sensitive logging or retention | Structured redacted logs, private storage, explicit retention/maintenance path, version-aware deletion, and protected backups. | Operators choose retention, backup access, and log export destinations and must publish their own privacy policy. |
@@ -134,8 +134,21 @@ The following are release invariants, not optional recommendations:
 - Workflows using `pull_request_target` must not execute untrusted checkout
   content.
 - Dependency updates require the same tests and security/licensing review as
-  direct edits. Dependabot configuration proposes updates; it does not make
-  them safe automatically.
+  direct edits. Repository code reports candidates and findings but has no
+  permission or path to create dependency pull requests. Operators who want no
+  Dependabot PRs must also disable repository-level Dependabot security updates;
+  removing its configuration disables only configured version updates.
+- The networked dependency workflow runs only on the default branch schedule or
+  explicit maintainer dispatch. It sends public package names, versions,
+  ecosystems, file hashes, and public image metadata to the OSV/deps.dev APIs,
+  PyPI, Docker registries, and GitHub-hosted official manifests; OSV-Scanner
+  does not transmit source code. Docker builds also access only the pinned
+  public sources already declared by the Dockerfiles. No repository, provider,
+  registry, or deployment credential is supplied to the scan.
+- Scanner binaries and GitHub Actions are immutable/checksum pinned; detailed
+  reports have per-file and aggregate byte limits, are retained for seven days,
+  and rendered summaries exclude remote vulnerability descriptions.
+  Registry/advisory outages fail the scan as incomplete rather than clean.
 - Release publication, image signing, remote creation, DNS/TLS changes, and
   live deployment are explicit operator actions, not local-test side effects.
 

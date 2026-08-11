@@ -64,7 +64,7 @@ These services are separate programs and retain their own licenses:
 | MinIO server | Source-built `RELEASE.2025-10-15T17-29-55Z`, local compatibility fixture only | `AGPL-3.0-or-later`; the image copies upstream `LICENSE` and `CREDITS` to `/licenses/minio/`. This final Community release is not the recommended production object store. |
 | MinIO client (`mc`) | `RELEASE.2025-08-13T08-35-41Z`, health and initialization helper | `AGPL-3.0-or-later`; retain the upstream client license when redistributing the binary. |
 | Go toolchain | 1.24.8, MinIO build stage only | Go's BSD-style license; the toolchain is not copied into the MinIO runtime stage. |
-| Caddy | Operator-supplied, digest-pinned VPS edge image | `Apache-2.0`; the repository does not vendor or publish a Caddy image. |
+| Caddy | `caddy:2.11.4-alpine`, operator-supplied digest-pinned VPS edge image | `Apache-2.0`; the repository does not vendor or publish a Caddy image. |
 
 The local MinIO, PostgreSQL, and Redis containers are development fixtures.
 Production operators bring and license their own maintained database, queue,

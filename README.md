@@ -196,6 +196,9 @@ Useful contributor commands:
 make test-unit       # builder contracts/policies plus service units
 make test-blender    # real headless Blender G2/G3 gates
 make check           # lint/static + unit/security + Blender
+make dependency-check # offline dependency synchronization gate
+make dependency-audit # read-only upstream version and image-status report
+make dependency-scan  # networked OSV scan of locks and all release images
 make release-static  # tracked-file, secret, license, docs, SBOM, workflow audits
 make release-check   # complete clean-index release-candidate gate
 ```
@@ -205,6 +208,9 @@ runs the release-blocking builder, service, recovery, security, documentation,
 SBOM, and packaging gates there. It creates local evidence and versioned image
 tags; it never pushes, tags Git, creates a Release, deploys, or reads registry
 credentials. See [the release process](docs/release-process.md).
+Dependency discovery is maintainer-controlled rather than auto-merged: see the
+[dependency maintenance guide](docs/dependency-maintenance.md) for the weekly
+read-only audit, complete image scan, and coordinated update procedure.
 
 ## Security boundary
 

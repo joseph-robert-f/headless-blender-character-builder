@@ -1,0 +1,622 @@
+#!/usr/bin/env python3
+"""Run the networked dependency audit and checksum-pinned OSV scans."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Dict, List, Mapping, Optional, Sequence
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCANNER_VERSION = "2.3.8"
+SCANNER_ASSETS = {
+    ("darwin", "arm64"): ("osv-scanner_darwin_arm64", "a8cd6507b06239f463a7642430cfd2d154882f150f6e30cdc0653e28dfc34216"),
+    ("darwin", "x86_64"): ("osv-scanner_darwin_amd64", "b8a80a9f14ca4c0cd0fc2d351b28f740da9e6a5b18385ac9f9d083360b5b504e"),
+    ("linux", "aarch64"): ("osv-scanner_linux_arm64", "8158b18edd2d03b1a30d905ca91b032bc62262167be8f206c27114f08823e27c"),
+    ("linux", "arm64"): ("osv-scanner_linux_arm64", "8158b18edd2d03b1a30d905ca91b032bc62262167be8f206c27114f08823e27c"),
+    ("linux", "amd64"): ("osv-scanner_linux_amd64", "bc98e15319ed0d515e3f9235287ba53cdc5535d576d24fd573978ecfe9ab92dc"),
+    ("linux", "x86_64"): ("osv-scanner_linux_amd64", "bc98e15319ed0d515e3f9235287ba53cdc5535d576d24fd573978ecfe9ab92dc"),
+}
+MAX_SCANNER_BYTES = 80 * 1024 * 1024
+MAX_REPORT_BYTES = 4 * 1024 * 1024
+MAX_OUTPUT_BYTES = 32 * 1024 * 1024
+REPORT_RESERVE_BYTES = 1024 * 1024
+MAX_POLICY_BYTES = 1024 * 1024
+SAFE_ID = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
+SAFE_IMAGE_REFERENCE = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9._/:@+-]{0,510}[A-Za-z0-9])?$"
+)
+LOCAL_IMAGES = (
+    ("builder", "hbcb-dependency-audit-builder:local"),
+    ("minio", "hbcb-dependency-audit-minio:local"),
+    ("api", "hbcb-dependency-audit-api:local"),
+    ("worker", "hbcb-dependency-audit-worker:local"),
+)
+
+
+class ScanError(RuntimeError):
+    pass
+
+
+def bounded(value: object, maximum: int = 500) -> str:
+    text = str(value).replace("\r", " ").replace("\n", " ")
+    return text[:maximum]
+
+
+def write_json(path: Path, document: Mapping[str, object]) -> None:
+    path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def directory_bytes(directory: Path, exclude: Optional[Path] = None) -> int:
+    total = 0
+    for candidate in directory.iterdir():
+        if exclude is not None and candidate == exclude:
+            continue
+        if candidate.is_symlink() or not candidate.is_file():
+            continue
+        total += candidate.stat().st_size
+    return total
+
+
+def expected_external_image_ids(root: Path = ROOT) -> tuple:
+    path = root / "release" / "dependency-policy.json"
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_POLICY_BYTES:
+        raise ScanError("dependency policy is missing, linked, or oversized")
+    try:
+        policy = json.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeError, ValueError, RecursionError) as failure:
+        raise ScanError("dependency policy is not valid JSON") from failure
+    if not isinstance(policy, dict) or policy.get("format") != "hbcb-dependency-policy/v1":
+        raise ScanError("dependency policy format is invalid")
+
+    identifiers: List[str] = ["docker-base"]
+    for key in ("compose_images", "literal_images"):
+        entries = policy.get(key)
+        if not isinstance(entries, list) or not entries:
+            raise ScanError("dependency policy %s inventory is empty" % key)
+        for entry in entries:
+            identifier = entry.get("id") if isinstance(entry, dict) else None
+            if not isinstance(identifier, str):
+                raise ScanError("dependency policy %s identifier is invalid" % key)
+            identifiers.append(identifier)
+
+    local_ids = {item[0] for item in LOCAL_IMAGES}
+    seen = set()
+    for identifier in identifiers:
+        if SAFE_ID.fullmatch(identifier) is None:
+            raise ScanError("dependency image identifier is unsafe: %s" % bounded(identifier))
+        if identifier in seen or identifier in local_ids:
+            raise ScanError("dependency image identifier is duplicated: %s" % identifier)
+        seen.add(identifier)
+    return tuple(sorted(identifiers))
+
+
+def validate_external_images(raw_images: object, expected_ids: Sequence[str]) -> List[Dict[str, str]]:
+    if not isinstance(raw_images, list):
+        raise ValueError("missing image inventory")
+    images: Dict[str, str] = {}
+    for item in raw_images:
+        if not isinstance(item, dict):
+            raise ValueError("invalid image inventory item")
+        identifier = item.get("id")
+        reference = item.get("reference")
+        if not isinstance(identifier, str) or SAFE_ID.fullmatch(identifier) is None:
+            raise ValueError("unsafe image inventory identifier")
+        if identifier in images:
+            raise ValueError("duplicate image inventory identifier")
+        if (
+            not isinstance(reference, str)
+            or SAFE_IMAGE_REFERENCE.fullmatch(reference) is None
+            or re.search(r"@sha256:[0-9a-f]{64}$", reference) is None
+        ):
+            raise ValueError("unsafe or mutable image inventory reference")
+        images[identifier] = reference
+    if set(images) != set(expected_ids):
+        raise ValueError("image inventory does not match the dependency policy")
+    return [{"id": identifier, "reference": images[identifier]} for identifier in sorted(images)]
+
+
+def run(
+    command: Sequence[str],
+    cwd: Path = ROOT,
+    quiet: bool = False,
+    timeout: int = 900,
+) -> int:
+    try:
+        completed = subprocess.run(
+            list(command),
+            cwd=str(cwd),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE if quiet else None,
+            stderr=subprocess.PIPE if quiet else None,
+            check=False,
+            env=dict(os.environ, LC_ALL="C", PYTHONDONTWRITEBYTECODE="1"),
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return 124
+    except OSError:
+        return 127
+    return completed.returncode
+
+
+def scanner_asset() -> tuple:
+    key = (sys.platform, platform.machine().lower())
+    selected = SCANNER_ASSETS.get(key)
+    if selected is None:
+        raise ScanError("the reviewed OSV-Scanner release does not support %s/%s" % key)
+    return selected
+
+
+def download_scanner(destination: Path, asset: str, expected_sha256: str) -> None:
+    url = "https://github.com/google/osv-scanner/releases/download/v%s/%s" % (SCANNER_VERSION, asset)
+    request = urllib.request.Request(url, headers={"User-Agent": "hbcb-dependency-scan/1"})
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response, destination.open("wb") as output:
+            digest = hashlib.sha256()
+            total = 0
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_SCANNER_BYTES:
+                    raise ScanError("OSV-Scanner release asset exceeded the size limit")
+                digest.update(chunk)
+                output.write(chunk)
+    except (OSError, urllib.error.URLError) as failure:
+        raise ScanError("OSV-Scanner release download failed") from failure
+    if digest.hexdigest() != expected_sha256:
+        raise ScanError("OSV-Scanner release checksum did not match the reviewed value")
+    destination.chmod(0o500)
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    total = 0
+    with path.open("rb") as stream:
+        while True:
+            chunk = stream.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_SCANNER_BYTES:
+                raise ScanError("OSV-Scanner executable exceeded the size limit")
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_scanner(scanner: Path) -> None:
+    try:
+        completed = subprocess.run(
+            [str(scanner), "--version"],
+            cwd=str(ROOT),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            env=dict(os.environ, LC_ALL="C"),
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as failure:
+        raise ScanError("OSV-Scanner version check failed") from failure
+    output = (completed.stdout + completed.stderr)[:4096].decode("utf-8", "replace")
+    if completed.returncode != 0 or re.search(r"(?<![0-9])v?" + re.escape(SCANNER_VERSION) + r"(?![0-9])", output) is None:
+        raise ScanError("OSV-Scanner version did not match the reviewed release")
+
+
+def git_blob_id(path: Path) -> str:
+    payload = path.read_bytes()
+    header = b"blob " + str(len(payload)).encode("ascii") + b"\0"
+    return hashlib.sha1(header + payload).hexdigest()
+
+
+def build_images(records: List[Dict[str, object]]) -> bool:
+    builder = LOCAL_IMAGES[0][1]
+    recipe = git_blob_id(ROOT / "docker" / "minio.Dockerfile")
+    commands = (
+        (
+            "builder",
+            1800,
+            [
+                "docker",
+                "build",
+                "--file",
+                "docker/builder.Dockerfile",
+                "--target",
+                "builder",
+                "--tag",
+                builder,
+                "--platform",
+                "linux/amd64",
+                ".",
+            ],
+        ),
+        (
+            "minio",
+            1800,
+            [
+                "docker",
+                "build",
+                "--file",
+                "docker/minio.Dockerfile",
+                "--target",
+                "minio",
+                "--build-arg",
+                "HBCB_MINIO_RECIPE_ID=" + recipe,
+                "--tag",
+                LOCAL_IMAGES[1][1],
+                "--platform",
+                "linux/amd64",
+                ".",
+            ],
+        ),
+        (
+            "api",
+            900,
+            [
+                "docker",
+                "build",
+                "--file",
+                "docker/service.Dockerfile",
+                "--target",
+                "api",
+                "--build-arg",
+                "HBCB_BUILDER_IMAGE=" + builder,
+                "--tag",
+                LOCAL_IMAGES[2][1],
+                "--platform",
+                "linux/amd64",
+                ".",
+            ],
+        ),
+        (
+            "worker",
+            900,
+            [
+                "docker",
+                "build",
+                "--file",
+                "docker/service.Dockerfile",
+                "--target",
+                "worker",
+                "--build-arg",
+                "HBCB_BUILDER_IMAGE=" + builder,
+                "--tag",
+                LOCAL_IMAGES[3][1],
+                "--platform",
+                "linux/amd64",
+                ".",
+            ],
+        ),
+    )
+    complete = True
+    for name, timeout, command in commands:
+        code = run(command, timeout=timeout)
+        status = "pass" if code == 0 else "incomplete"
+        records.append({"exit_code": code, "id": "build-" + name, "status": status, "type": "image-build"})
+        if code != 0:
+            complete = False
+            break
+    return complete
+
+
+def scanner_status(code: int) -> str:
+    if code == 0:
+        return "pass"
+    if code == 1:
+        return "findings"
+    return "incomplete"
+
+
+def sanitize_report_value(value: object) -> object:
+    if isinstance(value, str):
+        return value.replace(str(ROOT.resolve()), ".")
+    if isinstance(value, list):
+        return [sanitize_report_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): sanitize_report_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    return value
+
+
+def validate_scan_report(path: Path, code: int) -> tuple:
+    try:
+        if path.is_symlink() or not path.is_file():
+            return (127 if code in (0, 1) else code), None
+        if path.stat().st_size <= 0 or path.stat().st_size > MAX_REPORT_BYTES:
+            path.unlink()
+            return 127, None
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(document, dict) or not isinstance(document.get("results"), list):
+            path.unlink()
+            return 127, None
+        payload = json.dumps(sanitize_report_value(document), indent=2, sort_keys=True) + "\n"
+        payload_bytes = len(payload.encode("utf-8"))
+        if (
+            payload_bytes > MAX_REPORT_BYTES
+            or directory_bytes(path.parent, exclude=path) + payload_bytes
+            > MAX_OUTPUT_BYTES - REPORT_RESERVE_BYTES
+        ):
+            path.unlink()
+            return 127, None
+        path.write_text(payload, encoding="utf-8")
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        try:
+            if path.exists() or path.is_symlink():
+                path.unlink()
+        except OSError:
+            pass
+        return 127, None
+    return code, path.name
+
+
+def scan_source(scanner: Path, output: Path, records: List[Dict[str, object]]) -> None:
+    result = output / "osv-source.json"
+    command = [
+        str(scanner),
+        "scan",
+        "source",
+        "--format=json",
+        "--output-file=" + str(result),
+        "--lockfile=requirements.txt:docker/test-requirements.lock",
+        "--lockfile=requirements.txt:docker/service-requirements.lock",
+        "--lockfile=requirements.txt:docker/service-test-requirements.lock",
+    ]
+    code = run(command, timeout=300)
+    code, report_name = validate_scan_report(result, code)
+    records.append(
+        {
+            "exit_code": code,
+            "id": "osv-source",
+            "report": report_name,
+            "status": scanner_status(code),
+            "type": "vulnerability-scan",
+        }
+    )
+
+
+def scan_image(scanner: Path, output: Path, identifier: str, reference: str, records: List[Dict[str, object]]) -> None:
+    result = output / ("osv-image-" + identifier + ".json")
+    code = run(
+        [
+            str(scanner),
+            "scan",
+            "image",
+            "--format=json",
+            "--output-file=" + str(result),
+            reference,
+        ],
+        timeout=300,
+    )
+    code, report_name = validate_scan_report(result, code)
+    records.append(
+        {
+            "exit_code": code,
+            "id": "osv-image-" + identifier,
+            "report": report_name,
+            "status": scanner_status(code),
+            "type": "vulnerability-scan",
+        }
+    )
+
+
+def record_unrun_scans(
+    records: List[Dict[str, object]],
+    include_images: bool,
+    external_ids: Sequence[str],
+) -> None:
+    expected = {"osv-source"}
+    if include_images:
+        expected.update("osv-image-" + item[0] for item in LOCAL_IMAGES)
+        expected.update("osv-image-" + identifier for identifier in external_ids)
+    recorded = {str(item.get("id")) for item in records}
+    for identifier in sorted(expected - recorded):
+        records.append(
+            {
+                "exit_code": None,
+                "id": identifier,
+                "report": None,
+                "status": "incomplete",
+                "type": "vulnerability-scan",
+            }
+        )
+
+
+def final_status(records: Sequence[Mapping[str, object]], errors: Sequence[str]) -> str:
+    statuses = {str(item.get("status", "incomplete")) for item in records}
+    if errors or "incomplete" in statuses:
+        return "incomplete"
+    if "findings" in statuses:
+        return "findings"
+    return "pass"
+
+
+def render_summary(summary: Mapping[str, object]) -> str:
+    lines = [
+        "# Networked dependency scan",
+        "",
+        "Status: **%s**" % summary.get("status", "incomplete"),
+        "",
+        "| Target | Type | Result | Exit |",
+        "|---|---|---|---:|",
+    ]
+    targets = summary.get("targets", [])
+    if isinstance(targets, list):
+        for item in targets:
+            if isinstance(item, dict):
+                lines.append(
+                    "| `%s` | %s | %s | %s |"
+                    % (
+                        item.get("id", "unknown"),
+                        item.get("type", "unknown"),
+                        item.get("status", "incomplete"),
+                        "-" if item.get("exit_code") is None else item.get("exit_code"),
+                    )
+                )
+    errors = summary.get("errors", [])
+    if isinstance(errors, list) and errors:
+        lines.extend(["", "## Operational errors", ""])
+        lines.extend("- " + bounded(item) for item in errors)
+    lines.extend(
+        [
+            "",
+            "Detailed JSON reports are retained as workflow artifacts. Exit `1` means vulnerability or policy findings; other nonzero scanner exits mean the audit was incomplete.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def execute(output: Path, include_images: bool, scanner_override: Optional[Path]) -> int:
+    if output.exists() or output.is_symlink():
+        raise ScanError("output directory already exists")
+    output.mkdir(parents=True, mode=0o700)
+    records: List[Dict[str, object]] = []
+    errors: List[str] = []
+    dependency_report = output / "dependency-audit.json"
+    dependency_markdown = output / "dependency-audit.md"
+    audit_code = run(
+        [
+            sys.executable,
+            "scripts/dependency-audit",
+            "--online",
+            "--json",
+            str(dependency_report),
+            "--markdown",
+            str(dependency_markdown),
+        ],
+        timeout=120,
+    )
+    dependency_outputs_valid = True
+    for candidate in (dependency_report, dependency_markdown):
+        if (
+            candidate.is_symlink()
+            or not candidate.is_file()
+            or candidate.stat().st_size <= 0
+            or candidate.stat().st_size > MAX_REPORT_BYTES
+        ):
+            if candidate.exists() or candidate.is_symlink():
+                candidate.unlink()
+            dependency_outputs_valid = False
+    if not dependency_outputs_valid:
+        audit_code = 2
+        errors.append("dependency audit reports were missing, linked, empty, or oversized")
+    records.append(
+        {
+            "exit_code": audit_code,
+            "id": "dependency-policy-and-freshness",
+            "report": dependency_report.name if dependency_outputs_valid else None,
+            "status": "pass" if audit_code == 0 else ("findings" if audit_code == 1 else "incomplete"),
+            "type": "dependency-audit",
+        }
+    )
+    try:
+        expected_external_ids = expected_external_image_ids()
+    except ScanError as failure:
+        expected_external_ids = ()
+        errors.append(bounded(failure))
+    external_images: List[Dict[str, str]] = []
+    if dependency_outputs_valid:
+        try:
+            audit_document = json.loads(dependency_report.read_text(encoding="utf-8"))
+            if (
+                not isinstance(audit_document, dict)
+                or audit_document.get("format") != "hbcb-dependency-audit/v1"
+                or audit_document.get("mode") != "online"
+                or audit_document.get("status") not in ("pass", "findings", "incomplete")
+            ):
+                raise ValueError("invalid dependency audit report schema")
+            audit_status = audit_document["status"]
+            if (
+                (audit_status == "pass" and audit_code != 0)
+                or (audit_status == "findings" and audit_code != 1)
+                or (audit_status == "incomplete" and audit_code in (0, 1))
+            ):
+                raise ValueError("dependency audit status and exit code disagree")
+            external_images = validate_external_images(
+                audit_document.get("images"), expected_external_ids
+            )
+        except (UnicodeError, ValueError, RecursionError) as failure:
+            errors.append("dependency audit image inventory was invalid: " + bounded(failure))
+    else:
+        errors.append("dependency audit did not produce its JSON report")
+
+    with tempfile.TemporaryDirectory(prefix="hbcb-dependency-scan-") as temporary:
+        scanner = scanner_override.resolve() if scanner_override is not None else Path(temporary) / "osv-scanner"
+        scanner_sha256 = "operator-supplied"
+        try:
+            if scanner_override is None:
+                asset, scanner_sha256 = scanner_asset()
+                download_scanner(scanner, asset, scanner_sha256)
+            elif not scanner.is_file() or not os.access(str(scanner), os.X_OK):
+                raise ScanError("the supplied OSV-Scanner path is not executable")
+            else:
+                scanner_sha256 = file_sha256(scanner)
+                reviewed_hashes = {item[1] for item in SCANNER_ASSETS.values()}
+                if scanner_sha256 not in reviewed_hashes:
+                    raise ScanError("the supplied OSV-Scanner checksum is not a reviewed release asset")
+            verify_scanner(scanner)
+            scan_source(scanner, output, records)
+            if include_images:
+                if shutil.which("docker") is None:
+                    raise ScanError("Docker is required for image vulnerability scans")
+                if build_images(records):
+                    for identifier, reference in LOCAL_IMAGES:
+                        scan_image(scanner, output, identifier, reference, records)
+                for image in external_images:
+                    scan_image(scanner, output, image["id"], image["reference"], records)
+        except (OSError, ScanError) as failure:
+            errors.append(bounded(failure))
+
+    record_unrun_scans(records, include_images, expected_external_ids)
+
+    summary: Dict[str, object] = {
+        "errors": errors[:20],
+        "format": "hbcb-dependency-scan/v1",
+        "images_requested": include_images,
+        "scanner": {"name": "OSV-Scanner", "sha256": scanner_sha256, "version": SCANNER_VERSION},
+        "status": final_status(records, errors),
+        "targets": sorted(records, key=lambda item: str(item.get("id", ""))),
+    }
+    write_json(output / "scan-summary.json", summary)
+    (output / "scan-summary.md").write_text(render_summary(summary), encoding="utf-8")
+    if directory_bytes(output) > MAX_OUTPUT_BYTES:
+        raise ScanError("dependency scan output exceeded the aggregate size limit")
+    if summary["status"] == "pass":
+        return 0
+    if summary["status"] == "findings":
+        return 1
+    return 2
+
+
+def main(arguments: Optional[Sequence[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", required=True, type=Path, help="new directory for bounded JSON and Markdown reports")
+    parser.add_argument("--images", action="store_true", help="also build and scan production and external images")
+    parser.add_argument("--scanner", type=Path, help="use an explicitly supplied OSV-Scanner executable")
+    options = parser.parse_args(arguments)
+    os.umask(0o077)
+    try:
+        return execute(options.output.resolve(), options.images, options.scanner)
+    except (OSError, ScanError) as failure:
+        sys.stderr.write("DEPENDENCY_SCAN: %s\n" % bounded(failure))
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
