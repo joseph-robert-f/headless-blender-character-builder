@@ -9,12 +9,13 @@ PYTHON ?= python3
 BLENDER ?= blender
 VERSION ?= $(shell sed -n '1p' VERSION)
 RELEASE_VERSION ?= $(VERSION)-rc.1
+DEPENDENCY_OUTPUT ?= $(CURDIR)/build/dependency-audit
 
 REQUEST := $(CURDIR)/examples/requests/facet-bot.json
 BUILD_PARENT := $(CURDIR)/build
 DEMO_OUTPUT := $(BUILD_PARENT)/demo
 
-.PHONY: help image ensure-image test-image service-test-image demo verify-demo demo-native verify-demo-native init-env service-up service-smoke service-down service-config g8-static g8-caddy g8-recovery g8-gate operator-smoke lint test-unit test-blender security-check release-static release-check check
+.PHONY: help image ensure-image test-image service-test-image demo verify-demo demo-native verify-demo-native init-env service-up service-smoke service-down service-config g8-static g8-caddy g8-recovery g8-gate operator-smoke lint test-unit test-blender dependency-check dependency-audit dependency-scan security-check release-static release-check check
 
 help:
 	@echo "Headless Blender Character Builder"
@@ -28,6 +29,9 @@ help:
 	@echo "  make operator-smoke Conditionally test an authorized public HTTPS target"
 	@echo "  make test-unit     Run unit/contract/security tests in Docker"
 	@echo "  make test-blender  Run Blender integration gates in Docker"
+	@echo "  make dependency-check Validate synchronized dependency pins offline"
+	@echo "  make dependency-audit Report upstream version/tag status without mutation"
+	@echo "  make dependency-scan Build and vulnerability-scan all release images"
 	@echo "  make security-check Run the offline publication/security audit"
 	@echo "  make release-static Audit indexed source, policies, SBOM inputs, docs, and CI"
 	@echo "  make release-check Run the complete release gate from a clean indexed export"
@@ -186,6 +190,15 @@ test-blender: test-image
 	$(DOCKER) run --rm --init --platform "$(PLATFORM)" --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 512 --cpus 4 --memory 4g --tmpfs /work:rw,nosuid,nodev,noexec,size=2g,mode=1777 --env HOME=/work --env TMPDIR=/work "$(TEST_IMAGE)" tests/blender_integration/g2_gate.py --blender /opt/blender/blender --evidence-dir /work/g2 --timeout-seconds 900
 	$(DOCKER) run --rm --init --platform "$(PLATFORM)" --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 512 --cpus 4 --memory 4g --tmpfs /work:rw,nosuid,nodev,noexec,size=2g,mode=1777 --env HOME=/work --env TMPDIR=/work "$(TEST_IMAGE)" tests/blender_integration/g3_gate.py --blender /opt/blender/blender --work-dir /work/g3 --timeout-seconds 1800
 
+dependency-check:
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) ./scripts/dependency-audit
+
+dependency-audit:
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) ./scripts/dependency-audit --online
+
+dependency-scan:
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) ./scripts/dependency-scan --output "$(DEPENDENCY_OUTPUT)" --images
+
 release-static:
 	PYTHON="$(PYTHON)" DOCKER="$(DOCKER)" HBCB_RELEASE_VERSION="$(RELEASE_VERSION)" ./scripts/release-check --static
 
@@ -194,4 +207,4 @@ security-check: release-static
 release-check:
 	PYTHON="$(PYTHON)" DOCKER="$(DOCKER)" HBCB_RELEASE_VERSION="$(RELEASE_VERSION)" HBCB_COMPOSE_BIN="$(HBCB_COMPOSE_BIN)" ./scripts/release-check
 
-check: lint test-unit test-blender
+check: dependency-check lint test-unit test-blender

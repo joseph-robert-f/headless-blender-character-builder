@@ -1,0 +1,191 @@
+{
+  "compose_images": [
+    {
+      "assertion_files": [
+        "tests/deployment/test_g8_recovery_drill.py"
+      ],
+      "files": [
+        "compose.yaml",
+        "tests/deployment/g8_recovery_compose.yaml"
+      ],
+      "id": "postgres",
+      "notice_label": "PostgreSQL",
+      "official_image": "postgres",
+      "service": "postgres"
+    },
+    {
+      "assertion_files": [
+        "tests/deployment/test_g8_recovery_drill.py"
+      ],
+      "files": [
+        "compose.yaml",
+        "tests/deployment/g8_recovery_compose.yaml"
+      ],
+      "id": "redis-server",
+      "notice_label": "Redis server",
+      "official_image": "redis",
+      "service": "redis"
+    }
+  ],
+  "docker_base": {
+    "dockerfiles": [
+      "docker/builder.Dockerfile",
+      "docker/minio.Dockerfile",
+      "docker/service.Dockerfile"
+    ],
+    "image": "debian",
+    "notice_label": "Debian GNU/Linux",
+    "provenance_file": "docker/builder.Dockerfile"
+  },
+  "dockerfile_frontend": {
+    "files": [
+      "docker/minio.Dockerfile",
+      "docker/service.Dockerfile"
+    ],
+    "reference": "docker/dockerfile:1.25@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12"
+  },
+  "format": "hbcb-dependency-policy/v1",
+  "literal_images": [
+    {
+      "digest_variable": "CADDY_DIGEST",
+      "example_file": "deploy/vps/release.lock.env.example",
+      "example_variable": "HBCB_CADDY_IMAGE",
+      "file": "tests/deployment/g8_caddy_gate.py",
+      "id": "caddy",
+      "notice_label": "Caddy",
+      "oci_version_prefix": "v",
+      "oci_version_variable": "CADDY_OCI_VERSION",
+      "official_image": "caddy",
+      "inspect_reference_list_count": 1,
+      "platform_reference_list_count": 2,
+      "reference_variable": "CADDY_REFERENCE",
+      "tag_suffix": "-alpine",
+      "tag_variable": "CADDY_TAG",
+      "version_variable": "CADDY_VERSION"
+    }
+  ],
+  "manual_review": [
+    {
+      "files": [
+        "docker/builder.Dockerfile",
+        "docker/minio.Dockerfile",
+        "docker/service.Dockerfile"
+      ],
+      "id": "dockerfile-frontend",
+      "name": "Dockerfile frontend and build engine",
+      "reason": "Review the shared exact-version digest-pinned docker/dockerfile frontend and BuildKit behavior before changing Dockerfile syntax or the hosted runner."
+    },
+    {
+      "files": [
+        "docker/builder.Dockerfile",
+        "docker/blender-download.sha256",
+        "docker/BLENDER_SOURCE_NOTICE.md",
+        "THIRD_PARTY_NOTICES.md"
+      ],
+      "id": "blender",
+      "name": "Blender binary and corresponding source",
+      "reason": "Confirm the selected LTS release, archive checksum, runtime compatibility, notices, and corresponding-source offer together."
+    },
+    {
+      "files": [
+        "docker/minio.Dockerfile",
+        "scripts/service-compose",
+        "scripts/g8-recovery-drill",
+        "THIRD_PARTY_NOTICES.md"
+      ],
+      "id": "minio-fixture",
+      "name": "MinIO, mc, and Go source-build fixture",
+      "reason": "Review upstream release, source commit, download checksums, Go module vulnerabilities, and local-only support policy together."
+    },
+    {
+      "files": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/dependency-audit.yml",
+        ".github/workflows/release-candidate.yml"
+      ],
+      "id": "github-actions",
+      "name": "GitHub Actions and hosted runners",
+      "reason": "Verify full action commit pins against reviewed upstream releases and review intentional hosted-runner drift."
+    },
+    {
+      "files": [
+        ".github/workflows/dependency-audit.yml",
+        "docs/dependency-maintenance.md",
+        "docs/threat-model.md",
+        "scripts/dependency-scan"
+      ],
+      "id": "osv-scanner",
+      "name": "OSV-Scanner release and vulnerability service",
+      "reason": "Review the scanner version, platform asset checksums, CLI and report contract, network behavior, hosted workflow, and documented trust boundary together."
+    },
+    {
+      "files": [
+        "pyproject.toml",
+        "service/pyproject.toml"
+      ],
+      "id": "python-build-backend",
+      "name": "Python build backend",
+      "reason": "The setuptools build-system floor is intentionally ranged and is not installed in production images; review it separately from hash-locked runtime wheels."
+    }
+  ],
+  "python_groups": [
+    {
+      "id": "builder-runtime",
+      "key": "dependencies",
+      "manifest": "pyproject.toml",
+      "must_be_empty": true,
+      "table": "project"
+    },
+    {
+      "id": "builder-test",
+      "key": "test",
+      "lock": "docker/test-requirements.lock",
+      "manifest": "pyproject.toml",
+      "notice_names": {
+        "jsonschema": "jsonschema (test only)"
+      },
+      "table": "project.optional-dependencies"
+    },
+    {
+      "extra_lock_distributions": {
+        "psycopg[binary]": [
+          "psycopg-binary"
+        ]
+      },
+      "id": "service-runtime",
+      "inventory": "release/service-dependency-licenses.json",
+      "key": "dependencies",
+      "lock": "docker/service-requirements.lock",
+      "manifest": "service/pyproject.toml",
+      "notice_names": {
+        "async-timeout": "async-timeout",
+        "fastapi": "FastAPI",
+        "minio": "MinIO Python SDK",
+        "psycopg": "Psycopg / psycopg-binary",
+        "redis": "redis-py",
+        "uvicorn": "Uvicorn"
+      },
+      "table": "project"
+    },
+    {
+      "extra_lock_distributions": {
+        "httpx2": [
+          "httpcore2"
+        ]
+      },
+      "id": "service-test",
+      "key": "test",
+      "lock_notice_names": {
+        "httpcore2": "httpx2 / httpcore2 (test only)",
+        "httpx2": "httpx2 / httpcore2 (test only)",
+        "truststore": "truststore (test only)"
+      },
+      "lock": "docker/service-test-requirements.lock",
+      "manifest": "service/pyproject.toml",
+      "notice_names": {
+        "httpx2": "httpx2 / httpcore2 (test only)"
+      },
+      "table": "project.optional-dependencies"
+    }
+  ]
+}

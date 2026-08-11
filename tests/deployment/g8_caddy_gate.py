@@ -15,8 +15,11 @@ from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 CADDYFILE = ROOT / "deploy" / "vps" / "Caddyfile"
+CADDY_VERSION = "2.11.4"
+CADDY_TAG = f"{CADDY_VERSION}-alpine"
+CADDY_OCI_VERSION = f"v{CADDY_VERSION}"
 CADDY_DIGEST = "5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648"
-CADDY_REFERENCE = f"caddy:2.11.4-alpine@sha256:{CADDY_DIGEST}"
+CADDY_REFERENCE = f"caddy:{CADDY_TAG}@sha256:{CADDY_DIGEST}"
 
 
 class GateFailure(RuntimeError):
@@ -101,19 +104,18 @@ def main(argv: Sequence[str] | None = None) -> None:
             docker,
             "image",
             "inspect",
-            "--platform",
-            "linux/amd64",
             "--format",
-            "{{.Id}} {{index .Config.Labels \"org.opencontainers.image.version\"}}",
+            "{{.Os}}/{{.Architecture}} {{.Id}} {{index .Config.Labels \"org.opencontainers.image.version\"}}",
             CADDY_REFERENCE,
         ],
         label="pinned Caddy inspection",
     ).stdout.decode("utf-8", "strict").strip().split()
     if (
-        len(inspected) != 2
-        or not inspected[0].startswith("sha256:")
-        or len(inspected[0]) != 71
-        or inspected[1] != "v2.11.4"
+        len(inspected) != 3
+        or inspected[0] != "linux/amd64"
+        or not inspected[1].startswith("sha256:")
+        or len(inspected[1]) != 71
+        or inspected[2] != CADDY_OCI_VERSION
     ):
         raise GateFailure("pinned Caddy identity is invalid")
 
@@ -136,7 +138,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "digest": CADDY_DIGEST,
                 "gate": "G8_CADDY_GATE",
                 "result": "PASS",
-                "version": "2.11.4",
+                "version": CADDY_VERSION,
             },
             sort_keys=True,
             separators=(",", ":"),
