@@ -27,6 +27,46 @@ class _TimeoutProcess:
 
 
 class BuilderCliExitCodeTests(unittest.TestCase):
+    def test_validate_accepts_request_without_blender_or_output(self) -> None:
+        stdout = io.StringIO()
+        request = ROOT / "examples" / "requests" / "facet-bot.json"
+        with mock.patch(
+            "builder_cli.commands._blender_binary",
+            side_effect=AssertionError("validate must not inspect Blender"),
+        ), mock.patch(
+            "builder_cli.commands._new_output",
+            side_effect=AssertionError("validate must not prepare output"),
+        ), contextlib.redirect_stdout(stdout):
+            result = main(("validate", "--request", str(request)))
+        self.assertEqual(result, int(ExitCode.SUCCESS))
+        self.assertEqual(stdout.getvalue(), "BUILDER_VALIDATE: PASS\n")
+
+    def test_validate_rejects_invalid_request_without_leaking_contents(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="hbcb-validate-") as raw:
+            request = Path(raw) / "request.json"
+            secret = "validate-canary-secret"
+            request.write_text('{"unexpected":"' + secret + '"}\n', encoding="utf-8")
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                result = main(("validate", "--request", str(request)))
+        self.assertEqual(result, int(ExitCode.INVALID_REQUEST))
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("BUILDER: FAIL[3]: BuildRequest was rejected", stderr.getvalue())
+        self.assertNotIn(secret, stderr.getvalue())
+
+    def test_validate_rejects_output_option_as_invalid_cli(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        request = ROOT / "examples" / "requests" / "facet-bot.json"
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            result = main(
+                ("validate", "--request", str(request), "--output", "must-not-exist")
+            )
+        self.assertEqual(result, int(ExitCode.INVALID_CLI))
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("FAIL[2]", stderr.getvalue())
+
     def test_missing_native_blender_maps_to_10_without_publishing(self) -> None:
         with tempfile.TemporaryDirectory(prefix="hbcb-g4-exit10-") as raw:
             root = Path(raw)

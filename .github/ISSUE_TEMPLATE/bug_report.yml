@@ -39,12 +39,11 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: OS, architecture, Docker/Compose version, Blender version for native use, CPU/RAM, and relevant deployment mode.
+      description: Paste sanitized output from ./scripts/doctor (or --service/--native), then add CPU/RAM and the relevant mode. Doctor output contains no credentials; review it before posting anyway.
       placeholder: |
-        OS/architecture:
-        Docker/Compose:
-        Blender (native only):
+        ./scripts/doctor output:
         CPU/RAM:
+        Mode:
     validations:
       required: true
   - type: textarea

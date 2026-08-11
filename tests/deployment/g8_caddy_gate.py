@@ -18,6 +18,7 @@ CADDYFILE = ROOT / "deploy" / "vps" / "Caddyfile"
 CADDY_VERSION = "2.11.4"
 CADDY_TAG = f"{CADDY_VERSION}-alpine"
 CADDY_OCI_VERSION = f"v{CADDY_VERSION}"
+CADDY_PLATFORM = "linux/amd64"
 CADDY_DIGEST = "5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648"
 CADDY_REFERENCE = f"caddy:{CADDY_TAG}@sha256:{CADDY_DIGEST}"
 
@@ -51,7 +52,7 @@ def _runtime(docker: str, command: Sequence[str]) -> list[str]:
         "run",
         "--rm",
         "--platform",
-        "linux/amd64",
+        CADDY_PLATFORM,
         "--network",
         "none",
         "--read-only",
@@ -84,6 +85,84 @@ def _runtime(docker: str, command: Sequence[str]) -> list[str]:
     ]
 
 
+def _inspect_digest(docker: str) -> None:
+    completed = _run(
+        [docker, "image", "inspect", CADDY_REFERENCE],
+        label="pinned Caddy digest inspection",
+    )
+    try:
+        payload = json.loads(completed.stdout.decode("utf-8", "strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise GateFailure("pinned Caddy digest identity is invalid") from None
+    if not isinstance(payload, list) or len(payload) != 1:
+        raise GateFailure("pinned Caddy digest identity is invalid")
+    document = payload[0]
+    if not isinstance(document, dict):
+        raise GateFailure("pinned Caddy digest identity is invalid")
+
+    digest_candidates: list[str] = []
+    image_id = document.get("Id")
+    if image_id is not None:
+        if not isinstance(image_id, str):
+            raise GateFailure("pinned Caddy digest identity is invalid")
+        digest_candidates.append(image_id)
+
+    descriptor = document.get("Descriptor")
+    if descriptor is not None:
+        if not isinstance(descriptor, dict):
+            raise GateFailure("pinned Caddy digest identity is invalid")
+        descriptor_digest = descriptor.get("digest")
+        if descriptor_digest is not None:
+            if not isinstance(descriptor_digest, str):
+                raise GateFailure("pinned Caddy digest identity is invalid")
+            digest_candidates.append(descriptor_digest)
+
+    repo_digests = document.get("RepoDigests", [])
+    if not isinstance(repo_digests, list) or not all(
+        isinstance(item, str) for item in repo_digests
+    ):
+        raise GateFailure("pinned Caddy digest identity is invalid")
+    for item in repo_digests:
+        if item.count("@") != 1:
+            raise GateFailure("pinned Caddy digest identity is invalid")
+        repository, repo_digest = item.rsplit("@", 1)
+        if not repository or not repo_digest:
+            raise GateFailure("pinned Caddy digest identity is invalid")
+        digest_candidates.append(repo_digest)
+
+    if f"sha256:{CADDY_DIGEST}" not in digest_candidates:
+        raise GateFailure("pinned Caddy digest identity is invalid")
+
+
+def _runtime_identity(docker: str) -> None:
+    completed = _run(
+        _runtime(
+            docker,
+            [
+                "/bin/sh",
+                "-eu",
+                "-c",
+                'printf \'%s\\n\' "$CADDY_VERSION"\ncaddy version\nuname -s\nuname -m',
+            ],
+        ),
+        label="pinned Caddy runtime identity",
+    )
+    try:
+        runtime_identity = completed.stdout.decode("utf-8", "strict").splitlines()
+    except UnicodeDecodeError:
+        raise GateFailure("pinned Caddy runtime identity is invalid") from None
+    if (
+        completed.stderr
+        or len(runtime_identity) != 4
+        or runtime_identity[0] != CADDY_OCI_VERSION
+        or not runtime_identity[1].split()
+        or runtime_identity[1].split()[0] != CADDY_OCI_VERSION
+        or runtime_identity[2] != "Linux"
+        or runtime_identity[3] != "x86_64"
+    ):
+        raise GateFailure("pinned Caddy runtime identity is invalid")
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--docker", default="docker")
@@ -96,28 +175,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         raise GateFailure("Caddyfile is unavailable")
     if not args.skip_pull:
         _run(
-            [docker, "pull", "--platform", "linux/amd64", CADDY_REFERENCE],
+            [docker, "pull", "--platform", CADDY_PLATFORM, CADDY_REFERENCE],
             label="pinned Caddy pull",
         )
-    inspected = _run(
-        [
-            docker,
-            "image",
-            "inspect",
-            "--format",
-            "{{.Os}}/{{.Architecture}} {{.Id}} {{index .Config.Labels \"org.opencontainers.image.version\"}}",
-            CADDY_REFERENCE,
-        ],
-        label="pinned Caddy inspection",
-    ).stdout.decode("utf-8", "strict").strip().split()
-    if (
-        len(inspected) != 3
-        or inspected[0] != "linux/amd64"
-        or not inspected[1].startswith("sha256:")
-        or len(inspected[1]) != 71
-        or inspected[2] != CADDY_OCI_VERSION
-    ):
-        raise GateFailure("pinned Caddy identity is invalid")
+    _inspect_digest(docker)
+    _runtime_identity(docker)
 
     formatted = _run(
         _runtime(docker, ["caddy", "fmt", "/etc/caddy/Caddyfile"]),
@@ -137,6 +199,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             {
                 "digest": CADDY_DIGEST,
                 "gate": "G8_CADDY_GATE",
+                "platform": CADDY_PLATFORM,
                 "result": "PASS",
                 "version": CADDY_VERSION,
             },

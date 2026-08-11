@@ -1,0 +1,198 @@
+#!/bin/sh
+set -eu
+
+LC_ALL=C
+export LC_ALL
+
+usage() {
+  printf '%s\n' \
+    'usage: scripts/doctor [--demo|--service|--native]' \
+    '' \
+    '  --demo     Check the keyless Docker path (default).' \
+    '  --service  Also require Compose 2.24.4+ and Python 3.11+.' \
+    '  --native   Check Python 3.11+ and Blender 4.5.12 without Docker.'
+}
+
+mode=demo
+case "$#:$*" in
+  0:) ;;
+  1:--demo) mode=demo ;;
+  1:--service) mode=service ;;
+  1:--native) mode=native ;;
+  1:--help|1:-h)
+    usage
+    exit 0
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
+
+doctor_git=${HBCB_DOCTOR_GIT:-git}
+doctor_make=${HBCB_DOCTOR_MAKE:-make}
+doctor_docker=${HBCB_DOCTOR_DOCKER:-docker}
+doctor_python=${HBCB_DOCTOR_PYTHON:-python3}
+doctor_blender=${BLENDER:-blender}
+failures=0
+
+ok() {
+  printf '  OK   %s\n' "$1"
+}
+
+note() {
+  printf '  NOTE %s\n' "$1"
+}
+
+fail() {
+  printf '  FAIL %s\n' "$1" >&2
+  failures=$((failures + 1))
+}
+
+first_line() {
+  sed -n '1p'
+}
+
+platform=$(uname -s 2>/dev/null || printf unknown)
+architecture=$(uname -m 2>/dev/null || printf unknown)
+printf 'HBCB_DOCTOR: checking %s prerequisites on %s/%s\n' \
+  "$mode" "$platform" "$architecture"
+
+if [ ! -f Makefile ] || [ ! -f docker/builder.Dockerfile ]; then
+  fail 'run this command from the repository root'
+fi
+
+if command -v "$doctor_git" >/dev/null 2>&1; then
+  git_version=$("$doctor_git" --version 2>/dev/null | first_line || true)
+  if [ -n "$git_version" ]; then
+    ok "$git_version"
+  else
+    fail 'Git was found but did not report a version'
+  fi
+else
+  fail "Git is unavailable ($doctor_git)"
+fi
+
+check_make() {
+  if command -v "$doctor_make" >/dev/null 2>&1; then
+    make_version=$("$doctor_make" --version 2>/dev/null | first_line || true)
+    case "$make_version" in
+      *'GNU Make'*) ok "$make_version" ;;
+      '') fail 'Make was found but did not report a version' ;;
+      *) fail "GNU Make is required (found: $make_version)" ;;
+    esac
+  else
+    fail "GNU Make is unavailable ($doctor_make)"
+  fi
+}
+
+check_python() {
+  if ! command -v "$doctor_python" >/dev/null 2>&1; then
+    fail "Python 3.11+ is unavailable ($doctor_python)"
+    return
+  fi
+  python_version=$("$doctor_python" --version 2>&1 | first_line || true)
+  if "$doctor_python" -c \
+    'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
+    >/dev/null 2>&1; then
+    ok "$python_version"
+  else
+    fail "Python 3.11+ is required (found: ${python_version:-unknown})"
+  fi
+}
+
+check_docker() {
+  if ! command -v "$doctor_docker" >/dev/null 2>&1; then
+    fail "Docker is unavailable ($doctor_docker)"
+    return
+  fi
+  docker_version=$("$doctor_docker" --version 2>/dev/null | first_line || true)
+  if [ -n "$docker_version" ]; then
+    ok "$docker_version"
+  else
+    fail 'Docker was found but did not report a client version'
+  fi
+  daemon_version=$(
+    "$doctor_docker" info --format '{{.ServerVersion}}' 2>/dev/null | first_line || true
+  )
+  if [ -n "$daemon_version" ]; then
+    ok "Docker daemon is reachable (server $daemon_version)"
+  else
+    fail 'Docker daemon is not reachable; start Docker and check current-user access'
+  fi
+  if "$doctor_docker" buildx version >/dev/null 2>&1; then
+    ok 'Docker Buildx/BuildKit frontend is available'
+  else
+    note 'Buildx was not detected; docker build must still support BuildKit and --platform'
+  fi
+  case "$platform/$architecture" in
+    Darwin/arm64|Darwin/aarch64)
+      note 'Apple Silicon uses linux/amd64 emulation; the first build is slower'
+      ;;
+    Linux/aarch64|Linux/arm64)
+      note 'Linux arm64 is best effort; the release path targets linux/amd64'
+      ;;
+  esac
+}
+
+check_compose() {
+  compose_version=$("$doctor_docker" compose version 2>/dev/null | first_line || true)
+  if [ -z "$compose_version" ]; then
+    fail 'Docker Compose v2 is unavailable'
+    return
+  fi
+  if command -v "$doctor_python" >/dev/null 2>&1 && \
+     "$doctor_python" -c '
+import re
+import sys
+match = re.search(r"(?:^|\s)v?(\d+)\.(\d+)\.(\d+)(?:\D|$)", sys.argv[1])
+raise SystemExit(0 if match and tuple(map(int, match.groups())) >= (2, 24, 4) else 1)
+' "$compose_version" >/dev/null 2>&1; then
+    ok "$compose_version"
+  else
+    fail "Docker Compose 2.24.4+ is required (found: $compose_version)"
+  fi
+}
+
+check_blender() {
+  if ! command -v "$doctor_blender" >/dev/null 2>&1; then
+    fail "Blender 4.5.12 is unavailable ($doctor_blender)"
+    return
+  fi
+  blender_version=$("$doctor_blender" --version 2>/dev/null | first_line || true)
+  case "$blender_version" in
+    'Blender 4.5.12'*) ok "$blender_version" ;;
+    '') fail 'Blender was found but did not report a version' ;;
+    *) fail "Blender 4.5.12 is required (found: $blender_version)" ;;
+  esac
+}
+
+case "$mode" in
+  demo)
+    check_make
+    check_docker
+    ;;
+  service)
+    check_make
+    check_docker
+    check_python
+    check_compose
+    if [ -f .env ]; then
+      note 'an existing .env was found; preserve it while its service volumes exist'
+    else
+      note 'no .env exists yet; run make init-env after this check passes'
+    fi
+    ;;
+  native)
+    check_python
+    check_blender
+    note 'native mode is best effort; the release-blocking path is linux/amd64 Docker'
+    ;;
+esac
+
+if [ "$failures" -ne 0 ]; then
+  printf 'HBCB_DOCTOR: FAIL (%s prerequisite check(s) failed)\n' "$failures" >&2
+  exit 1
+fi
+
+printf 'HBCB_DOCTOR: PASS (%s prerequisites are ready)\n' "$mode"

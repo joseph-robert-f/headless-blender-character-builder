@@ -58,6 +58,7 @@
       "official_image": "caddy",
       "inspect_reference_list_count": 1,
       "platform_reference_list_count": 2,
+      "platform_variable": "CADDY_PLATFORM",
       "reference_variable": "CADDY_REFERENCE",
       "tag_suffix": "-alpine",
       "tag_variable": "CADDY_TAG",

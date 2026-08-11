@@ -1,59 +1,70 @@
 # Documentation
 
-Start with the root [README](../README.md) for the keyless one-shot build and a
-plain-language project overview. The guides below separate user, contributor,
-operator, and project-history material so a newcomer does not need to read the
-implementation plan in order to build a model.
+New here? Read the root [README](../README.md), then follow
+[Installation](installation.md) from prerequisites through a verified first
+model. You do not need to understand the service or release machinery to use
+the one-shot builder.
 
-## Build and integrate
+## I want to build a model
 
-- [Character and request contracts](character-spec.md) — supported JSON fields,
-  generator behavior, hashes, QA, and manifest contracts
+- [Installation](installation.md) — macOS without Homebrew, Linux,
+  experimental WSL2, first build and verification, opening artifacts, cleanup,
+  updates, direct Docker, and native Blender
+- [Examples and ideas](../examples/README.md) — passing and fail-closed
+  requests, copy-paste commands, and original character-project themes
+- [Configuration](configuration.md) — Make variables, safe output names, local
+  service credentials, and the VPS/release boundary
+- [Character and request contract](character-spec.md) — every supported JSON
+  field, generator behavior, hashes, QA, and manifest contracts
+- [Troubleshooting](troubleshooting.md) — success markers and common Docker,
+  output-directory, native, service, and release-check failures
+- [Compatibility](compatibility.md) — platform status, pinned versions, and
+  resource expectations
+- [Facet Bot brief](facet-bot-brief.md) — intent and constraints for the
+  original bundled example
+
+## I want to integrate or understand it
+
 - [HTTP API v1](api.md) — authenticated asynchronous submission, status,
   cancellation, and artifact retrieval
-- [Compatibility](compatibility.md) — supported platforms, pinned versions, and
-  resource expectations
-- [Troubleshooting](troubleshooting.md) — expected success markers and common
-  Docker, output-directory, service, and release-check failures
-- [Facet Bot brief](facet-bot-brief.md) — intent and constraints for the original
-  bundled example
+- [Architecture](architecture.md) — execution lanes, components, network and
+  trust boundaries, persistence, recovery, and repository map
+- [Threat model](threat-model.md) — assets, actors, threats, controls, and
+  review triggers
+- [Licensing guide](licensing.md) — project, Blender, asset, output,
+  dependency, and contribution licensing boundaries
 
-## Architecture and security
+## I want to operate or release it
 
-- [Architecture](architecture.md) — execution lanes, components, trust
-  boundaries, persistence, recovery, and repository map
-- [Threat model](threat-model.md) — assets, actors, threats, controls, and review
-  triggers
-- [Licensing guide](licensing.md) — project, Blender, asset, output, dependency,
-  and contribution licensing boundaries
+The VPS material is a production-oriented reference, not a currently
+published deployment product. There is no release archive, release lock, or
+published image set yet.
 
-## Operate and release
-
-- [Deployment and recovery](deployment.md) — VPS topology, TLS, external S3,
-  permissions, lifecycle operations, backup, restore, and upgrades
+- [VPS deployment and recovery](deployment.md) — availability, topology,
+  verified source installation, TLS, external S3, permissions, lifecycle,
+  backup, restore, and upgrades
 - [Release process](release-process.md) — local release proof, conditional
   publication, corresponding source, and operator checklist
 - [Dependency maintenance](dependency-maintenance.md) — offline consistency,
   scheduled vulnerability reports, and coordinated manual updates
-- [v0.1.0-rc.1 release notes](release-notes/v0.1.0-rc.1.md) — candidate scope and
-  limitations
+- [v0.1.0-rc.1 release notes](release-notes/v0.1.0-rc.1.md) — candidate scope
+  and limitations
 
-## Scope, evidence, and project history
+## I want to contribute or audit decisions
 
-- [Implementation plan](../PLAN.md) — authoritative v0.1 scope and completed
-  G0–G9 work packages
-- [Test plan](../TEST_PLAN.md) — owner/reviewer verification protocol
-- [Progress log](progress.md) — exact gate evidence, deviations, and conditional
-  checks
+- [Contributing](../CONTRIBUTING.md), [governance](../GOVERNANCE.md), and
+  [maintainers](../MAINTAINERS.md)
+- [Implementation plan](../PLAN.md) and [test plan](../TEST_PLAN.md) — binding
+  v0.1 scope and verification protocol
+- [Progress log](progress.md) — exact gate evidence, deviations, and
+  conditional checks
 - [Decision ledger](decisions.md) — adopted technical and product decisions
 - [Backlog](backlog.md) — post-v0.1 extensions and starter issue outlines
 - [Workspace inventory](inventory.md) — preserved pre-project baseline and
   migration constraints
 
-## Policies and contribution
+## Policies
 
-- [Contributing](../CONTRIBUTING.md), [governance](../GOVERNANCE.md), and
-  [maintainers](../MAINTAINERS.md)
 - [Security policy](../SECURITY.md) and [support policy](../SUPPORT.md)
 - [Generated output policy](../OUTPUT_POLICY.md)
 - [Source license](../LICENSE), [asset license](../ASSET_LICENSE.md), and

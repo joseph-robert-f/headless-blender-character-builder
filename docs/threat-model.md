@@ -89,10 +89,14 @@ The following are release invariants, not optional recommendations:
 - Blender automatic embedded-script execution is disabled.
 - A Blender child receives no API, database, Redis, object-storage, Docker,
   OpenAI, or other provider credential.
+- In one-shot mode the entire worker uses `--network none`. In service mode the
+  child shares the worker container's internal-only network namespace; its
+  scrubbed environment and absent credentials are the child boundary, not a
+  separate network namespace.
 - The keyless demo reads no `.env` and requires no secret.
 - Caller-controlled values never become shell commands, Blender flags, host
   paths, object keys, environment-variable names, or remote fetch targets.
-- Incomplete, failed, cancelled, or `needs_review` attempts cannot publish a
+- Incomplete, failed, canceled, or `needs_review` attempts cannot publish a
   success manifest.
 - Successful artifacts are hash verified, tied to exact object versions, and
   published only after fresh reload/re-import evidence passes.
@@ -165,9 +169,8 @@ The following are release invariants, not optional recommendations:
 
 ## Vulnerability handling and review cadence
 
-Follow `SECURITY.md` for reporting. Private GitHub reporting is conditional on
-repository publication and the maintainer enabling it. Do not post exploit
-details publicly.
+Follow `SECURITY.md` for reporting. GitHub private vulnerability reporting is
+enabled for this repository. Do not post exploit details publicly.
 
 Review this threat model whenever a trust boundary changes and at each release.
 A pull request that changes input shape, process execution, network access,
