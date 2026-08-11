@@ -7,6 +7,11 @@ Changelog, and releases use Semantic Versioning.
 
 ### Changed
 
+- Updated every Debian-derived project image to the maintained
+  `bookworm-20260803-slim` base, pinned its reviewed manifest digest, and
+  advanced package installation to the immutable `20260804T000000Z` snapshot.
+- Raised the bounded OSV per-report limit from 4 MiB to 8 MiB so current image
+  reports remain reviewable while preserving the 32 MiB aggregate limit.
 - Reorganized public onboarding and documentation navigation, clarified
   path-specific prerequisites and troubleshooting, and aligned planning/test
   language with the completed local release candidate.

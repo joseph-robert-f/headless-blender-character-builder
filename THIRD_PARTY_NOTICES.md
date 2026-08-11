@@ -17,7 +17,7 @@ changes.
 | Component | Pinned v0.1 input | License / notice location |
 |---|---|---|
 | Blender | 4.5.12 LTS Linux x64 binary archive | Blender is distributed under `GPL-3.0-or-later` with compatible third-party components. The image preserves `/opt/blender/copyright.txt`, `/opt/blender/license/`, and copies principal notices to `/usr/share/licenses/blender/`. See `docker/BLENDER_SOURCE_NOTICE.md` for the exact binary, checksum, and corresponding-source locations. |
-| Debian GNU/Linux | `bookworm-20260713-slim`, digest pinned and resolved through the documented snapshot | Debian packages have package-specific licenses. Installed copyright notices remain under `/usr/share/doc/*/copyright`; the builder SBOM inventories installed packages without replacing those notices. |
+| Debian GNU/Linux | `bookworm-20260803-slim`, digest pinned and resolved through the documented snapshot | Debian packages have package-specific licenses. Installed copyright notices remain under `/usr/share/doc/*/copyright`; the builder SBOM inventories installed packages without replacing those notices. |
 | Headless Blender Character Builder | 0.1.0 source copied into the images | `GPL-3.0-or-later`; full text in `LICENSE` and in the image under `/usr/share/licenses/headless-blender-character-builder/LICENSE`. |
 
 The builder image writes an SPDX 2.3 inventory to

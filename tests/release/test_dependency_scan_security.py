@@ -59,6 +59,29 @@ class DependencyScanSecurityTests(unittest.TestCase):
                 self.assertEqual(scan_tool.validate_scan_report(valid, 0), (127, None))
             self.assertFalse(valid.exists())
 
+            oversized = root / "oversized.json"
+            oversized.write_text(
+                json.dumps({"results": [{"detail": "x" * 64}]}), encoding="utf-8"
+            )
+            with mock.patch.object(scan_tool, "MAX_OSV_REPORT_BYTES", 32):
+                self.assertEqual(
+                    scan_tool.validate_scan_report(oversized, 1), (127, None)
+                )
+            self.assertFalse(oversized.exists())
+
+    def test_five_mib_osv_report_is_retained_within_bounded_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            report = Path(temporary) / "postgres.json"
+            report.write_text(
+                json.dumps({"results": [{"detail": "x" * (5 * 1024 * 1024)}]}),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                scan_tool.validate_scan_report(report, 1),
+                (1, "postgres.json"),
+            )
+            self.assertLessEqual(report.stat().st_size, scan_tool.MAX_OSV_REPORT_BYTES)
+
     def test_every_requested_scan_target_is_recorded_when_not_run(self) -> None:
         records: list[dict[str, object]] = []
         scan_tool.record_unrun_scans(records, True, ("postgres",))
