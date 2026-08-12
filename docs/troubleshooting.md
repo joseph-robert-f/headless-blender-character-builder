@@ -9,9 +9,11 @@ Start with the read-only preflight from the repository root:
 Use `./scripts/doctor --service` for the local API stack or
 `./scripts/doctor --native` for the best-effort native Blender path. The doctor
 does not install or download packages, pull images, start containers, or change
-Docker state. It only queries the configured clients and Docker daemon, which
-may be remote if your active Docker context is remote. Fix every `FAIL` before
-retrying the longer command.
+Docker state. It only queries the configured clients and Docker daemon. The
+one-shot doctor can inspect a remote daemon, but `--service` rejects a clearly
+remote SSH, TCP, or HTTP Docker context because the local API journey requires
+host loopback on this machine. Fix every `FAIL` before retrying the longer
+command.
 
 ## What success looks like
 
@@ -43,6 +45,7 @@ QA fails, it removes its stage and must not leave a partial named result.
 |---|---|---|
 | `Docker is unavailable` | Docker CLI is not installed or not on `PATH` | Install Docker Desktop/Engine, open it, then rerun `./scripts/doctor` |
 | `Docker daemon is not reachable` or socket permission error | Docker is stopped, the current user lacks daemon access, or the selected context is unavailable | Make `docker info` succeed as the current user; on Linux follow [Docker's non-root guidance](https://docs.docker.com/engine/install/linux-postinstall/) and its root-equivalent group warning rather than using broad `sudo` workarounds |
+| `local service requires a local Docker daemon/context` | The selected Docker endpoint uses SSH, TCP, or HTTP, so its published loopback ports would exist on another host | Switch to a local context in Docker Desktop or with `docker context use <local-context>`; clear `DOCKER_HOST` or `DOCKER_CONTEXT` if either selects the remote daemon, then rerun `./scripts/doctor --service` |
 | Failure while downloading Blender/Debian inputs | The **image build** needs outbound HTTPS/DNS access to pinned sources | Check proxy/DNS/firewall settings and retry `make image`; do not weaken checksum or digest verification |
 | BuildKit/frontend error | Docker is too old or BuildKit/Buildx is unavailable | Upgrade Docker; `docker build` must support `--platform` and the pinned Dockerfile frontend |
 | `linux/amd64` platform or emulation error | The release image is amd64 and emulation is unavailable | Enable Docker Desktop's amd64 emulation or use an amd64 Linux host |
@@ -116,52 +119,104 @@ Check the larger prerequisite set first:
 
 ```sh
 ./scripts/doctor --service
+make init-env
 make service-config
 ```
 
-The local stack needs Python 3.11+, Docker Compose 2.24.4+, and free loopback ports
-`8080` (API) and `9000` (artifact fixture). Useful read-only checks are:
+The local stack needs Python 3.11+, curl, Docker Compose 2.24.4+, at least 8 GiB
+allocated to Docker, 20 GB free disk, and two free loopback ports. The defaults are `8080`
+(API) and `9000` (artifact fixture). If `python3` is older, use the same explicit
+selection for every command, beginning with:
 
 ```sh
-docker compose --env-file .env ps
-docker compose --env-file .env logs --tail 100 api worker
+PYTHON=python3.11 ./scripts/doctor --service
+PYTHON=python3.11 make service-config
+PYTHON=python3.11 make service-up
 ```
 
-Sanitize logs before sharing them. Never paste `.env`, bearer tokens, database
-or Redis URLs, storage credentials, private references, signed artifact URLs,
-or unredacted request/model content into a public issue.
+Use the project wrappers for read-only status and bounded logs:
+
+```sh
+make service-ps
+make service-logs
+```
+
+`service-ps` includes stopped containers for this checkout. `service-logs`
+prints only the last 100 lines from `api` and `worker`. Do not substitute raw
+Compose commands: the wrapper restores this checkout's project identity,
+selected ports, and required image-provenance interpolation. Sanitize even these
+bounded logs before sharing them. Never paste `.env`, bearer tokens, database or
+Redis URLs, storage credentials, private references, signed artifact URLs, or
+unredacted request/model content into a public issue.
 
 Common service cases:
 
 - **`.env` is missing on a fresh checkout:** run `make init-env` once. It
-  creates an ignored, mode-`0600` file and refuses to overwrite anything.
+  creates an ignored, mode-`0600` file, records a checkout-specific Compose
+  project identity, and refuses to overwrite anything.
 - **`.env` exists:** keep it. `make service-down` preserves PostgreSQL, Redis,
   and MinIO volumes whose credentials are tied to that file.
+- **An older `.env` has no `HBCB_COMPOSE_PROJECT_NAME`:** it deliberately uses
+  the legacy `hbcb-local` identity so existing containers and volumes remain
+  reachable. Do not add or change the identity merely to silence a warning.
+- **The checkout moved:** keep its `.env`; the stored project identity continues
+  to select the same Docker resources. If you intentionally use the standard
+  `COMPOSE_PROJECT_NAME` override, supply one safe value consistently to every
+  command. Changing it selects another stack; it does not migrate data.
 - **`.env` is missing but old named volumes remain:** restore the original
   `.env` from a secure local backup. Generating new credentials does not rotate
   credentials inside existing data volumes.
 - **The old data is intentionally disposable:** stop the stack, confirm there
   is no needed local data or backup, then remove only this Compose project's
-  named volumes through Docker Compose/Desktop. This is irreversible. Only
-  after those volumes are gone should you move aside the old `.env` and run
-  `make init-env` again. The project intentionally provides no one-command
-  reset that could erase volumes accidentally.
+  named volumes through the active Docker context's scoped project view (for
+  example, Docker Desktop on macOS/Windows). Use the exact project name printed
+  by `make service-ps`; do not select similarly named resources or run a global
+  prune. This is irreversible. Only after those volumes are gone should you
+  move aside the old `.env` and run `make init-env` again. The project
+  intentionally provides no one-command reset that could erase volumes
+  accidentally.
 - **Port conflict:** find and stop the local program using `127.0.0.1:8080` or
-  `127.0.0.1:9000`. Do not change the bind address to a public interface.
-- **Trusted builder source changed:** run `make image` before `make service-up`.
-  The service deliberately reuses an existing local `:dev` builder image.
+  `127.0.0.1:9000`, or choose distinct loopback host ports and use them for
+  every command, for example
+  `export HBCB_API_HOST_PORT=18080 HBCB_STORAGE_HOST_PORT=19000`, followed by
+  `make service-up` in that terminal.
+  Ports must be distinct canonical decimal values from 1 through 65535. Do not
+  change the bind address to a public interface.
+- **Trusted builder source changed:** rerun `make service-up`. Its wrapper owns
+  the current-source builder-image step before starting the service.
 - **A dependency stays unhealthy:** inspect bounded `ps`/tail logs, preserve
   `.env` and volumes, then use `make service-down` followed by
   `make service-up`. Avoid volume pruning as a generic repair.
+- **The API reports `needs_review`:** the service intentionally exposes the
+  stable `builder_needs_review` terminal code rather than private child output.
+  Run the same JSON through the one-shot `make build` path to see its bounded
+  `safe diagnostics:` reason before changing the character.
+- **Docker reports OOM or the host becomes unresponsive:** the steady service
+  ceilings total about 7 GiB RAM and 7.5 CPUs; initialization can briefly total
+  about 7.375 GiB and 8.25 CPUs. Stop other workloads or allocate more Docker
+  resources. The maintainer smoke adds a separate 4 GiB builder workload and is
+  best run with at least 12 GiB allocated to Docker.
 
 A successful end-to-end check ends with:
 
 ```text
-SERVICE_SMOKE: PASS evidence=.../build/service-smoke/run.XXXXXX
+SERVICE_SMOKE: PASS project=<checkout-project> evidence=.../build/service-smoke/run.XXXXXX
 ```
 
-The local Compose stack is loopback evaluation infrastructure, not a public
-deployment. See [HTTP API v1](api.md) for a copy-paste client path.
+This is the optional maintainer/integration confidence gate: it performs direct
+and service builds, restart, cancellation, artifact, Redis, and IAM checks and
+retains evidence under `build/service-smoke/`. It is not required to start or
+try the API. The repository has no lightweight custom-request service client
+yet; use [HTTP API v1](api.md) for the copy-paste first-evaluation path.
+
+For cleanup, `make service-down` stops this checkout's containers but preserves
+its database, queue, and artifact volumes. Keep `.env` with those volumes. The
+ignored `build/service-smoke/run.*` evidence and locally built service images
+also remain until you deliberately identify and remove them. There is no broad
+one-command reset because deleting the matched volumes is irreversible. Compose
+labels resources with the exact project name printed by the wrappers; use that
+identity in the active Docker context for any deliberate cleanup and never use
+a global prune as a repair step.
 
 ## Release and deployment checks
 

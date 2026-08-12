@@ -10,6 +10,10 @@ Changelog, and releases use Semantic Versioning.
 - Added caller-safe request validation details, bounded geometry-QA failure
   summaries, actionable Make preflight markers, and explicit documentation of
   GNU Make versus underlying builder exit statuses.
+- Added checkout-scoped local-service identities, selectable loopback API and
+  storage ports, wrapper-backed status/log commands, consistent Docker/Python
+  selection, and a lighter first-evaluation service journey. The comprehensive
+  service smoke remains an optional maintainer integration gate.
 - Updated every Debian-derived project image to the maintained
   `bookworm-20260803-slim` base, pinned its reviewed manifest digest, and
   advanced package installation to the immutable `20260804T000000Z` snapshot.

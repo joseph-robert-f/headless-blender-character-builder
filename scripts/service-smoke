@@ -1,25 +1,83 @@
 #!/bin/sh
 set -eu
 
-compose() {
-  if [ -n "${HBCB_COMPOSE_BIN:-}" ]; then
-    "$HBCB_COMPOSE_BIN" "$@"
-  else
-    docker compose "$@"
-  fi
-}
-
 if [ "$#" -ne 0 ]; then
   printf '%s\n' 'SERVICE_SMOKE: usage: scripts/service-smoke' >&2
   exit 2
 fi
+
+python_bin=${PYTHON:-python3}
+docker_bin=${DOCKER:-docker}
+valid_tool_selector() {
+  [ "${#1}" -le 4096 ] || return 1
+  case "$1" in ''|-*|*[![:graph:]]*) return 1 ;; esac
+}
+if ! valid_tool_selector "$python_bin" || ! valid_tool_selector "$docker_bin"; then
+  printf '%s\n' 'SERVICE_SMOKE: PYTHON and DOCKER must each name one safe executable' >&2
+  exit 3
+fi
+if ! command -v "$python_bin" >/dev/null 2>&1; then
+  printf '%s\n' "SERVICE_SMOKE: Python 3.11+ is unavailable ($python_bin)" >&2
+  exit 3
+fi
+python_version=$("$python_bin" --version 2>&1 | sed -n '1p' || true)
+if ! "$python_bin" -c \
+  'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
+  >/dev/null 2>&1; then
+  printf '%s\n' "SERVICE_SMOKE: Python 3.11+ is required (found: ${python_version:-unknown})" >&2
+  exit 3
+fi
+
+if [ ! -r ./scripts/service-common ]; then
+  printf '%s\n' 'SERVICE_SMOKE: run from the repository root' >&2
+  exit 2
+fi
+# shellcheck source=service-common
+. ./scripts/service-common
+
 if [ ! -f .env ]; then
   printf '%s\n' 'SERVICE_SMOKE: .env is missing; run make init-env' >&2
   exit 3
 fi
+if ! hbcb_service_env_private; then
+  printf '%s\n' 'SERVICE_SMOKE: .env must be an owned mode-0600 regular file' >&2
+  exit 3
+fi
+if ! hbcb_service_settings; then
+  printf '%s\n' 'SERVICE_SMOKE: local-service project or loopback-port settings are invalid' >&2
+  exit 3
+fi
+hbcb_service_identity
 
-builder_image=${BUILDER_IMAGE:-headless-blender-character-builder:dev}
-builder_metadata=$(docker image inspect \
+DOCKER=$docker_bin
+PYTHON=$python_bin
+export DOCKER PYTHON
+
+compose() {
+  if [ -n "${HBCB_COMPOSE_BIN:-}" ]; then
+    "$HBCB_COMPOSE_BIN" --project-name "$HBCB_COMPOSE_PROJECT_NAME" "$@"
+  else
+    "$docker_bin" compose --project-name "$HBCB_COMPOSE_PROJECT_NAME" "$@"
+  fi
+}
+
+case "${BUILDER_IMAGE:-}" in
+  ''|headless-blender-character-builder:dev)
+    builder_image=$HBCB_BUILDER_PROJECT_IMAGE
+    ;;
+  *) builder_image=$BUILDER_IMAGE ;;
+esac
+case "$builder_image" in
+  -*|*[![:graph:]]*)
+    printf '%s\n' 'SERVICE_SMOKE: builder image reference is invalid' >&2
+    exit 4
+    ;;
+esac
+if [ "${#builder_image}" -gt 512 ]; then
+  printf '%s\n' 'SERVICE_SMOKE: builder image reference is invalid' >&2
+  exit 4
+fi
+builder_metadata=$("$docker_bin" image inspect \
   --format '{{.Os}}/{{.Architecture}}|{{.Id}}' "$builder_image")
 builder_platform=${builder_metadata%%|*}
 builder_id=${builder_metadata#*|}
@@ -52,7 +110,7 @@ if [ "$runtime_uid" = 0 ]; then runtime_uid=65532; fi
 if [ "$runtime_gid" = 0 ]; then runtime_gid=65532; fi
 if [ "$host_uid" = 0 ]; then chown "$runtime_uid:$runtime_gid" "$run_root"; fi
 
-docker run \
+"$docker_bin" run \
   --rm \
   --init \
   --platform linux/amd64 \
@@ -73,7 +131,11 @@ docker run \
   "$builder_id" \
   build --request /input/request.json --output /output/direct
 
-python3 tests/service_integration/g7_service_smoke.py \
+"$python_bin" tests/service_integration/g7_service_smoke.py \
+  --base-url "http://127.0.0.1:$HBCB_API_HOST_PORT" \
+  --api-port "$HBCB_API_HOST_PORT" \
+  --storage-port "$HBCB_STORAGE_HOST_PORT" \
+  --compose-project "$HBCB_COMPOSE_PROJECT_NAME" \
   --env-file .env \
   --direct-output "$run_root/direct" \
   --service-output "$run_root/service" \
@@ -85,7 +147,7 @@ python3 tests/service_integration/g7_service_smoke.py \
 # is adjusted.
 if [ "$host_uid" = 0 ]; then chown -R "$runtime_uid:$runtime_gid" "$run_root"; fi
 
-docker run \
+"$docker_bin" run \
   --rm \
   --init \
   --platform linux/amd64 \
@@ -112,4 +174,5 @@ compose --env-file .env --profile test run --rm --build service-test \
 compose --env-file .env --profile test run --rm service-test \
   tests/service_integration/g7_iam_gate.py
 
-printf 'SERVICE_SMOKE: PASS evidence=%s\n' "$run_root"
+printf 'SERVICE_SMOKE: PASS project=%s evidence=%s\n' \
+  "$HBCB_COMPOSE_PROJECT_NAME" "$run_root"

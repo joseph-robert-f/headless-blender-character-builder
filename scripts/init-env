@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
+# shellcheck source=service-common
+. "$script_dir/service-common"
+
 case "$#:$*" in
   0:) action=create ;;
   1:--upgrade-g8) action=upgrade_g8 ;;
@@ -210,6 +214,9 @@ if [ -e "$target" ] || [ -L "$target" ]; then
   exit 4
 fi
 
+compose_project_name=$(hbcb_service_default_project_name) || exit 12
+api_host_port=8080
+storage_host_port=9000
 temporary=$(mktemp ./.env.tmp.XXXXXX)
 
 api_token=$(random_hex 32)
@@ -229,6 +236,9 @@ storage_maintenance_access_key=hbcb_maintenance
 storage_maintenance_secret_key=$(random_hex 32)
 
 {
+  printf 'HBCB_COMPOSE_PROJECT_NAME=%s\n' "$compose_project_name"
+  printf 'HBCB_API_HOST_PORT=%s\n' "$api_host_port"
+  printf 'HBCB_STORAGE_HOST_PORT=%s\n' "$storage_host_port"
   printf '%s\n' 'HBCB_DEPLOYMENT_NAMESPACE=local'
   printf 'HBCB_API_TOKEN=%s\n' "$api_token"
   printf 'HBCB_IDEMPOTENCY_SECRET=%s\n' "$idempotency_secret"
@@ -254,7 +264,7 @@ storage_maintenance_secret_key=$(random_hex 32)
   printf 'HBCB_STORAGE_MAINTENANCE_SECRET_KEY=%s\n' "$storage_maintenance_secret_key"
   printf '%s\n' 'HBCB_STORAGE_BUCKET=hbcb-artifacts'
   printf '%s\n' 'HBCB_STORAGE_INTERNAL_ENDPOINT=minio:9000'
-  printf '%s\n' 'HBCB_STORAGE_PUBLIC_ENDPOINT=localhost:9000'
+  printf 'HBCB_STORAGE_PUBLIC_ENDPOINT=localhost:%s\n' "$storage_host_port"
   printf '%s\n' 'HBCB_STORAGE_INTERNAL_SECURE=false'
   printf '%s\n' 'HBCB_STORAGE_PUBLIC_SECURE=false'
   printf '%s\n' 'HBCB_STORAGE_REGION=us-east-1'

@@ -47,14 +47,52 @@ credentials for API authentication, idempotency, database roles, Redis, and
 artifact-storage roles. These are local infrastructure credentials—not OpenAI,
 cloud, or Blender license keys.
 
+New `.env` files also contain `HBCB_COMPOSE_PROJECT_NAME`, a generated safe
+identity for this checkout's containers, networks, and named volumes. Move the
+checkout together with its `.env` to keep that identity. Existing `.env` files
+without the key deliberately retain the legacy project name `hbcb-local`, so an
+upgrade does not strand existing volumes. The standard `COMPOSE_PROJECT_NAME`
+may override the stored identity for advanced automation, but it must be a safe
+supported value and must be supplied consistently to every command for that
+stack. A different identity selects different resources; it does not rename or
+migrate existing volumes.
+
+Service commands accept `PYTHON` when the default `python3` is older than 3.11:
+
+```sh
+PYTHON=python3.11 make service-config
+PYTHON=python3.11 make service-up
+```
+
+They also honor `DOCKER` as one executable path for controlled environments.
+Use the Make targets rather than raw Compose so checkout identity, image
+provenance, and selected ports are restored consistently.
+
+The local API and storage endpoints remain bound to loopback. Their host ports
+can be selected before startup; values must be distinct canonical decimal ports
+from 1 through 65535:
+
+```sh
+export HBCB_API_HOST_PORT=18080 HBCB_STORAGE_HOST_PORT=19000
+make service-up
+```
+
+The defaults are `8080` and `9000`. The `export` keeps the selection consistent
+for `service-config`, `service-up`, `service-ps`, `service-logs`, the API client,
+and `service-down` in that terminal session. Alternatively, edit only the two
+nonsecret generated port-selector lines in the private `.env` before startup.
+
 Treat `.env` and the named Compose volumes as a matched set. `make service-down`
 preserves both data and volume-side credentials. Do not replace `.env` while
 those volumes remain; restore the original file or deliberately dispose of the
 local data first. See [Troubleshooting](troubleshooting.md#local-asynchronous-service).
 
 The local service binds only to loopback. `make service-config` validates the
-resolved Compose configuration without starting the application, although it
-may first ensure the trusted builder image exists.
+resolved Compose configuration without starting the application or building an
+image. `make service-up` builds the current checkout's trusted builder and
+service images before starting the stack. `make service-ps` reports this
+checkout's containers and `make service-logs` prints only the last 100 API and
+worker lines. `make service-down` stops containers but preserves named volumes.
 
 ## VPS configuration
 

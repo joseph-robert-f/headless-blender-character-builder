@@ -1,0 +1,252 @@
+#!/bin/sh
+
+# Shared, source-safe settings for the local Compose service.  This file does
+# not enable shell options and its public functions return nonzero on error so
+# callers such as `doctor` can report failures in their own format.
+
+hbcb_service_error() {
+  printf 'SERVICE_SETTINGS: %s\n' "$1" >&2
+  return 1
+}
+
+hbcb_service_default_project_name() {
+  hbcb_service_path=$(pwd -P 2>/dev/null) || {
+    hbcb_service_error 'the checkout path cannot be resolved'
+    return 1
+  }
+  hbcb_service_digest=
+  if command -v sha256sum >/dev/null 2>&1; then
+    hbcb_service_digest=$(printf '%s' "$hbcb_service_path" | sha256sum 2>/dev/null) || \
+      hbcb_service_digest=
+  elif command -v shasum >/dev/null 2>&1; then
+    hbcb_service_digest=$(printf '%s' "$hbcb_service_path" | shasum -a 256 2>/dev/null) || \
+      hbcb_service_digest=
+  else
+    hbcb_service_python=${PYTHON:-python3}
+    hbcb_service_digest=$("$hbcb_service_python" -c \
+      'import hashlib,os,sys; print(hashlib.sha256(os.fsencode(sys.argv[1])).hexdigest())' \
+      "$hbcb_service_path" 2>/dev/null) || hbcb_service_digest=
+  fi
+  hbcb_service_hash=${hbcb_service_digest%% *}
+  case "$hbcb_service_hash" in
+    ''|*[!0-9a-f]*)
+      hbcb_service_error 'the checkout identity could not be derived safely'
+      return 1
+      ;;
+  esac
+  if [ "${#hbcb_service_hash}" -ne 64 ]; then
+    hbcb_service_error 'the checkout identity could not be derived safely'
+    return 1
+  fi
+  printf 'hbcb-local-%.12s\n' "$hbcb_service_hash"
+}
+
+# Print the exact value for one dotenv key.  Status 1 means absent; status 2
+# means duplicate.  Values are printed only after uniqueness is established.
+hbcb_service_env_value() {
+  hbcb_service_env_key=$1
+  awk -v wanted="$hbcb_service_env_key" '
+    {
+      prefix = wanted "="
+      if (index($0, prefix) == 1) {
+        count++
+        value = substr($0, length(prefix) + 1)
+      }
+    }
+    END {
+      if (count == 0) exit 1
+      if (count != 1) exit 2
+      print value
+    }
+  ' .env
+}
+
+hbcb_service_valid_project_name() {
+  hbcb_service_candidate=$1
+  case "$hbcb_service_candidate" in
+    ''|[!a-z0-9]*|*[!a-z0-9_-]*|*[-_]|*___*|*_-*|*-_*) return 1 ;;
+  esac
+  [ "${#hbcb_service_candidate}" -le 63 ]
+}
+
+hbcb_service_valid_port() {
+  hbcb_service_candidate=$1
+  case "$hbcb_service_candidate" in
+    ''|0|0*|*[!0-9]*) return 1 ;;
+  esac
+  [ "${#hbcb_service_candidate}" -le 5 ] || return 1
+  [ "$hbcb_service_candidate" -le 65535 ]
+}
+
+hbcb_service_file_mode() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
+}
+
+hbcb_service_file_owner() {
+  stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1" 2>/dev/null
+}
+
+hbcb_service_env_private() {
+  [ -f .env ] && [ ! -L .env ] || return 1
+  hbcb_service_mode=$(hbcb_service_file_mode .env) || return 1
+  hbcb_service_owner=$(hbcb_service_file_owner .env) || return 1
+  [ "$hbcb_service_mode" = 600 ] && \
+    [ "$hbcb_service_owner" = "$(id -u)" ]
+}
+
+# Resolve the project, loopback ports, public storage endpoint, and local image
+# tags without sourcing .env.  Environment selectors take precedence over
+# persisted values.  A pre-isolation .env intentionally retains hbcb-local.
+hbcb_service_settings() {
+  if [ -L .env ] || { [ -e .env ] && [ ! -f .env ]; }; then
+    hbcb_service_error '.env must be a regular non-symlink file'
+    return 1
+  fi
+  if [ -f .env ]; then
+    hbcb_service_env_size=$(wc -c < .env 2>/dev/null | tr -d ' ') || {
+      hbcb_service_error '.env could not be read safely'
+      return 1
+    }
+    case "$hbcb_service_env_size" in
+      ''|*[!0-9]*)
+        hbcb_service_error '.env could not be read safely'
+        return 1
+        ;;
+    esac
+    if [ "$hbcb_service_env_size" -gt 65536 ]; then
+      hbcb_service_error '.env exceeds the local settings size limit'
+      return 1
+    fi
+  fi
+
+  if [ "${COMPOSE_PROJECT_NAME+x}" = x ]; then
+    hbcb_service_project=$COMPOSE_PROJECT_NAME
+  elif [ -f .env ]; then
+    if hbcb_service_value=$(hbcb_service_env_value HBCB_COMPOSE_PROJECT_NAME); then
+      hbcb_service_project=$hbcb_service_value
+    else
+      hbcb_service_status=$?
+      if [ "$hbcb_service_status" -eq 1 ]; then
+        hbcb_service_project=hbcb-local
+      else
+        hbcb_service_error '.env contains duplicate checkout project settings'
+        return 1
+      fi
+    fi
+  else
+    hbcb_service_project=$(hbcb_service_default_project_name) || return 1
+  fi
+  if ! hbcb_service_valid_project_name "$hbcb_service_project"; then
+    hbcb_service_error 'the Compose project name must be a 1-63 character lowercase safe identifier'
+    return 1
+  fi
+
+  if [ "${HBCB_API_HOST_PORT+x}" = x ]; then
+    hbcb_service_api_port=$HBCB_API_HOST_PORT
+  elif [ -f .env ]; then
+    if hbcb_service_value=$(hbcb_service_env_value HBCB_API_HOST_PORT); then
+      hbcb_service_api_port=$hbcb_service_value
+    else
+      hbcb_service_status=$?
+      if [ "$hbcb_service_status" -eq 1 ]; then
+        hbcb_service_api_port=8080
+      else
+        hbcb_service_error '.env contains duplicate API host-port settings'
+        return 1
+      fi
+    fi
+  else
+    hbcb_service_api_port=8080
+  fi
+
+  if [ "${HBCB_STORAGE_HOST_PORT+x}" = x ]; then
+    hbcb_service_storage_port=$HBCB_STORAGE_HOST_PORT
+  elif [ -f .env ]; then
+    if hbcb_service_value=$(hbcb_service_env_value HBCB_STORAGE_HOST_PORT); then
+      hbcb_service_storage_port=$hbcb_service_value
+    else
+      hbcb_service_status=$?
+      if [ "$hbcb_service_status" -eq 1 ]; then
+        hbcb_service_storage_port=9000
+      else
+        hbcb_service_error '.env contains duplicate storage host-port settings'
+        return 1
+      fi
+    fi
+  else
+    hbcb_service_storage_port=9000
+  fi
+
+  if ! hbcb_service_valid_port "$hbcb_service_api_port"; then
+    hbcb_service_error 'the API host port must be a canonical integer from 1 through 65535'
+    return 1
+  fi
+  if ! hbcb_service_valid_port "$hbcb_service_storage_port"; then
+    hbcb_service_error 'the storage host port must be a canonical integer from 1 through 65535'
+    return 1
+  fi
+  if [ "$hbcb_service_api_port" = "$hbcb_service_storage_port" ]; then
+    hbcb_service_error 'the API and storage host ports must be distinct'
+    return 1
+  fi
+
+  HBCB_COMPOSE_PROJECT_NAME=$hbcb_service_project
+  COMPOSE_PROJECT_NAME=$hbcb_service_project
+  HBCB_API_HOST_PORT=$hbcb_service_api_port
+  HBCB_STORAGE_HOST_PORT=$hbcb_service_storage_port
+  HBCB_STORAGE_PUBLIC_ENDPOINT=localhost:$hbcb_service_storage_port
+
+  if [ "$hbcb_service_project" = hbcb-local ]; then
+    HBCB_MINIO_IMAGE=hbcb-minio-local:RELEASE.2025-10-15T17-29-55Z
+    HBCB_SERVICE_API_IMAGE=hbcb-service-api:dev
+    HBCB_SERVICE_WORKER_IMAGE=hbcb-service-worker:dev
+    HBCB_SERVICE_TEST_IMAGE=hbcb-service-test:dev
+  else
+    HBCB_MINIO_IMAGE=$hbcb_service_project-minio:RELEASE.2025-10-15T17-29-55Z
+    HBCB_SERVICE_API_IMAGE=$hbcb_service_project-api:dev
+    HBCB_SERVICE_WORKER_IMAGE=$hbcb_service_project-worker:dev
+    HBCB_SERVICE_TEST_IMAGE=$hbcb_service_project-test:dev
+  fi
+  HBCB_BUILDER_PROJECT_IMAGE=$hbcb_service_project-builder:dev
+
+  export HBCB_COMPOSE_PROJECT_NAME COMPOSE_PROJECT_NAME
+  export HBCB_API_HOST_PORT HBCB_STORAGE_HOST_PORT HBCB_STORAGE_PUBLIC_ENDPOINT
+  export HBCB_MINIO_IMAGE HBCB_SERVICE_API_IMAGE HBCB_SERVICE_WORKER_IMAGE
+  export HBCB_SERVICE_TEST_IMAGE HBCB_BUILDER_PROJECT_IMAGE
+}
+
+hbcb_service_identity() {
+  printf 'SERVICE_COMPOSE: project=%s api=127.0.0.1:%s storage=127.0.0.1:%s\n' \
+    "$HBCB_COMPOSE_PROJECT_NAME" \
+    "$HBCB_API_HOST_PORT" \
+    "$HBCB_STORAGE_HOST_PORT"
+}
+
+# Return a bit mask without printing values: 1 means the API bind is
+# unavailable, 2 means the storage bind is unavailable, and 3 means both are.
+# Settings must be resolved first.  A different nonzero status is a probe error.
+hbcb_service_ports_available() {
+  hbcb_service_python=$1
+  "$hbcb_service_python" -c '
+import errno
+import socket
+import sys
+
+sockets = []
+status = 0
+for bit, port in ((1, int(sys.argv[1])), (2, int(sys.argv[2]))):
+    candidate = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        candidate.bind(("127.0.0.1", port))
+    except OSError as error:
+        candidate.close()
+        if error.errno != errno.EADDRINUSE:
+            raise SystemExit(10)
+        status |= bit
+    else:
+        sockets.append(candidate)
+for candidate in sockets:
+    candidate.close()
+raise SystemExit(status)
+' "$HBCB_API_HOST_PORT" "$HBCB_STORAGE_HOST_PORT"
+}

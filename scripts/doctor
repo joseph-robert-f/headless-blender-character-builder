@@ -9,7 +9,7 @@ usage() {
     'usage: scripts/doctor [--demo|--service|--native]' \
     '' \
     '  --demo     Check the keyless Docker path (default).' \
-    '  --service  Also require Compose 2.24.4+ and Python 3.11+.' \
+    '  --service  Also require Compose 2.24.4+, Python 3.11+, and curl.' \
     '  --native   Check Python 3.11+ and Blender 4.5.12 without Docker.'
 }
 
@@ -31,10 +31,15 @@ esac
 
 doctor_git=${HBCB_DOCTOR_GIT:-git}
 doctor_make=${HBCB_DOCTOR_MAKE:-make}
-doctor_docker=${HBCB_DOCTOR_DOCKER:-docker}
-doctor_python=${HBCB_DOCTOR_PYTHON:-python3}
+doctor_docker=${HBCB_DOCTOR_DOCKER:-${DOCKER:-docker}}
+doctor_python=${HBCB_DOCTOR_PYTHON:-${PYTHON:-python3}}
+doctor_curl=${HBCB_DOCTOR_CURL:-curl}
 doctor_blender=${BLENDER:-blender}
 failures=0
+docker_ready=0
+python_ready=0
+service_env_ready=1
+service_docker_local=1
 
 ok() {
   printf '  OK   %s\n' "$1"
@@ -95,10 +100,63 @@ check_python() {
   if "$doctor_python" -c \
     'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
     >/dev/null 2>&1; then
+    python_ready=1
     ok "$python_version"
   else
     fail "Python 3.11+ is required (found: ${python_version:-unknown})"
   fi
+}
+
+check_curl() {
+  if ! command -v "$doctor_curl" >/dev/null 2>&1; then
+    fail "curl is unavailable ($doctor_curl); it is required by the local API journey"
+    return
+  fi
+  curl_version=$("$doctor_curl" --version 2>/dev/null | first_line || true)
+  if [ -z "$curl_version" ]; then
+    fail 'curl was found but did not report a version'
+    return
+  fi
+  curl_help=$("$doctor_curl" --help all 2>/dev/null || true)
+  case "$curl_help" in
+    *'--fail-with-body'*'--noproxy'*)
+      ok "$curl_version (supports the documented local API journey)"
+      ;;
+    *)
+      fail "curl with --fail-with-body and --noproxy support is required (found: $curl_version)"
+      ;;
+  esac
+}
+
+check_service_docker_endpoint() {
+  if ! command -v "$doctor_docker" >/dev/null 2>&1; then
+    return
+  fi
+  docker_endpoint=$(
+    "$doctor_docker" context inspect --format '{{.Endpoints.docker.Host}}' \
+      2>/dev/null | first_line || true
+  )
+  docker_endpoint_scheme=${docker_endpoint%%:*}
+  case "$docker_endpoint_scheme" in
+    ssh|tcp|http|https)
+      service_docker_local=0
+      fail 'the local service requires a local Docker daemon/context; switch from the selected remote Docker context before continuing'
+      ;;
+    unix|npipe)
+      ok 'selected Docker endpoint is local'
+      ;;
+    '')
+      # Older clients and unavailable contexts may not expose this metadata.
+      # The ordinary daemon reachability check remains authoritative.
+      ;;
+    *)
+      if [ "$docker_endpoint" = default ]; then
+        ok 'selected Docker endpoint is local'
+      else
+        note 'Docker endpoint metadata is unrecognized; daemon reachability remains authoritative'
+      fi
+      ;;
+  esac
 }
 
 check_docker() {
@@ -116,6 +174,7 @@ check_docker() {
     "$doctor_docker" info --format '{{.ServerVersion}}' 2>/dev/null | first_line || true
   )
   if [ -n "$daemon_version" ]; then
+    docker_ready=1
     ok "Docker daemon is reachable (server $daemon_version)"
   else
     fail 'Docker daemon is not reachable; start Docker and check current-user access'
@@ -135,14 +194,149 @@ check_docker() {
   esac
 }
 
+file_mode() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
+}
+
+file_owner() {
+  stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1" 2>/dev/null
+}
+
+check_service_env() {
+  if [ -L .env ]; then
+    fail '.env must be a regular non-symlink file owned by the current user with mode 0600'
+    service_env_ready=0
+    return
+  fi
+  if [ ! -e .env ]; then
+    note 'no .env exists yet; run make init-env after this check passes'
+    return
+  fi
+  if [ ! -f .env ]; then
+    fail '.env must be a regular non-symlink file owned by the current user with mode 0600'
+    service_env_ready=0
+    return
+  fi
+  env_mode=$(file_mode .env || true)
+  env_owner=$(file_owner .env || true)
+  if [ "$env_mode" != 600 ] || [ "$env_owner" != "$(id -u)" ]; then
+    fail '.env must be owned by the current user with mode 0600; do not replace it while service volumes exist'
+    service_env_ready=0
+    return
+  fi
+  ok '.env is an owned mode-0600 regular file'
+  note 'preserve .env while its matching service volumes exist'
+}
+
+report_loopback_port() {
+  port=$1
+  purpose=$2
+  occupied=$3
+  if [ "$occupied" -eq 0 ]; then
+    ok "$purpose loopback port 127.0.0.1:$port is available"
+    return
+  fi
+  project_owner=
+  if [ "$docker_ready" -eq 1 ]; then
+    project_owner=$("$doctor_docker" ps --quiet \
+      --filter "label=com.docker.compose.project=$HBCB_COMPOSE_PROJECT_NAME" \
+      --filter "publish=$port" 2>/dev/null | first_line || true)
+  fi
+  if [ -n "$project_owner" ]; then
+    ok "$purpose loopback port 127.0.0.1:$port is already owned by selected project $HBCB_COMPOSE_PROJECT_NAME"
+  else
+    fail "$purpose loopback port 127.0.0.1:$port is already in use outside selected project $HBCB_COMPOSE_PROJECT_NAME"
+  fi
+}
+
+check_service_ports() {
+  if [ "$python_ready" -ne 1 ] || [ "$service_docker_local" -ne 1 ]; then
+    return
+  fi
+  if hbcb_service_ports_available "$doctor_python" >/dev/null 2>&1; then
+    port_status=0
+  else
+    port_status=$?
+  fi
+  case "$port_status" in
+    0|1|2|3) ;;
+    *)
+      fail 'selected loopback ports could not be checked safely'
+      return
+      ;;
+  esac
+  report_loopback_port \
+    "$HBCB_API_HOST_PORT" 'API' "$((port_status & 1))"
+  report_loopback_port \
+    "$HBCB_STORAGE_HOST_PORT" 'artifact storage' "$((port_status & 2))"
+}
+
+check_service_capacity() {
+  if [ "$docker_ready" -eq 1 ] && [ "$service_docker_local" -eq 1 ]; then
+    capacity=$("$doctor_docker" info --format '{{.NCPU}}|{{.MemTotal}}' 2>/dev/null | first_line || true)
+    capacity_cpus=${capacity%%|*}
+    capacity_memory=${capacity#*|}
+    capacity_valid=1
+    case "$capacity" in
+      *'|'*) ;;
+      *) capacity_valid=0 ;;
+    esac
+    case "$capacity_cpus:$capacity_memory" in
+      ''|*[!0-9:]*|*:|:*) capacity_valid=0 ;;
+    esac
+    if [ "$capacity_valid" -ne 1 ]; then
+      note 'Docker CPU/RAM allocation could not be measured; the service baseline is 8 GiB RAM and the smoke path recommends 12 GiB'
+    else
+      capacity_gib=$((capacity_memory / 1073741824))
+      note "Docker reports $capacity_cpus CPU(s) and ${capacity_gib} GiB RAM; the service can use about 8 CPUs"
+      if [ "$capacity_memory" -lt 8589934592 ]; then
+        note 'Docker has less than the advisory 8 GiB service baseline'
+      else
+        ok 'Docker meets the advisory 8 GiB service-memory baseline'
+      fi
+      note 'the full service-smoke path recommends at least 12 GiB of Docker memory'
+    fi
+  fi
+  free_kib=$(df -Pk . 2>/dev/null | awk 'END { print $4 }' || true)
+  case "$free_kib" in
+    ''|*[!0-9]*) note 'checkout free disk could not be measured; allow at least 20 GiB' ;;
+    *)
+      free_gib=$((free_kib / 1048576))
+      if [ "$free_kib" -lt 20971520 ]; then
+        note "checkout has about ${free_gib} GiB free; the advisory service baseline is 20 GiB"
+      else
+        ok "checkout has about ${free_gib} GiB free (20 GiB service baseline)"
+      fi
+      ;;
+  esac
+}
+
+check_service_settings() {
+  if [ ! -r ./scripts/service-common ]; then
+    fail 'shared local-service settings are unavailable'
+    return
+  fi
+  # shellcheck source=service-common
+  . ./scripts/service-common
+  if ! hbcb_service_settings; then
+    fail 'local-service project or loopback-port settings are invalid'
+    return
+  fi
+  ok "selected Compose project is $HBCB_COMPOSE_PROJECT_NAME"
+  check_service_ports
+}
+
 check_compose() {
   compose_version=$("$doctor_docker" compose version 2>/dev/null | first_line || true)
   if [ -z "$compose_version" ]; then
     fail 'Docker Compose v2 is unavailable'
     return
   fi
-  if command -v "$doctor_python" >/dev/null 2>&1 && \
-     "$doctor_python" -c '
+  if [ "$python_ready" -ne 1 ]; then
+    note "Docker Compose reports $compose_version; select Python 3.11+ to check its minimum version"
+    return
+  fi
+  if "$doctor_python" -c '
 import re
 import sys
 match = re.search(r"(?:^|\s)v?(\d+)\.(\d+)\.(\d+)(?:\D|$)", sys.argv[1])
@@ -174,14 +368,16 @@ case "$mode" in
     ;;
   service)
     check_make
+    check_service_docker_endpoint
     check_docker
     check_python
+    check_curl
     check_compose
-    if [ -f .env ]; then
-      note 'an existing .env was found; preserve it while its service volumes exist'
-    else
-      note 'no .env exists yet; run make init-env after this check passes'
+    check_service_env
+    if [ "$service_env_ready" -eq 1 ]; then
+      check_service_settings
     fi
+    check_service_capacity
     ;;
   native)
     check_python

@@ -115,6 +115,103 @@ class RecoveryDrillTests(unittest.TestCase):
                 with self.assertRaisesRegex(recovery.GateError, "fixture_image_invalid"):
                     recovery._image_id(runner, "fixture:dev", "fixture_image")
 
+    def test_selected_project_images_and_docker_binary_are_bounded(self) -> None:
+        source = {"HBCB_COMPOSE_PROJECT_NAME": "hbcb-local-fixture"}
+        with mock.patch.dict(
+            os.environ,
+            {
+                "DOCKER": "/fixture/docker",
+                "COMPOSE_PROJECT_NAME": "hbcb-selected",
+                "HBCB_SERVICE_API_IMAGE": "hbcb-selected-api:dev",
+                "HBCB_MINIO_IMAGE": "hbcb-selected-minio:dev",
+            },
+            clear=True,
+        ):
+            self.assertEqual(recovery._docker_command(), ("/fixture/docker",))
+            self.assertEqual(
+                recovery._compose_command(), ("/fixture/docker", "compose")
+            )
+            self.assertEqual(
+                recovery._selected_reference(
+                    "HBCB_SERVICE_API_IMAGE", "fallback:dev"
+                ),
+                "hbcb-selected-api:dev",
+            )
+            self.assertEqual(
+                recovery._selected_source_project(source), "hbcb-selected"
+            )
+
+        for environment in (
+            {"DOCKER": "docker --host hostile"},
+            {"DOCKER": "--hostile-docker-option"},
+            {"HBCB_SERVICE_API_IMAGE": "bad image"},
+            {"HBCB_SERVICE_API_IMAGE": "--hostile-image-option"},
+            {"COMPOSE_PROJECT_NAME": "Unsafe.Project"},
+        ):
+            with self.subTest(environment=environment), mock.patch.dict(
+                os.environ, environment, clear=True
+            ):
+                with self.assertRaises(recovery.GateError):
+                    if "DOCKER" in environment:
+                        recovery._docker_command()
+                    elif "HBCB_SERVICE_API_IMAGE" in environment:
+                        recovery._selected_reference(
+                            "HBCB_SERVICE_API_IMAGE", "fallback:dev"
+                        )
+                    else:
+                        recovery._selected_source_project(source)
+
+    def test_source_compose_binds_the_selected_source_project(self) -> None:
+        captured: list[tuple[str, ...]] = []
+
+        def run(command: object, **_kwargs: object) -> object:
+            captured.append(tuple(command))  # type: ignore[arg-type]
+            return recovery.CommandResult(b"")
+
+        context = recovery.DrillContext(
+            runner=SimpleNamespace(run=run),
+            docker=("/fixture/docker",),
+            compose=("/fixture/compose",),
+            source_environment={},
+            source_values={},
+            target_environment={},
+            source_project_name="hbcb-source",
+            project_name="hbcb-target",
+            runtime_uid=65532,
+            runtime_gid=65532,
+            work_root=Path("/fixture/work"),
+            backup_root=Path("/fixture/backup"),
+            service_image="sha256:" + "a" * 64,
+            minio_image="sha256:" + "b" * 64,
+        )
+        context.source_compose("ps", "--all", label="source")
+        self.assertEqual(captured[0][:3], ("/fixture/compose", "--project-name", "hbcb-source"))
+
+    def test_database_backup_binds_the_selected_source_project(self) -> None:
+        captured: list[tuple[str, ...]] = []
+
+        def run(command: object, *, stdout: object, **_kwargs: object) -> object:
+            captured.append(tuple(command))  # type: ignore[arg-type]
+            stdout.write(b"fixture-backup")  # type: ignore[union-attr]
+            return recovery.CommandResult(b"")
+
+        context = SimpleNamespace(
+            compose=("/fixture/compose",),
+            source_project_name="hbcb-source",
+            source_values={"POSTGRES_USER": "hbcb_admin", "POSTGRES_DB": "hbcb"},
+            source_environment={},
+            runner=SimpleNamespace(run=run),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "database.dump"
+            size, digest = recovery._database_backup(context, destination)
+        self.assertEqual(size, len(b"fixture-backup"))
+        self.assertEqual(digest, recovery.hashlib.sha256(b"fixture-backup").hexdigest())
+        self.assertEqual(
+            captured[0][:3],
+            ("/fixture/compose", "--project-name", "hbcb-source"),
+        )
+
     def test_disposable_compose_has_no_build_or_port_and_one_internal_network(self) -> None:
         text = COMPOSE.read_text(encoding="utf-8")
         self.assertNotIn("\n    ports:", text)
@@ -272,6 +369,7 @@ class RecoveryDrillTests(unittest.TestCase):
 
         context = SimpleNamespace(
             target_compose=compose,
+            docker=("docker",),
             runner=SimpleNamespace(run=inspect),
         )
         with mock.patch.object(recovery.time, "sleep"):
@@ -281,6 +379,7 @@ class RecoveryDrillTests(unittest.TestCase):
 
         failing_context = SimpleNamespace(
             target_compose=compose,
+            docker=("docker",),
             runner=SimpleNamespace(
                 run=lambda *_args, **_kwargs: recovery.CommandResult(
                     b'{"Status":"exited","Running":false,"ExitCode":1}'

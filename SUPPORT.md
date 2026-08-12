@@ -14,6 +14,12 @@ support plan, or SLA.
 4. Reproduce with the bundled `facet-bot` request when possible. This helps
    separate environment problems from a custom character specification.
 
+For local-service problems, use `make service-ps` and `make service-logs` rather
+than raw Compose commands. The wrappers select the checkout-specific project,
+restore required image provenance, and bound logs to the last 100 API and worker
+lines. If `python3` is older than 3.11, use the same explicit override as the
+failed command, such as `PYTHON=python3.11 make service-ps`.
+
 For a non-sensitive defect or bounded feature proposal, use the
 [GitHub issue chooser](https://github.com/joseph-robert-f/headless-blender-character-builder/issues/new/choose).
 
@@ -29,6 +35,11 @@ For a non-sensitive defect or bounded feature proposal, use the
 - expected behavior and actual behavior; and
 - relevant `qa.json` or `manifest.json` fields and a short sanitized log
   excerpt when available.
+
+For the local service, also state whether the checkout uses a generated
+`HBCB_COMPOSE_PROJECT_NAME` or the legacy `hbcb-local` identity, and whether
+nondefault `HBCB_API_HOST_PORT` or `HBCB_STORAGE_HOST_PORT` values were selected.
+Report names and port numbers only—never paste `.env` values.
 
 Do not attach credentials, `.env` files, role-secret files, signed artifact
 URLs, private model references, personal data, or content you cannot

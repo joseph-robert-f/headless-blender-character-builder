@@ -18,7 +18,7 @@ Compose, an AI key, or a provider account for one-shot builds.
 | [Docker with Make](#container-path-recommended) | Recommended local path | Git, current Docker Engine/Desktop with BuildKit and `linux/amd64` support, GNU Make |
 | [Docker without Make](#docker-without-make) | Equivalent manual path | Git, Docker, a POSIX shell, `id`, and `mkdir` |
 | [Native Blender](#native-blender-best-effort) | Best-effort contributor path | Git, Python 3.11+, exact Blender 4.5.12 LTS |
-| [Local asynchronous service](#local-asynchronous-service) | Local integration path | Docker Compose 2.24.4+, Python 3.11+, and the container requirements |
+| [Local asynchronous service](#local-asynchronous-service) | Local integration path | Local Docker daemon/context, Docker Compose 2.24.4+, Python 3.11+, curl, 8 GiB Docker memory, 20 GB free disk, and the container requirements |
 | [VPS reference](deployment.md) | Production-oriented design; not yet published for deployment | Linux `amd64`, Compose 2.24.4+, domain/TLS, private storage networking, external versioned S3, role secrets, and a future release lock/image set |
 
 The container runtime limit is four CPUs, 4 GB RAM, 512 PIDs, and 2 GB of
@@ -55,6 +55,12 @@ work, install Python 3.11 or newer from
 from [blender.org](https://www.blender.org/download/lts/4-5/); Homebrew is still
 not required.
 
+For the optional local service, Docker Desktop supplies the Compose plugin.
+Install Python 3.11+ from python.org, keep the system-provided `curl` current,
+and allocate at least 8 GiB to Docker Desktop (12 GiB for `service-smoke`). The
+service doctor verifies Python, Compose, curl's required flag, and the current
+Docker allocation before any service build.
+
 ### Linux
 
 Install Git and GNU Make with your distribution's package manager. On Debian
@@ -83,6 +89,12 @@ docker buildx version
 Do not work around a daemon permission failure by making the Docker socket
 world-writable.
 
+For the optional local service, also install `curl`, a Python 3.11+ interpreter,
+and Docker's Compose plugin inside Linux. Follow Docker's official repository
+instructions for `docker-compose-plugin`; a legacy standalone `docker-compose`
+binary is not the documented path. Verify with `python3 --version`,
+`curl --version`, and `docker compose version`.
+
 Native Linux `amd64` is the reference runtime. Linux `arm64` can emulate the
 release image but is best effort; no official native `arm64` Blender archive is
 pinned for v0.1.
@@ -92,7 +104,9 @@ pinned for v0.1.
 The Windows path is non-release-blocking and experimental. Use a WSL2 Linux
 distribution, then either enable Docker Desktop's WSL integration for that
 distribution or install Docker Engine inside it. Install Git and GNU Make in
-the Linux distribution, not only on Windows.
+the Linux distribution, not only on Windows. For the optional service, install
+Python 3.11+, curl, and the Docker Compose plugin in that same distribution and
+verify them from the WSL shell.
 
 Keep the repository in the WSL filesystem, such as
 `~/headless-blender-character-builder`, instead of `/mnt/c/...`; bind-mounted
@@ -240,9 +254,9 @@ git pull --ff-only
 ```
 
 Use a new output name for the first build after an update. `make build`
-rebuilds the builder image from the current source. If trusted generator source
-changes while the optional service is using an older local tag, run
-`make image` before `make service-up`.
+rebuilds the builder image from the current source. For the optional service,
+rerun `make service-up`; its wrapper rebuilds the checkout-scoped builder and
+service images from the current source before starting the stack.
 
 Do not update a deployed release tree with `git pull`. Future VPS deployments
 must install an exact published source release together with its matching
@@ -364,16 +378,65 @@ The existing `make demo-native BLENDER=/absolute/path/to/blender` and
 
 ## Local asynchronous service
 
-The local service is optional. Check its additional prerequisites, create
-credentials once, and run the end-to-end smoke:
+The local service is optional and requires a Docker daemon on this machine.
+An SSH, TCP, or HTTP Docker context is not supported because the API and
+artifact ports bind to the daemon host while the documented client connects to
+this machine's loopback. If the doctor reports a remote context, switch to a
+local context in Docker Desktop or with `docker context use <local-context>`;
+also clear `DOCKER_HOST` or `DOCKER_CONTEXT` if you set either to select a
+remote daemon.
+
+Check `python3 --version` first. If it is older
+than 3.11, select an installed interpreter once for this terminal session with
+`export PYTHON=python3.11`. Then check the additional prerequisites, create
+credentials once, validate the configuration, and start it:
 
 ```sh
 ./scripts/doctor --service
 make init-env
+make service-config
 make service-up
-make service-smoke
-make service-down
+make service-ps
 ```
+
+`service-ps` should show `api`, `worker`, PostgreSQL, Redis, and MinIO running.
+The one-shot `database-init` and `minio-init` rows should show `Exited (0)`;
+that is successful initialization, not a crash. Follow [HTTP API v1](api.md),
+then run `make service-down` when finished.
+
+Use Python 3.11 or newer consistently. If `python3` is older, select an installed
+interpreter explicitly, for example `PYTHON=python3.11 make service-up`; use the
+same `PYTHON=python3.11` override for `service-config`, `service-ps`,
+`service-logs`, and `service-smoke`. On macOS, install Python 3.11+ from
+[python.org](https://www.python.org/downloads/macos/) if needed. On Linux,
+install it through the distribution's supported packages or python.org. In
+WSL2, install and invoke it inside the Linux distribution, not from Windows.
+
+The default loopback ports are `127.0.0.1:8080` for the API and
+`127.0.0.1:9000` for artifact downloads. If either is occupied, choose distinct
+ports from 1 through 65535 before `make service-up`, and retain the same values
+for every service command:
+
+```sh
+export HBCB_API_HOST_PORT=18080 HBCB_STORAGE_HOST_PORT=19000
+make service-up
+```
+
+The `export` retains the selection for the remaining service and API-client
+commands in this terminal. These variables change only the host port; the
+supported bind address remains loopback. The steady stack's configured ceilings total about 7 GiB RAM and 7.5
+CPUs; initialization can briefly total about 7.375 GiB and 8.25 CPUs. Begin with
+at least 8 GiB allocated to Docker and 20 GB free disk. `make service-smoke` is a maintainer
+integration gate, not a required startup step: its additional direct-builder
+workload can add 4 GiB, so allocate at least 12 GiB to Docker.
+
+`make init-env` records `HBCB_COMPOSE_PROJECT_NAME`, a safe checkout-specific
+Compose identity. Moving a checkout together with its ignored `.env` preserves
+its containers and named-volume identity. An older `.env` without this key keeps
+the legacy `hbcb-local` identity so its existing volumes remain reachable.
+Advanced callers may set the standard `COMPOSE_PROJECT_NAME`, but must use the
+same safe value for every command that manages that stack; changing it selects
+a different set of containers and volumes.
 
 `make service-down` stops containers while preserving the PostgreSQL, Redis,
 and MinIO development volumes. Preserve the ignored `.env` while those volumes
@@ -381,6 +444,15 @@ exist because its generated credentials must continue to match them. The
 [API guide](api.md#copy-paste-local-client-journey) provides the request journey, and
 [troubleshooting](troubleshooting.md) covers safe recovery and evidence to
 include in a report.
+
+Use `make service-ps` for status and `make service-logs` for the last 100 API and
+worker log lines. These wrappers restore the checkout identity and required
+provenance automatically; do not substitute raw `docker compose` commands.
+
+There is no lightweight custom-request service client yet. For a first custom
+request, copy and validate the example as described in [Build another
+request](#build-another-request), start the stack, and then use that JSON file in
+the [copy-paste API journey](api.md#copy-paste-local-client-journey).
 
 The local stack is loopback-only and uses a MinIO compatibility fixture. It is
 not the [VPS reference](deployment.md) and must not be exposed to the Internet.

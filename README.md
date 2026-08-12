@@ -131,7 +131,7 @@ supports, or physical testing.
 | Build one model locally | [Container quickstart](docs/installation.md#container-path-recommended) | Git, Docker, GNU Make |
 | Build without Make | [Direct Docker commands](docs/installation.md#docker-without-make) | Git and Docker |
 | Develop against host Blender | [Native path](docs/installation.md#native-blender-best-effort) | Python 3.11+ and exact Blender 4.5.12 LTS |
-| Exercise the local HTTP API | [Asynchronous service](#optional-asynchronous-service) | Docker Compose 2.24.4+ and Python 3.11+ |
+| Exercise the local HTTP API | [Asynchronous service](#optional-asynchronous-service) | Docker Compose 2.24.4+, Python 3.11+, curl, 8 GiB Docker memory, and 20 GB free disk |
 | Review a future self-hosted deployment | [VPS runbook](docs/deployment.md) | Linux `amd64`, Compose 2.24.4+, domain/TLS, external S3, secrets, and a future published release/lock |
 | Contribute | [Contribution guide](CONTRIBUTING.md) | A scoped issue, tests, and DCO sign-off |
 
@@ -145,16 +145,29 @@ The local service adds an authenticated API, PostgreSQL, Redis, versioned
 S3-compatible local storage, and one Blender worker. It invokes the same
 builder contract and still needs no AI-provider key.
 
+If `python3 --version` is older than 3.11, first run
+`export PYTHON=python3.11` (or another installed 3.11+ executable) for this
+terminal session.
+
 ```sh
 ./scripts/doctor --service
 make init-env
+make service-config
 make service-up
-make service-smoke
-make service-down
+make service-ps
 ```
 
+`service-ps` should show `api`, `worker`, PostgreSQL, Redis, and MinIO running;
+the one-shot `database-init` and `minio-init` rows should say `Exited (0)`. Now
+follow the copy-paste API journey linked below. When finished, stop this
+checkout's stack with `make service-down`.
+
 `make init-env` creates an ignored mode-`0600` `.env` once and refuses to
-overwrite it. The API and artifact downloads bind to host loopback;
+overwrite it. It records a checkout-specific Compose project name, so two fresh
+checkouts do not share containers or named volumes. Move the checkout together
+with its `.env` to retain that identity; existing `.env` files created before
+this field was added continue to use the legacy `hbcb-local` project and preserve
+their volumes. The API and artifact downloads bind to host loopback;
 PostgreSQL and Redis are not published. The worker container has only its
 required internal service networks. Its fresh Blender child receives a
 scrubbed environment without API, database, queue, storage, provider, or
@@ -167,6 +180,13 @@ the [copy-paste HTTP API journey](docs/api.md#copy-paste-local-client-journey),
 [troubleshooting](docs/troubleshooting.md), [architecture](docs/architecture.md),
 and the [VPS availability note](docs/deployment.md#availability) before
 integrating or operating it.
+
+The repository does not yet include a lightweight custom-request service
+client. Use the API journey for first evaluation. `make service-smoke` is the
+slower maintainer/integration confidence gate: it performs direct and service
+builds, restarts the API, tests cancellation and IAM, and retains evidence. It
+can add another 4 GiB builder workload, so allocate at least 12 GiB to Docker
+before running it.
 
 ## Security, rights, and print limits
 
