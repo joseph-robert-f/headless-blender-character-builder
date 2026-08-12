@@ -110,6 +110,7 @@ class DockerCliCompatibilityTests(unittest.TestCase):
                 root, platform="linux/amd64"
             )
             (root / ".env").write_text("# fixture\n", encoding="utf-8")
+            (root / ".env").chmod(0o600)
 
             ensured = subprocess.run(
                 (
@@ -147,20 +148,21 @@ class DockerCliCompatibilityTests(unittest.TestCase):
             self.assertEqual(
                 compose_fields,
                 [
-                    "--env-file .env config --quiet",
-                    "fixture-builder:dev",
-                    "fixture-builder:dev",
-                    IMAGE_ID,
+                    "--project-name hbcb-local --env-file .env config --quiet",
+                    "headless-blender-character-builder:unavailable",
+                    "headless-blender-character-builder:unavailable",
+                    "sha256:" + "0" * 64,
                 ],
             )
 
-    def test_arm64_image_is_rebuilt_by_make_and_rejected_by_service(self) -> None:
+    def test_arm64_image_is_rebuilt_by_make_config_is_cheap_and_up_rejects(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             environment, docker, _compose, docker_log, compose_log = self.environment(
                 root, platform="linux/arm64"
             )
             (root / ".env").write_text("# fixture\n", encoding="utf-8")
+            (root / ".env").chmod(0o600)
 
             ensured = subprocess.run(
                 (
@@ -180,6 +182,7 @@ class DockerCliCompatibilityTests(unittest.TestCase):
             self.assertEqual(ensured.returncode, 0, ensured.stdout)
             self.assertIn("build ", docker_log.read_text(encoding="utf-8"))
             self.assertIn("--platform linux/amd64", docker_log.read_text(encoding="utf-8"))
+            docker_log.write_text("", encoding="utf-8")
 
             configured = subprocess.run(
                 (str(ROOT / "scripts" / "service-compose"), "config"),
@@ -190,12 +193,35 @@ class DockerCliCompatibilityTests(unittest.TestCase):
                 stderr=subprocess.STDOUT,
                 check=False,
             )
-            self.assertEqual(configured.returncode, 4, configured.stdout)
+            self.assertEqual(configured.returncode, 0, configured.stdout)
+            self.assertIn(
+                "--project-name hbcb-local --env-file .env config --quiet",
+                compose_log.read_text(encoding="utf-8"),
+            )
+            self.assertEqual(docker_log.read_text(encoding="utf-8"), "")
+
+            python = root / "bin" / "python311"
+            write_executable(python, "#!/bin/sh\nexit 0\n")
+            environment["PYTHON"] = str(python)
+            rejected = subprocess.run(
+                (str(ROOT / "scripts" / "service-compose"), "up"),
+                cwd=root,
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(rejected.returncode, 4, rejected.stdout)
             self.assertIn(
                 "SERVICE_COMPOSE: builder image platform must be linux/amd64",
-                configured.stdout,
+                rejected.stdout,
             )
-            self.assertFalse(compose_log.exists())
+            self.assertIn(
+                "image inspect --format {{.Os}}/{{.Architecture}}|{{.Id}} "
+                "fixture-builder:dev",
+                docker_log.read_text(encoding="utf-8"),
+            )
 
 
 if __name__ == "__main__":

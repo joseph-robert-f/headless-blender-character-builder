@@ -31,8 +31,8 @@ SOURCE_COMPOSE_FILE = ROOT / "compose.yaml"
 RECOVERY_COMPOSE_FILE = ROOT / "tests" / "deployment" / "g8_recovery_compose.yaml"
 SOURCE_ENV_FILE = ROOT / ".env"
 EVIDENCE_PARENT = ROOT / "build" / "g8-recovery"
-SERVICE_IMAGE_TAG = "hbcb-service-api:dev"
-MINIO_IMAGE_TAG = "hbcb-minio-local:RELEASE.2025-10-15T17-29-55Z"
+DEFAULT_SERVICE_IMAGE_TAG = "hbcb-service-api:dev"
+DEFAULT_MINIO_IMAGE_TAG = "hbcb-minio-local:RELEASE.2025-10-15T17-29-55Z"
 MAX_COMMAND_OUTPUT = 16 * 1024 * 1024
 MAX_ENV_BYTES = 64 * 1024
 MAX_DATABASE_BACKUP_BYTES = 4 * 1024 * 1024 * 1024
@@ -144,10 +144,12 @@ class CommandRunner:
 @dataclass
 class DrillContext:
     runner: CommandRunner
+    docker: tuple[str, ...]
     compose: tuple[str, ...]
     source_environment: dict[str, str]
     source_values: dict[str, str]
     target_environment: dict[str, str]
+    source_project_name: str
     project_name: str
     runtime_uid: int
     runtime_gid: int
@@ -158,6 +160,8 @@ class DrillContext:
 
     def source_compose(self, *arguments: str, label: str, timeout: int = 300) -> CommandResult:
         command = self.compose + (
+            "--project-name",
+            self.source_project_name,
             "--project-directory",
             str(ROOT),
             "--file",
@@ -307,13 +311,31 @@ def _compose_command() -> tuple[str, ...]:
         if not path.is_absolute() or not path.is_file() or not os.access(path, os.X_OK):
             raise GateError("invalid_compose_binary")
         return (str(path),)
-    return ("docker", "compose")
+    return _docker_command() + ("compose",)
 
 
-def _image_id(runner: CommandRunner, reference: str, label: str) -> str:
+def _docker_command() -> tuple[str, ...]:
+    configured = os.environ.get("DOCKER", "docker")
+    if (
+        not configured
+        or len(configured) > 4096
+        or configured.startswith("-")
+        or any(character.isspace() or ord(character) < 33 for character in configured)
+    ):
+        raise GateError("invalid_docker_binary")
+    return (configured,)
+
+
+def _image_id(
+    runner: CommandRunner,
+    reference: str,
+    label: str,
+    docker: Optional[tuple[str, ...]] = None,
+) -> str:
+    docker_command = _docker_command() if docker is None else docker
     result = runner.run(
-        (
-            "docker",
+        docker_command
+        + (
             "image",
             "inspect",
             "--format",
@@ -395,13 +417,46 @@ def _source_process_environment(builder_image: str) -> dict[str, str]:
     return environment
 
 
+def _selected_reference(name: str, default: str) -> str:
+    reference = os.environ.get(name, default)
+    if (
+        not reference
+        or len(reference) > 512
+        or reference.startswith("-")
+        or any(character.isspace() or ord(character) < 33 for character in reference)
+    ):
+        raise GateError("invalid_selected_image")
+    return reference
+
+
+def _selected_source_project(source: Mapping[str, str]) -> str:
+    project = os.environ.get(
+        "COMPOSE_PROJECT_NAME",
+        source.get("HBCB_COMPOSE_PROJECT_NAME", "hbcb-local"),
+    )
+    if re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", project) is None:
+        raise GateError("invalid_source_project")
+    return project
+
+
 def _create_context(runner: Optional[CommandRunner] = None) -> DrillContext:
     selected_runner = CommandRunner() if runner is None else runner
     source_values = _read_source_environment()
-    builder_reference = os.environ.get("BUILDER_IMAGE", "headless-blender-character-builder:dev")
-    builder_image = _image_id(selected_runner, builder_reference, "builder_image")
-    service_image = _image_id(selected_runner, SERVICE_IMAGE_TAG, "service_image")
-    minio_image = _image_id(selected_runner, MINIO_IMAGE_TAG, "minio_image")
+    docker = _docker_command()
+    builder_reference = _selected_reference(
+        "BUILDER_IMAGE", "headless-blender-character-builder:dev"
+    )
+    service_reference = _selected_reference(
+        "HBCB_SERVICE_API_IMAGE", DEFAULT_SERVICE_IMAGE_TAG
+    )
+    minio_reference = _selected_reference("HBCB_MINIO_IMAGE", DEFAULT_MINIO_IMAGE_TAG)
+    builder_image = _image_id(
+        selected_runner, builder_reference, "builder_image", docker
+    )
+    service_image = _image_id(
+        selected_runner, service_reference, "service_image", docker
+    )
+    minio_image = _image_id(selected_runner, minio_reference, "minio_image", docker)
 
     EVIDENCE_PARENT.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(EVIDENCE_PARENT, 0o700)
@@ -421,6 +476,7 @@ def _create_context(runner: Optional[CommandRunner] = None) -> DrillContext:
     project_name = "hbcb-g8-recovery-" + secrets.token_hex(6)
     return DrillContext(
         runner=selected_runner,
+        docker=docker,
         compose=_compose_command(),
         source_environment=_source_process_environment(builder_image),
         source_values=source_values,
@@ -432,6 +488,7 @@ def _create_context(runner: Optional[CommandRunner] = None) -> DrillContext:
             runtime_uid=runtime_uid,
             runtime_gid=runtime_gid,
         ),
+        source_project_name=_selected_source_project(source_values),
         project_name=project_name,
         runtime_uid=runtime_uid,
         runtime_gid=runtime_gid,
@@ -619,8 +676,7 @@ def _source_maintenance(
     label: str,
     timeout: int = 900,
 ) -> Mapping[str, Any]:
-    command = (
-        "docker",
+    command = context.docker + (
         "run",
         "--rm",
         "--init",
@@ -683,6 +739,8 @@ def _database_backup(context: DrillContext, destination: Path) -> tuple[int, str
         raise GateError("database_backup_create_failed") from None
     values = context.source_values
     command = context.compose + (
+        "--project-name",
+        context.source_project_name,
         "--project-directory",
         str(ROOT),
         "--file",
@@ -915,8 +973,12 @@ def _wait_source_service(context: DrillContext, service: str, *, healthy: bool) 
             if not healthy:
                 return
             inspection = context.runner.run(
-                (
-                    "docker", "inspect", "--format", "{{json .State.Health.Status}}", identifiers[0]
+                context.docker
+                + (
+                    "inspect",
+                    "--format",
+                    "{{json .State.Health.Status}}",
+                    identifiers[0],
                 ),
                 label="source_health",
                 timeout=30,
@@ -954,8 +1016,8 @@ def _wait_target_initializers(context: DrillContext) -> None:
             if len(identifiers) != 1:
                 raise GateError("target_initializer_missing")
             inspection = context.runner.run(
-                (
-                    "docker",
+                context.docker
+                + (
                     "inspect",
                     "--format",
                     "{{json .State}}",
@@ -1000,8 +1062,8 @@ def _verify_target_removed(context: DrillContext) -> None:
     )
     for arguments in commands:
         result = context.runner.run(
-            (
-                "docker",
+            context.docker
+            + (
                 *arguments,
                 "--filter",
                 f"label=com.docker.compose.project={context.project_name}",

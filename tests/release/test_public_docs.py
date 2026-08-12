@@ -214,15 +214,19 @@ class PublicDocumentationTests(unittest.TestCase):
         api = (ROOT / "docs" / "api.md").read_text(encoding="utf-8")
         for value in (
             "curl --fail-with-body",
+            "--noproxy '*'",
             "/v1/builds",
             "/artifacts",
             "/cancel",
             "auth.header",
-            'HBCB_POLL_ATTEMPT" -lt 300',
+            'HBCB_POLL_ATTEMPT" -lt 600',
             "HBCB_POLL_DEADLINE",
             "--max-time 15",
-            "stop before downloading artifacts",
-            "unset HBCB_API_BASE",
+            'if test "$HBCB_BUILD_STATUS" != succeeded',
+            "cleanup_service_client",
+            "class RejectRedirects(urllib.request.HTTPRedirectHandler)",
+            "os.rename(stage, result)",
+            '"model.blend", "model.glb", "model.stl", "preview.png"',
         ):
             self.assertIn(value, api, value)
         self.assertNotIn('Bearer $HBCB_API_TOKEN', api)

@@ -17,7 +17,7 @@ OUTPUT_NAME ?= demo
 DEMO_OUTPUT := $(BUILD_PARENT)/demo
 export REQUEST BUILD_PARENT OUTPUT_NAME
 
-.PHONY: help image ensure-image test-image service-test-image validate build verify demo verify-demo demo-native verify-demo-native _validate-output-name init-env service-up service-smoke service-down service-config g8-static g8-caddy g8-recovery g8-gate operator-smoke lint test-unit test-blender dependency-check dependency-audit dependency-scan security-check release-static release-check check
+.PHONY: help image ensure-image test-image service-test-image validate build verify demo verify-demo demo-native verify-demo-native _validate-output-name init-env service-up service-smoke service-down service-config service-ps service-logs g8-static g8-caddy g8-recovery g8-gate operator-smoke lint test-unit test-blender dependency-check dependency-audit dependency-scan security-check release-static release-check check
 
 help:
 	@echo "Headless Blender Character Builder"
@@ -27,8 +27,11 @@ help:
 	@echo "  make demo          Build the keyless Docker demo"
 	@echo "  make verify-demo   Reopen and verify the published artifacts"
 	@echo "  make init-env      Generate ignored local-service credentials"
+	@echo "  make service-config Validate the local service configuration"
 	@echo "  make service-up    Start the local asynchronous Compose service"
-	@echo "  make service-smoke Exercise the service, restart, and artifacts end to end"
+	@echo "  make service-ps    Show this checkout's local service status"
+	@echo "  make service-logs  Show bounded API and worker diagnostic logs"
+	@echo "  make service-smoke Run the maintainer service integration gate"
 	@echo "  make service-down  Stop services while preserving durable volumes"
 	@echo "  make g8-gate       Validate VPS config and run the local recovery drill"
 	@echo "  make operator-smoke Conditionally test an authorized public HTTPS target"
@@ -225,34 +228,53 @@ verify-demo-native:
 init-env:
 	./scripts/init-env
 
-service-up: ensure-image
-	BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose up
+service-up:
+	DOCKER="$(DOCKER)" PYTHON="$(PYTHON)" BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose up
 
 service-smoke:
-	BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-smoke
+	DOCKER="$(DOCKER)" PYTHON="$(PYTHON)" BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-smoke
 
 service-down:
-	BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose down
+	DOCKER="$(DOCKER)" PYTHON="$(PYTHON)" BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose down
 
-service-config: ensure-image
-	BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose config
+service-config:
+	DOCKER="$(DOCKER)" PYTHON="$(PYTHON)" BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose config
+
+service-ps:
+	DOCKER="$(DOCKER)" PYTHON="$(PYTHON)" BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose ps
+
+service-logs:
+	DOCKER="$(DOCKER)" PYTHON="$(PYTHON)" BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose logs
 
 g8-static:
-	env -u HBCB_COMPOSE_BIN PYTHONPATH=.:service/src PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m unittest discover -s tests/deployment -p 'test_*.py' -v
-	HBCB_COMPOSE_BIN="$(HBCB_COMPOSE_BIN)" PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/deployment/g8_static_gate.py
+	env -u HBCB_COMPOSE_BIN DOCKER="$(DOCKER)" PYTHONPATH=.:service/src PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m unittest discover -s tests/deployment -p 'test_*.py' -v
+	DOCKER="$(DOCKER)" HBCB_COMPOSE_BIN="$(HBCB_COMPOSE_BIN)" PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/deployment/g8_static_gate.py
 
 g8-caddy:
-	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/deployment/g8_caddy_gate.py
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/deployment/g8_caddy_gate.py --docker "$(DOCKER)"
 
 g8-recovery:
-	HBCB_COMPOSE_BIN="$(HBCB_COMPOSE_BIN)" BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/g8-recovery-drill
+	@set -eu; \
+	  . ./scripts/service-common; \
+	  hbcb_service_settings; \
+	  builder_image="$(BUILDER_IMAGE)"; \
+	  if test "$$builder_image" = headless-blender-character-builder:dev; then \
+	    builder_image="$$HBCB_BUILDER_PROJECT_IMAGE"; \
+	  fi; \
+	  DOCKER="$(DOCKER)" PYTHON="$(PYTHON)" \
+	    HBCB_COMPOSE_BIN="$(HBCB_COMPOSE_BIN)" \
+	    BUILDER_IMAGE="$$builder_image" \
+	    COMPOSE_PROJECT_NAME="$$COMPOSE_PROJECT_NAME" \
+	    HBCB_SERVICE_API_IMAGE="$$HBCB_SERVICE_API_IMAGE" \
+	    HBCB_MINIO_IMAGE="$$HBCB_MINIO_IMAGE" \
+	    ./scripts/g8-recovery-drill
 
-g8-gate: ensure-image
-	BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose up
-	BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-smoke
-	$(MAKE) g8-static PYTHON="$(PYTHON)" HBCB_COMPOSE_BIN="$(HBCB_COMPOSE_BIN)"
-	$(MAKE) g8-caddy PYTHON="$(PYTHON)"
-	$(MAKE) g8-recovery BUILDER_IMAGE="$(BUILDER_IMAGE)" HBCB_COMPOSE_BIN="$(HBCB_COMPOSE_BIN)"
+g8-gate:
+	DOCKER="$(DOCKER)" PYTHON="$(PYTHON)" BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose up
+	DOCKER="$(DOCKER)" PYTHON="$(PYTHON)" BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-smoke
+	$(MAKE) g8-static PYTHON="$(PYTHON)" DOCKER="$(DOCKER)" HBCB_COMPOSE_BIN="$(HBCB_COMPOSE_BIN)"
+	$(MAKE) g8-caddy PYTHON="$(PYTHON)" DOCKER="$(DOCKER)"
+	$(MAKE) g8-recovery PYTHON="$(PYTHON)" DOCKER="$(DOCKER)" BUILDER_IMAGE="$(BUILDER_IMAGE)" HBCB_COMPOSE_BIN="$(HBCB_COMPOSE_BIN)"
 
 operator-smoke:
 	./scripts/operator-smoke

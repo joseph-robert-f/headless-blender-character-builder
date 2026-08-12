@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
 import stat
 import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,6 +17,76 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ReleaseWrapperTests(unittest.TestCase):
+    def test_full_release_run_id_is_validated_before_scratch_or_docker(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="hbcb-release-id-") as raw:
+            checkout = Path(raw)
+            (checkout / "scripts").mkdir()
+            shutil.copyfile(
+                ROOT / "scripts" / "release-check",
+                checkout / "scripts" / "release-check",
+            )
+            shutil.copyfile(
+                ROOT / "scripts" / "service-common",
+                checkout / "scripts" / "service-common",
+            )
+            (checkout / "VERSION").write_text("0.1.0\n", encoding="ascii")
+            tools = checkout / "tools"
+            tools.mkdir()
+            marker = checkout / "mktemp.called"
+            fake_mktemp = tools / "mktemp"
+            fake_mktemp.write_text(
+                "#!/bin/sh\n"
+                f"printf called > {marker}\n"
+                "exit 77\n",
+                encoding="utf-8",
+            )
+            fake_mktemp.chmod(0o700)
+            subprocess.run(("git", "init", "-q"), cwd=checkout, check=True)
+            subprocess.run(("git", "add", "."), cwd=checkout, check=True)
+
+            base_environment = {
+                **os.environ,
+                "PATH": str(tools) + os.pathsep + os.environ.get("PATH", ""),
+                "PYTHON": sys.executable,
+            }
+            invalid = (
+                "a" * 51,
+                "-leading",
+                "trailing-",
+                "trailing_",
+                "mixed_-separator",
+                "three___underscores",
+                "UPPERCASE",
+            )
+            for run_id in invalid:
+                with self.subTest(run_id=run_id):
+                    marker.unlink(missing_ok=True)
+                    completed = subprocess.run(
+                        ("sh", "scripts/release-check"),
+                        cwd=checkout,
+                        env={**base_environment, "HBCB_RELEASE_RUN_ID": run_id},
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        check=False,
+                    )
+                    self.assertEqual(completed.returncode, 1, completed.stdout)
+                    self.assertIn("1-50 character safe lowercase", completed.stdout)
+                    self.assertFalse(marker.exists())
+
+            boundary = "a" * 50
+            completed = subprocess.run(
+                ("sh", "scripts/release-check"),
+                cwd=checkout,
+                env={**base_environment, "HBCB_RELEASE_RUN_ID": boundary},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 77, completed.stdout)
+            self.assertTrue(marker.exists())
+
     def test_wrapper_is_non_publishing_syntax_valid_and_complete(self) -> None:
         wrapper = ROOT / "scripts" / "release-check"
         mode = stat.S_IMODE(wrapper.stat().st_mode)
@@ -30,6 +104,7 @@ class ReleaseWrapperTests(unittest.TestCase):
         self.assertGreaterEqual(text.count("git checkout-index"), 2)
         self.assertEqual(text.count("umask 022"), 2)
         self.assertIn('chmod 0700 "$scratch"', text)
+        self.assertGreaterEqual(text.count('DOCKER="$docker_bin"'), 7)
         for required in (
             "scripts/release-audit",
             "make check",
@@ -47,6 +122,9 @@ class ReleaseWrapperTests(unittest.TestCase):
             '"api=$image_dir/api.json"',
             '"worker=$image_dir/worker.json"',
             "down --volumes --remove-orphans",
+            'PYTHON="$python_bin"',
+            '"$api_work_image" "$api_release_image"',
+            '"$worker_work_image" "$worker_release_image"',
         ):
             self.assertIn(required, text)
         for forbidden in (
@@ -55,6 +133,7 @@ class ReleaseWrapperTests(unittest.TestCase):
             r"\bgh\s+release\s+create\b",
             r"\bcurl\b",
             r"\bwget\b",
+            r"tag\s+hbcb-service-(?:api|worker):dev",
         ):
             self.assertIsNone(re.search(forbidden, text))
 

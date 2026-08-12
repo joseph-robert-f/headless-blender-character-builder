@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -48,6 +49,28 @@ PROVIDER_MARKERS = (
 
 class GateFailure(AssertionError):
     pass
+
+
+class RejectRedirects(urllib.request.HTTPRedirectHandler):
+    """Make every redirect observable to the caller instead of following it."""
+
+    def redirect_request(
+        self,
+        request: urllib.request.Request,
+        file_pointer: Any,
+        code: int,
+        message: str,
+        headers: Any,
+        new_url: str,
+    ) -> None:
+        del request, file_pointer, code, message, headers, new_url
+        return None
+
+
+NO_REDIRECT_OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}),
+    RejectRedirects(),
+)
 
 
 def require(condition: bool, message: str) -> None:
@@ -95,7 +118,7 @@ def http(
         method=method,
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with NO_REDIRECT_OPENER.open(request, timeout=timeout) as response:
             return int(response.status), dict(response.headers.items()), response.read()
     except urllib.error.HTTPError as exc:
         return int(exc.code), dict(exc.headers.items()), exc.read()
@@ -166,26 +189,38 @@ def run_command(command: list[str], *, timeout: float = 120.0, expected: int = 0
     return completed.stdout
 
 
-def compose_command(*arguments: str) -> list[str]:
+def docker_command(*arguments: str) -> list[str]:
+    return [os.environ.get("DOCKER", "docker"), *arguments]
+
+
+def compose_command(project_name: str, *arguments: str) -> list[str]:
     direct_binary = os.environ.get("HBCB_COMPOSE_BIN")
     if direct_binary:
-        return [direct_binary, *arguments]
-    return ["docker", "compose", *arguments]
+        return [direct_binary, "--project-name", project_name, *arguments]
+    return docker_command("compose", "--project-name", project_name, *arguments)
 
 
-def compose_container_ids(env_file: Path, service: str) -> list[str]:
-    output = run_command(compose_command("--env-file", str(env_file), "ps", "-q", service))
+def compose_container_ids(
+    env_file: Path, project_name: str, service: str
+) -> list[str]:
+    output = run_command(
+        compose_command(
+            project_name, "--env-file", str(env_file), "ps", "-q", service
+        )
+    )
     return [line for line in output.splitlines() if line]
 
 
-def inspect_runtime(env_file: Path) -> dict[str, str]:
+def inspect_runtime(
+    env_file: Path, project_name: str, api_host_port: int
+) -> dict[str, str]:
     identities: dict[str, str] = {}
     for service in ("api", "worker"):
-        ids = compose_container_ids(env_file, service)
+        ids = compose_container_ids(env_file, project_name, service)
         require(len(ids) == 1, f"Compose must run exactly one {service} container")
         container_id = ids[0]
         identities[service] = container_id
-        inspected = json.loads(run_command(["docker", "inspect", container_id]))[0]
+        inspected = json.loads(run_command(docker_command("inspect", container_id)))[0]
         environment = inspected["Config"].get("Env") or []
         names = {value.split("=", 1)[0] for value in environment}
         require(not (names & set(PROVIDER_MARKERS)), f"{service} received a provider key")
@@ -205,7 +240,9 @@ def inspect_runtime(env_file: Path) -> dict[str, str]:
         expected_networks = 2 if service == "api" else 1
         require(len(networks) == expected_networks, f"{service} network count is unexpected")
         network_rows = [
-            json.loads(run_command(["docker", "network", "inspect", value["NetworkID"]]))[0]
+            json.loads(
+                run_command(docker_command("network", "inspect", value["NetworkID"]))
+            )[0]
             for value in networks.values()
         ]
         internal_count = sum(row.get("Internal") is True for row in network_rows)
@@ -216,12 +253,15 @@ def inspect_runtime(env_file: Path) -> dict[str, str]:
             bindings = inspected["HostConfig"].get("PortBindings") or {}
             api_bindings = bindings.get("8080/tcp") or []
             require(
-                any(value.get("HostIp") == "127.0.0.1" for value in api_bindings),
-                "API is not bound to host loopback",
+                len(api_bindings) == 1
+                and api_bindings[0].get("HostIp") == "127.0.0.1"
+                and api_bindings[0].get("HostPort") == str(api_host_port),
+                "API does not use the exact selected loopback host port",
             )
 
     run_command(
         compose_command(
+            project_name,
             "--env-file",
             str(env_file),
             "exec",
@@ -236,6 +276,7 @@ def inspect_runtime(env_file: Path) -> dict[str, str]:
     # return a controlled connection error because they have no default route.
     run_command(
         compose_command(
+            project_name,
             "--env-file",
             str(env_file),
             "exec",
@@ -314,7 +355,7 @@ def wait_terminal(base_url: str, token: str, build_id: str, timeout: float = 120
 
 
 def download_artifacts(
-    base_url: str, token: str, build_id: str, output: Path
+    base_url: str, token: str, build_id: str, output: Path, storage_host_port: int
 ) -> tuple[BuildManifest, int]:
     status, _headers, payload = http(
         base_url, "GET", f"/v1/builds/{build_id}/artifacts", token=token
@@ -322,32 +363,91 @@ def download_artifacts(
     require(status == 200, "artifact listing failed")
     document = json_value(payload)
     entries = document.get("artifacts")
-    require(isinstance(entries, list) and len(entries) == 9, "artifact listing is incomplete")
+    require(
+        isinstance(entries, list)
+        and len(entries) == 9
+        and all(isinstance(item, dict) for item in entries),
+        "artifact listing is incomplete",
+    )
     require(tuple(item.get("path") for item in entries) == REQUIRED_ARTIFACTS, "artifact order changed")
-    output.mkdir(mode=0o700)
+    budget = 2 * 1024 * 1024 * 1024
+    declared_total = 0
+
+    def checked_download_url(raw: Any) -> str:
+        require(
+            isinstance(raw, str)
+            and len(raw) <= 8192
+            and all(33 <= ord(character) <= 126 for character in raw),
+            "signed URL is malformed",
+        )
+        try:
+            parsed = urllib.parse.urlsplit(raw)
+            port = parsed.port
+            query = urllib.parse.parse_qs(parsed.query)
+        except ValueError:
+            raise GateFailure("signed URL is malformed") from None
+        require(parsed.scheme == "http", "signed URL transport is not local HTTP")
+        require(parsed.hostname in ("localhost", "127.0.0.1"), "signed URL is not host-local")
+        require(port == storage_host_port, "signed URL does not use the exact selected storage host port")
+        require(parsed.username is None and parsed.password is None, "signed URL contains credentials")
+        require(not parsed.fragment, "signed URL contains a fragment")
+        require("versionId" in query and len(query["versionId"]) == 1, "signed URL is not version-pinned")
+        return raw
+
+    for entry in entries:
+        expected_bytes = entry.get("bytes")
+        expected_hash = entry.get("sha256")
+        require(
+            type(expected_bytes) is int and 0 <= expected_bytes <= budget,
+            "artifact byte evidence is invalid",
+        )
+        require(
+            isinstance(expected_hash, str)
+            and re.fullmatch(r"[0-9a-f]{64}", expected_hash) is not None,
+            "artifact hash evidence is invalid",
+        )
+        checked_download_url(entry.get("download_url"))
+        declared_total += expected_bytes
+        require(declared_total <= budget, "artifact set exceeds the v0.1 budget")
+
     total = 0
+    output.mkdir(mode=0o700)
     for entry in entries:
         path = str(entry["path"])
-        expected_bytes = int(entry["bytes"])
-        expected_hash = str(entry["sha256"])
-        download_url = str(entry["download_url"])
-        parsed = urllib.parse.urlsplit(download_url)
-        query = urllib.parse.parse_qs(parsed.query)
-        require(parsed.hostname in ("localhost", "127.0.0.1"), "signed URL is not host-local")
-        require("versionId" in query and len(query["versionId"]) == 1, "signed URL is not version-pinned")
+        expected_bytes = entry["bytes"]
+        expected_hash = entry["sha256"]
+        download_url = entry["download_url"]
         destination = output / path
         destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         digest = hashlib.sha256()
         consumed = 0
-        with urllib.request.urlopen(download_url, timeout=30) as response, destination.open("xb") as stream:
-            while True:
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                consumed += len(chunk)
-                require(consumed <= expected_bytes, "artifact exceeded its declared size")
-                digest.update(chunk)
-                stream.write(chunk)
+        try:
+            response = NO_REDIRECT_OPENER.open(download_url, timeout=30)
+        except urllib.error.HTTPError as error:
+            error.close()
+            if 300 <= error.code < 400:
+                raise GateFailure("artifact redirect was rejected") from None
+            raise GateFailure("artifact download returned an HTTP error") from None
+        except (urllib.error.URLError, HTTPException, OSError, TimeoutError):
+            raise GateFailure("artifact download failed") from None
+        try:
+            with response:
+                require(
+                    checked_download_url(response.geturl()) == download_url,
+                    "artifact final URL changed",
+                )
+                require(getattr(response, "status", None) == 200, "artifact HTTP status changed")
+                with destination.open("xb") as stream:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        consumed += len(chunk)
+                        require(consumed <= expected_bytes, "artifact exceeded its declared size")
+                        digest.update(chunk)
+                        stream.write(chunk)
+        except (urllib.error.URLError, HTTPException, OSError, TimeoutError):
+            raise GateFailure("artifact download failed") from None
         require(consumed == expected_bytes, "artifact size does not match API evidence")
         require(digest.hexdigest() == expected_hash, "artifact hash does not match API evidence")
         total += consumed
@@ -369,11 +469,24 @@ def parity(service: BuildManifest, direct: BuildManifest) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
+    parser.add_argument("--api-port", type=int, default=8080)
+    parser.add_argument("--storage-port", type=int, default=9000)
+    parser.add_argument("--compose-project", default="hbcb-local")
     parser.add_argument("--env-file", type=Path, required=True)
     parser.add_argument("--direct-output", type=Path, required=True)
     parser.add_argument("--service-output", type=Path, required=True)
     parser.add_argument("--summary", type=Path, required=True)
     arguments = parser.parse_args()
+
+    require(1 <= arguments.api_port <= 65535, "API host port is outside policy")
+    require(
+        1 <= arguments.storage_port <= 65535,
+        "storage host port is outside policy",
+    )
+    require(
+        arguments.base_url == f"http://127.0.0.1:{arguments.api_port}",
+        "base URL does not match the exact selected API host port",
+    )
 
     environment = load_env(arguments.env_file)
     token = environment["HBCB_API_TOKEN"]
@@ -389,7 +502,9 @@ def main() -> None:
     )
     require(status == 401 and problem_code(payload) == "unauthorized", "invalid bearer was accepted")
     wait_ready(arguments.base_url, token)
-    identities = inspect_runtime(arguments.env_file)
+    identities = inspect_runtime(
+        arguments.env_file, arguments.compose_project, arguments.api_port
+    )
 
     key = "g7-primary-" + uuid4().hex
     second_key = "g7-secondary-" + uuid4().hex
@@ -412,7 +527,13 @@ def main() -> None:
     )
 
     run_command(
-        compose_command("--env-file", str(arguments.env_file), "restart", "api"),
+        compose_command(
+            arguments.compose_project,
+            "--env-file",
+            str(arguments.env_file),
+            "restart",
+            "api",
+        ),
         timeout=120,
     )
     wait_ready(arguments.base_url, token)
@@ -425,7 +546,11 @@ def main() -> None:
     require(canceled["status"] == "canceled", "queued sibling was not canceled")
 
     manifest, total = download_artifacts(
-        arguments.base_url, token, active_id, arguments.service_output
+        arguments.base_url,
+        token,
+        active_id,
+        arguments.service_output,
+        arguments.storage_port,
     )
     direct_manifest = BuildManifest.from_json(
         (arguments.direct_output / "manifest.json").read_bytes()

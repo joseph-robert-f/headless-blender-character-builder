@@ -11,10 +11,11 @@ offering has been published.
 |---|---|---|
 | Blender in the builder image | Exact Blender 4.5.12 LTS Linux x64 archive | Pinned and release-blocking |
 | Builder/service image platform | `linux/amd64` | Release reference |
-| Docker Engine or Docker Desktop | A current maintained release with BuildKit and `linux/amd64` support | Required for container builds; no minimum patch release is asserted |
+| Docker Engine or Docker Desktop | A current maintained release with BuildKit and `linux/amd64` support | Required for container builds; no minimum patch release is asserted. The local asynchronous service specifically requires a local daemon/context, not an SSH, TCP, or HTTP endpoint. |
 | GNU Make | Any maintained version that can run the project Makefile | Required for the recommended interface; [direct Docker commands](installation.md#docker-without-make) are available |
 | Docker Compose | 2.24.4 or newer | Required by the current service doctor and the VPS/G8/full-release path; the VPS overlay uses Compose `!reset` and `!override` tags |
 | Python | 3.11 or newer | Required for native use, service smoke/recovery, and release tooling; not required for one-shot Docker builds |
+| curl | Supports `--fail-with-body` | Required only for the documented local API client journey; the service doctor checks the capability without making a network request |
 | GPU | None | Release paths use CPU-compatible headless rendering; Cycles/GPU orchestration is not included |
 
 Run `./scripts/doctor` for the one-shot Docker path,
@@ -46,11 +47,18 @@ The one-shot quickstart assumes about four CPU cores, 8 GB of host RAM, and
 access for checksum-pinned upstream downloads; actual model generation and
 verification run with networking disabled.
 
-The asynchronous stack and full release gate need additional time, memory, and
-disk for PostgreSQL, Redis, local object storage, service/test images, recovery
-targets, and retained evidence. The VPS planning baseline is 8 vCPU and 32 GiB
-RAM for one concurrency-one worker plus host overhead; it is an operational
-starting point, not a sizing guarantee.
+The asynchronous stack needs additional time, memory, and disk for PostgreSQL,
+Redis, local object storage, service images, and one worker. Its steady
+configured ceilings total about 7 GiB RAM and 7.5 CPUs; initialization can
+briefly total about 7.375 GiB and 8.25 CPUs. Allow at least 8 GiB Docker memory and
+20 GB free disk for basic local-service evaluation. The optional maintainer
+`make service-smoke` gate launches another direct builder capped at 4 GiB, so
+allow at least 12 GiB Docker memory plus retained-evidence disk space for that path.
+
+The full release gate additionally builds test/recovery targets and retains more
+evidence. The VPS planning baseline is 8 vCPU and 32 GiB RAM for one
+concurrency-one worker plus host overhead; it is an operational starting point,
+not a sizing guarantee.
 
 ## Native-mode boundary
 

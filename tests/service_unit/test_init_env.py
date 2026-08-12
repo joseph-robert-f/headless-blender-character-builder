@@ -124,6 +124,12 @@ class InitEnvironmentTests(unittest.TestCase):
             output = cwd / ".env"
             self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
             values = parse_env(output)
+            self.assertRegex(
+                values["HBCB_COMPOSE_PROJECT_NAME"],
+                r"^hbcb-local-[0-9a-f]{12}$",
+            )
+            self.assertEqual(values["HBCB_API_HOST_PORT"], "8080")
+            self.assertEqual(values["HBCB_STORAGE_HOST_PORT"], "9000")
             self.assertEqual(values["HBCB_DEPLOYMENT_NAMESPACE"], "local")
             self.assertNotIn("OPENAI_API_KEY", values)
             secret_names = (
@@ -206,6 +212,26 @@ class InitEnvironmentTests(unittest.TestCase):
                 DatabaseInitializationConfig,
             )
 
+    def test_generation_project_identity_is_stable_for_the_same_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            cwd = Path(temporary)
+            projects = []
+            for _ in range(2):
+                completed = subprocess.run(
+                    (str(SCRIPT),),
+                    cwd=cwd,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                    env={"PATH": os.environ.get("PATH", "")},
+                )
+                self.assertEqual(completed.returncode, 0, completed.stdout)
+                output = cwd / ".env"
+                projects.append(parse_env(output)["HBCB_COMPOSE_PROJECT_NAME"])
+                output.unlink()
+            self.assertEqual(projects[0], projects[1])
+
     def test_upgrade_g8_is_atomic_secret_quiet_and_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             cwd = Path(temporary)
@@ -282,6 +308,47 @@ class InitEnvironmentTests(unittest.TestCase):
                 "INIT_ENV: .env already satisfies G8 runtime settings (mode 0600)\n",
             )
             self.assertEqual(hashlib.sha256(output.read_bytes()).hexdigest(), before_second)
+
+    def test_upgrade_g8_preserves_legacy_project_and_port_absence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            cwd = Path(temporary)
+            created = subprocess.run(
+                (str(SCRIPT),),
+                cwd=cwd,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(created.returncode, 0, created.stdout)
+            output = cwd / ".env"
+            values = parse_env(output)
+            for name in (
+                "HBCB_COMPOSE_PROJECT_NAME",
+                "HBCB_API_HOST_PORT",
+                "HBCB_STORAGE_HOST_PORT",
+            ):
+                values.pop(name)
+            output.write_text(
+                "".join(f"{name}={value}\n" for name, value in values.items()),
+                encoding="utf-8",
+            )
+            output.chmod(0o600)
+            before = output.read_bytes()
+            upgraded = subprocess.run(
+                (str(SCRIPT), "--upgrade-g8"),
+                cwd=cwd,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(upgraded.returncode, 0, upgraded.stdout)
+            self.assertEqual(output.read_bytes(), before)
+            upgraded_values = parse_env(output)
+            self.assertNotIn("HBCB_COMPOSE_PROJECT_NAME", upgraded_values)
+            self.assertNotIn("HBCB_API_HOST_PORT", upgraded_values)
+            self.assertNotIn("HBCB_STORAGE_HOST_PORT", upgraded_values)
 
     def test_upgrade_g8_migrates_a_genuine_g7_storage_setting(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

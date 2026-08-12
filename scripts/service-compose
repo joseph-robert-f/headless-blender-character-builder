@@ -1,140 +1,232 @@
 #!/bin/sh
 set -eu
 
-compose() {
-  if [ -n "${HBCB_COMPOSE_BIN:-}" ]; then
-    "$HBCB_COMPOSE_BIN" "$@"
-  else
-    docker compose "$@"
-  fi
+script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
+# shellcheck source=service-common
+. "$script_dir/service-common"
+
+fail() {
+  printf 'SERVICE_COMPOSE: %s\n' "$1" >&2
+  exit "${2:-1}"
+}
+
+usage() {
+  printf '%s\n' 'SERVICE_COMPOSE: usage: scripts/service-compose up|down|config|ps|logs' >&2
+  exit 2
 }
 
 if [ "$#" -ne 1 ]; then
-  printf '%s\n' 'SERVICE_COMPOSE: usage: scripts/service-compose up|down|config' >&2
-  exit 2
+  usage
 fi
-
 action=$1
-builder_image=${BUILDER_IMAGE:-headless-blender-character-builder:dev}
 case "$action" in
-  up|down|config) ;;
-  *)
-    printf '%s\n' 'SERVICE_COMPOSE: usage: scripts/service-compose up|down|config' >&2
-    exit 2
-    ;;
+  up|down|config|ps|logs) ;;
+  *) usage ;;
 esac
 
-if [ "$action" = down ]; then
-  # Teardown must remain available after credentials or the builder image have
-  # been removed.  These values only satisfy Compose interpolation; no image is
-  # built or launched by `down`.
+docker_bin=${DOCKER:-docker}
+python_bin=${PYTHON:-python3}
+valid_tool_selector() {
+  [ "${#1}" -le 4096 ] || return 1
+  case "$1" in ''|-*|*[![:graph:]]*) return 1 ;; esac
+}
+if ! valid_tool_selector "$docker_bin" || ! valid_tool_selector "$python_bin"; then
+  fail 'DOCKER and PYTHON must each name one safe executable' 3
+fi
+
+compose() {
+  if [ -n "${HBCB_COMPOSE_BIN:-}" ]; then
+    "$HBCB_COMPOSE_BIN" --project-name "$COMPOSE_PROJECT_NAME" "$@"
+  else
+    "$docker_bin" compose --project-name "$COMPOSE_PROJECT_NAME" "$@"
+  fi
+}
+
+safe_builder_placeholders() {
   HBCB_BUILDER_IMAGE=headless-blender-character-builder:unavailable
   HBCB_BUILDER_IMAGE_REFERENCE=headless-blender-character-builder:unavailable
   HBCB_BUILDER_IMAGE_ID=sha256:0000000000000000000000000000000000000000000000000000000000000000
   export HBCB_BUILDER_IMAGE HBCB_BUILDER_IMAGE_REFERENCE HBCB_BUILDER_IMAGE_ID
+}
+
+compose_with_optional_env() {
   if [ -f .env ]; then
-    compose --env-file .env down --remove-orphans
+    compose --env-file .env "$@"
   else
-    compose down --remove-orphans
+    compose "$@"
   fi
-  exit 0
-fi
+}
+
+hbcb_service_settings || exit 3
+hbcb_service_identity
+
+case "$action" in
+  down)
+    # Teardown must remain available after credentials or images have been
+    # removed.  These values only satisfy interpolation; volumes are preserved.
+    safe_builder_placeholders
+    compose_with_optional_env down --remove-orphans
+    exit 0
+    ;;
+esac
 
 if [ ! -f .env ]; then
-  printf '%s\n' 'SERVICE_COMPOSE: .env is missing; run make init-env' >&2
-  exit 3
+  fail '.env is missing; run make init-env' 3
+fi
+if ! hbcb_service_env_private; then
+  fail '.env must be an owned mode-0600 regular file' 3
 fi
 
-builder_metadata=$(docker image inspect \
+case "$action" in
+  config)
+    safe_builder_placeholders
+    compose --env-file .env config --quiet
+    exit 0
+    ;;
+  ps)
+    safe_builder_placeholders
+    compose --env-file .env ps --all
+    exit 0
+    ;;
+  logs)
+    safe_builder_placeholders
+    compose --env-file .env logs --tail 100 api worker
+    exit 0
+    ;;
+esac
+
+if ! command -v "$python_bin" >/dev/null 2>&1 || \
+   ! "$python_bin" -c \
+     'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
+     >/dev/null 2>&1; then
+  fail 'Python 3.11+ is required; select it with PYTHON=/path/to/python3.11' 3
+fi
+
+# An occupied loopback port is accepted only when Compose proves that the
+# selected project already publishes the corresponding service on that exact
+# address.  The check happens before any image build or inspection.
+port_owned_by_project() {
+  hbcb_service_name=$1
+  hbcb_container_port=$2
+  hbcb_expected_port=$3
+  safe_builder_placeholders
+  hbcb_published=$(compose --env-file .env port \
+    "$hbcb_service_name" "$hbcb_container_port" 2>/dev/null) || return 1
+  [ "$hbcb_published" = "127.0.0.1:$hbcb_expected_port" ]
+}
+
+port_status=0
+hbcb_service_ports_available "$python_bin" || port_status=$?
+case "$port_status" in
+  0) ;;
+  1)
+    port_owned_by_project api 8080 "$HBCB_API_HOST_PORT" || \
+      fail 'the selected API loopback port is unavailable; choose a free HBCB_API_HOST_PORT' 5
+    ;;
+  2)
+    port_owned_by_project minio 9000 "$HBCB_STORAGE_HOST_PORT" || \
+      fail 'the selected storage loopback port is unavailable; choose a free HBCB_STORAGE_HOST_PORT' 5
+    ;;
+  3)
+    if ! port_owned_by_project api 8080 "$HBCB_API_HOST_PORT" || \
+       ! port_owned_by_project minio 9000 "$HBCB_STORAGE_HOST_PORT"; then
+      fail 'one or more selected loopback ports belong to another process; choose free host ports or stop that process' 5
+    fi
+    ;;
+  *) fail 'the loopback host-port preflight could not run with the selected PYTHON executable' 5 ;;
+esac
+
+case "${BUILDER_IMAGE:-}" in
+  ''|headless-blender-character-builder:dev)
+    builder_image=$HBCB_BUILDER_PROJECT_IMAGE
+    "$docker_bin" build \
+      --file docker/builder.Dockerfile \
+      --target builder \
+      --tag "$builder_image" \
+      --platform linux/amd64 \
+      .
+    ;;
+  *) builder_image=$BUILDER_IMAGE ;;
+esac
+case "$builder_image" in
+  -*|*[![:graph:]]*) fail 'builder image reference is invalid' 4 ;;
+esac
+if [ "${#builder_image}" -gt 512 ]; then
+  fail 'builder image reference is invalid' 4
+fi
+
+builder_metadata=$("$docker_bin" image inspect \
   --format '{{.Os}}/{{.Architecture}}|{{.Id}}' "$builder_image")
 builder_platform=${builder_metadata%%|*}
 builder_id=${builder_metadata#*|}
 if [ "$builder_platform" != linux/amd64 ]; then
-  printf '%s\n' 'SERVICE_COMPOSE: builder image platform must be linux/amd64' >&2
-  exit 4
+  fail 'builder image platform must be linux/amd64' 4
 fi
 case "$builder_id" in
   sha256:????????????????????????????????????????????????????????????????) ;;
-  *)
-    printf '%s\n' 'SERVICE_COMPOSE: builder image ID is invalid' >&2
-    exit 4
-    ;;
+  *) fail 'builder image ID is invalid' 4 ;;
 esac
 
-# BuildKit requires a named image reference in FROM; a raw local image ID is
-# parsed as a registry repository named "sha256".  Keep the separately measured
-# immutable ID for provenance while building from the reference it identifies.
+# BuildKit requires a named reference in FROM.  The separately measured ID is
+# retained for immutable artifact provenance.
 HBCB_BUILDER_IMAGE=$builder_image
 HBCB_BUILDER_IMAGE_REFERENCE=$builder_image
 HBCB_BUILDER_IMAGE_ID=$builder_id
 export HBCB_BUILDER_IMAGE HBCB_BUILDER_IMAGE_REFERENCE HBCB_BUILDER_IMAGE_ID
 
-case "$action" in
-  up)
-    minio_image=hbcb-minio-local:RELEASE.2025-10-15T17-29-55Z
-    minio_version=RELEASE.2025-10-15T17-29-55Z
-    minio_revision=9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
-    minio_recipe_id=$(git hash-object docker/minio.Dockerfile)
-    if [ "${#minio_recipe_id}" -ne 40 ]; then
-      printf '%s\n' 'SERVICE_COMPOSE: MinIO recipe ID is invalid' >&2
-      exit 6
-    fi
-    case "$minio_recipe_id" in
-      *[!0-9a-f]*)
-        printf '%s\n' 'SERVICE_COMPOSE: MinIO recipe ID is invalid' >&2
-        exit 6
-        ;;
-    esac
-    HBCB_MINIO_RECIPE_ID=$minio_recipe_id
-    export HBCB_MINIO_RECIPE_ID
-    rebuild_minio=${HBCB_REBUILD_MINIO:-0}
-    case "$rebuild_minio" in
-      0|1) ;;
-      *)
-        printf '%s\n' 'SERVICE_COMPOSE: HBCB_REBUILD_MINIO must be 0 or 1' >&2
-        exit 5
-        ;;
-    esac
-    minio_cached=0
-    if [ "$rebuild_minio" = 0 ]; then
-      cached_platform=$(docker image inspect \
-        --format '{{.Os}}/{{.Architecture}}' \
-        "$minio_image" 2>/dev/null || true)
-      cached_version=$(docker image inspect \
-        --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' \
-        "$minio_image" 2>/dev/null || true)
-      cached_revision=$(docker image inspect \
-        --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
-        "$minio_image" 2>/dev/null || true)
-      cached_recipe_id=$(docker image inspect \
-        --format '{{ index .Config.Labels "io.hbcb.recipe-id" }}' \
-        "$minio_image" 2>/dev/null || true)
-      if [ "$cached_platform" = linux/amd64 ] && \
-         [ "$cached_version" = "$minio_version" ] && \
-         [ "$cached_revision" = "$minio_revision" ] && \
-         [ "$cached_recipe_id" = "$minio_recipe_id" ]; then
-        version_output=$(docker run --rm --platform linux/amd64 \
-          --network none --read-only --cap-drop ALL \
-          --security-opt no-new-privileges:true \
-          --entrypoint /usr/local/bin/minio \
-          "$minio_image" --version 2>/dev/null || true)
-        case "$version_output" in
-          *"version $minio_version"*"commit-id=$minio_revision"*) minio_cached=1 ;;
-        esac
-      fi
-    fi
-    if [ "$minio_cached" = 1 ]; then
-      printf '%s\n' "SERVICE_COMPOSE: reusing verified local MinIO fixture $minio_version"
-    else
-      compose --env-file .env build minio
-    fi
-    # Build sequentially so Docker's classic-builder fallback can reuse the
-    # fully hashed dependency layer instead of racing duplicate builds.
-    compose --env-file .env build api
-    compose --env-file .env build worker
-    compose --env-file .env up --detach --wait --wait-timeout 360
-    ;;
-  config)
-    compose --env-file .env config --quiet
-    ;;
+minio_version=RELEASE.2025-10-15T17-29-55Z
+minio_revision=9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+minio_recipe_id=$(git hash-object docker/minio.Dockerfile)
+if [ "${#minio_recipe_id}" -ne 40 ]; then
+  fail 'MinIO recipe ID is invalid' 6
+fi
+case "$minio_recipe_id" in
+  *[!0-9a-f]*) fail 'MinIO recipe ID is invalid' 6 ;;
 esac
+HBCB_MINIO_RECIPE_ID=$minio_recipe_id
+export HBCB_MINIO_RECIPE_ID
+
+rebuild_minio=${HBCB_REBUILD_MINIO:-0}
+case "$rebuild_minio" in
+  0|1) ;;
+  *) fail 'HBCB_REBUILD_MINIO must be 0 or 1' 5 ;;
+esac
+minio_cached=0
+if [ "$rebuild_minio" = 0 ]; then
+  cached_platform=$("$docker_bin" image inspect \
+    --format '{{.Os}}/{{.Architecture}}' \
+    "$HBCB_MINIO_IMAGE" 2>/dev/null || true)
+  cached_version=$("$docker_bin" image inspect \
+    --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' \
+    "$HBCB_MINIO_IMAGE" 2>/dev/null || true)
+  cached_revision=$("$docker_bin" image inspect \
+    --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+    "$HBCB_MINIO_IMAGE" 2>/dev/null || true)
+  cached_recipe_id=$("$docker_bin" image inspect \
+    --format '{{ index .Config.Labels "io.hbcb.recipe-id" }}' \
+    "$HBCB_MINIO_IMAGE" 2>/dev/null || true)
+  if [ "$cached_platform" = linux/amd64 ] && \
+     [ "$cached_version" = "$minio_version" ] && \
+     [ "$cached_revision" = "$minio_revision" ] && \
+     [ "$cached_recipe_id" = "$minio_recipe_id" ]; then
+    version_output=$("$docker_bin" run --rm --platform linux/amd64 \
+      --network none --read-only --cap-drop ALL \
+      --security-opt no-new-privileges:true \
+      --entrypoint /usr/local/bin/minio \
+      "$HBCB_MINIO_IMAGE" --version 2>/dev/null || true)
+    case "$version_output" in
+      *"version $minio_version"*"commit-id=$minio_revision"*) minio_cached=1 ;;
+    esac
+  fi
+fi
+if [ "$minio_cached" = 1 ]; then
+  printf '%s\n' "SERVICE_COMPOSE: reusing verified local MinIO fixture $minio_version"
+else
+  compose --env-file .env build minio
+fi
+
+# Build sequentially so the classic-builder fallback can reuse the fully
+# hashed dependency layer instead of racing duplicate builds.
+compose --env-file .env build api
+compose --env-file .env build worker
+compose --env-file .env up --detach --wait --wait-timeout 360

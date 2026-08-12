@@ -52,6 +52,21 @@ case "$rc_version" in
   ''|*[!0-9A-Za-z.-]*) fail 'HBCB_RELEASE_VERSION is invalid' ;;
 esac
 
+run_id=
+compose_project=
+if [ "$mode" = full ]; then
+  run_id=${HBCB_RELEASE_RUN_ID:-g9-final}
+  compose_project=hbcb-release-$run_id
+  # Keep release evidence, image tags, and the derived Compose project within
+  # the same bounded identifier policy before any export, build, or daemon use.
+  # shellcheck source=service-common
+  . "$repo/scripts/service-common"
+  if ! hbcb_service_valid_project_name "$run_id" || \
+     ! hbcb_service_valid_project_name "$compose_project"; then
+    fail 'HBCB_RELEASE_RUN_ID must form a 1-50 character safe lowercase release and Compose identifier'
+  fi
+fi
+
 temporary_parent=${TMPDIR:-/tmp}
 temporary_parent=${temporary_parent%/}
 scratch=$(mktemp -d "$temporary_parent/hbcb-release-check.XXXXXXXX")
@@ -61,7 +76,6 @@ work_source=$scratch/work-source
 audit_report=$scratch/source-audit.json
 builder_container=
 service_attempted=0
-compose_project=
 
 compose() {
   if [ -n "${HBCB_COMPOSE_BIN:-}" ]; then
@@ -78,14 +92,19 @@ cleanup() {
     (
       cd "$work_source"
       export COMPOSE_PROJECT_NAME=$compose_project
-      BUILDER_IMAGE=${builder_work_image:-headless-blender-character-builder:unavailable} \
+      DOCKER=$docker_bin \
+        PYTHON=$python_bin \
+        BUILDER_IMAGE=${builder_work_image:-headless-blender-character-builder:unavailable} \
         ./scripts/service-compose down >/dev/null 2>&1 || true
+      . ./scripts/service-common
+      hbcb_service_settings >/dev/null 2>&1 || true
       recipe_id=$(git hash-object docker/minio.Dockerfile 2>/dev/null || true)
       export HBCB_BUILDER_IMAGE=headless-blender-character-builder:unavailable
       export HBCB_BUILDER_IMAGE_REFERENCE=headless-blender-character-builder:unavailable
       export HBCB_BUILDER_IMAGE_ID=sha256:0000000000000000000000000000000000000000000000000000000000000000
       export HBCB_MINIO_RECIPE_ID=$recipe_id
-      compose --env-file .env down --volumes --remove-orphans >/dev/null 2>&1 || true
+      compose --project-name "$compose_project" --env-file .env \
+        down --volumes --remove-orphans >/dev/null 2>&1 || true
     )
   fi
   if [ -n "$builder_container" ]; then
@@ -131,10 +150,6 @@ fi
 command -v "$docker_bin" >/dev/null 2>&1 || fail 'Docker is unavailable'
 "$docker_bin" info >/dev/null 2>&1 || fail 'Docker daemon is unavailable'
 
-run_id=${HBCB_RELEASE_RUN_ID:-g9-final}
-case "$run_id" in
-  ''|*[!a-z0-9_-]*) fail 'HBCB_RELEASE_RUN_ID must be a safe lowercase identifier' ;;
-esac
 evidence_parent=$repo/build/release-check
 evidence=$evidence_parent/$run_id
 if [ -L "$repo/build" ] || [ -L "$evidence_parent" ] || [ -e "$evidence" ] || [ -L "$evidence" ]; then
@@ -152,11 +167,12 @@ mkdir "$work_source"
 )
 test ! -e "$work_source/.git" || fail 'working checkout-index export unexpectedly contains .git'
 
-compose_project=hbcb-release-$run_id
 builder_work_image=headless-blender-character-builder:release-check-$run_id
 builder_release_image=headless-blender-character-builder:$rc_version
 api_release_image=headless-blender-character-builder-api:$rc_version
 worker_release_image=headless-blender-character-builder-worker:$rc_version
+api_work_image=$compose_project-api:dev
+worker_work_image=$compose_project-worker:dev
 
 service_attempted=1
 (
@@ -176,24 +192,31 @@ service_attempted=1
     BUILDER_IMAGE="$builder_work_image"
   make init-env
   make service-up \
+    PYTHON="$python_bin" \
     DOCKER="$docker_bin" \
     BUILDER_IMAGE="$builder_work_image"
   make service-smoke \
+    PYTHON="$python_bin" \
     DOCKER="$docker_bin" \
     BUILDER_IMAGE="$builder_work_image"
   make g8-static \
     PYTHON="$python_bin" \
+    DOCKER="$docker_bin" \
     HBCB_COMPOSE_BIN="${HBCB_COMPOSE_BIN:-}"
-  make g8-caddy PYTHON="$python_bin"
+  make g8-caddy \
+    PYTHON="$python_bin" \
+    DOCKER="$docker_bin"
   make g8-recovery \
+    PYTHON="$python_bin" \
+    DOCKER="$docker_bin" \
     BUILDER_IMAGE="$builder_work_image" \
     HBCB_COMPOSE_BIN="${HBCB_COMPOSE_BIN:-}"
   make operator-smoke
 )
 
 "$docker_bin" tag "$builder_work_image" "$builder_release_image"
-"$docker_bin" tag hbcb-service-api:dev "$api_release_image"
-"$docker_bin" tag hbcb-service-worker:dev "$worker_release_image"
+"$docker_bin" tag "$api_work_image" "$api_release_image"
+"$docker_bin" tag "$worker_work_image" "$worker_release_image"
 
 image_dir=$scratch/images
 mkdir "$image_dir"
