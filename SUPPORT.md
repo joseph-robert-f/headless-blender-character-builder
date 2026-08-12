@@ -23,7 +23,9 @@ For a non-sensitive defect or bounded feature proposal, use the
 - operating system and CPU architecture;
 - Docker, Compose, Python, and Blender versions relevant to the selected path;
 - sanitized `./scripts/doctor` output;
-- the exact command, exit code, and smallest reproducible request;
+- the exact command, shell exit status, and smallest reproducible request;
+- for a failed Make target, the preceding `HBCB_MAKE: FAIL[...]`,
+  `BUILDER: FAIL[n]`, or `Error n` diagnostic;
 - expected behavior and actual behavior; and
 - relevant `qa.json` or `manifest.json` fields and a short sanitized log
   excerpt when available.

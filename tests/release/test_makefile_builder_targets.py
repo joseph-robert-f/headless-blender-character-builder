@@ -32,6 +32,11 @@ if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
       ;;
   esac
 fi
+
+if [ "${1:-}" = run ] && [ -n "${FAKE_DOCKER_RUN_EXIT:-}" ]; then
+  printf 'BUILDER: FAIL[%s]: fixture failure\n' "$FAKE_DOCKER_RUN_EXIT" >&2
+  exit "$FAKE_DOCKER_RUN_EXIT"
+fi
 """
 
 
@@ -220,6 +225,144 @@ class MakefileBuilderTargetTests(unittest.TestCase):
                 output_name="a" * 48,
             )
             self.assertEqual(accepted.returncode, 0, accepted.stdout)
+
+    def test_missing_request_fails_before_any_image_or_container_work(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="hbcb-make-request-") as temporary:
+            environment, docker, docker_log, _request, build_parent = self.fixture(
+                temporary
+            )
+            missing_request = Path(temporary) / "missing-request.json"
+            for target in (
+                "validate",
+                "build",
+                "verify",
+                "demo-native",
+                "verify-demo-native",
+            ):
+                with self.subTest(target=target):
+                    rejected = self.run_make(
+                        target,
+                        environment=environment,
+                        docker=docker,
+                        request=missing_request,
+                        build_parent=build_parent,
+                        output_name="custom-model",
+                    )
+                    self.assertEqual(rejected.returncode, 2, rejected.stdout)
+                    self.assertIn(
+                        "HBCB_MAKE: FAIL[request_missing]", rejected.stdout
+                    )
+                    self.assertIn(
+                        "set REQUEST to an existing regular JSON file",
+                        rejected.stdout,
+                    )
+                    self.assertFalse(docker_log.exists())
+                    self.assertFalse(build_parent.exists())
+
+    def test_output_preconditions_are_actionable_and_do_not_run_docker(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="hbcb-make-precondition-") as temporary:
+            environment, docker, docker_log, request, build_parent = self.fixture(
+                temporary
+            )
+            existing = build_parent / "existing-model"
+            existing.mkdir(parents=True)
+            sentinel = existing / "sentinel.txt"
+            sentinel.write_text("preserve\n", encoding="utf-8")
+
+            rejected_build = self.run_make(
+                "build",
+                environment=environment,
+                docker=docker,
+                request=request,
+                build_parent=build_parent,
+                output_name="existing-model",
+            )
+            self.assertEqual(rejected_build.returncode, 2, rejected_build.stdout)
+            self.assertIn(
+                "HBCB_MAKE: FAIL[output_exists]", rejected_build.stdout
+            )
+            self.assertIn("choose a new OUTPUT_NAME", rejected_build.stdout)
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "preserve\n")
+            self.assertFalse(docker_log.exists())
+
+            dangling_target = Path(temporary) / "missing-dangling-target"
+            dangling_output = build_parent / "dangling-model"
+            dangling_output.symlink_to(dangling_target, target_is_directory=True)
+            rejected_dangling_build = self.run_make(
+                "build",
+                environment=environment,
+                docker=docker,
+                request=request,
+                build_parent=build_parent,
+                output_name="dangling-model",
+            )
+            self.assertEqual(
+                rejected_dangling_build.returncode, 2, rejected_dangling_build.stdout
+            )
+            self.assertIn(
+                "HBCB_MAKE: FAIL[output_exists]", rejected_dangling_build.stdout
+            )
+            self.assertTrue(dangling_output.is_symlink())
+            self.assertFalse(dangling_target.exists())
+            self.assertFalse(docker_log.exists())
+
+            real_output = build_parent / "real-output"
+            real_output.mkdir()
+            linked_output = build_parent / "linked-output"
+            linked_output.symlink_to(real_output, target_is_directory=True)
+            rejected_linked_verify = self.run_make(
+                "verify",
+                environment=environment,
+                docker=docker,
+                request=request,
+                build_parent=build_parent,
+                output_name="linked-output",
+            )
+            self.assertEqual(
+                rejected_linked_verify.returncode, 2, rejected_linked_verify.stdout
+            )
+            self.assertIn(
+                "HBCB_MAKE: FAIL[output_missing]", rejected_linked_verify.stdout
+            )
+            self.assertIn("non-symlink directory", rejected_linked_verify.stdout)
+            self.assertTrue(linked_output.is_symlink())
+            self.assertFalse(docker_log.exists())
+
+            rejected_verify = self.run_make(
+                "verify",
+                environment=environment,
+                docker=docker,
+                request=request,
+                build_parent=build_parent,
+                output_name="missing-model",
+            )
+            self.assertEqual(rejected_verify.returncode, 2, rejected_verify.stdout)
+            self.assertIn(
+                "HBCB_MAKE: FAIL[output_missing]", rejected_verify.stdout
+            )
+            self.assertIn(
+                "run make build with the same REQUEST and OUTPUT_NAME first",
+                rejected_verify.stdout,
+            )
+            self.assertFalse(docker_log.exists())
+
+    def test_make_reports_builder_code_but_returns_its_own_failure_status(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="hbcb-make-exit-") as temporary:
+            environment, docker, _docker_log, request, build_parent = self.fixture(
+                temporary
+            )
+            environment["FAKE_DOCKER_RUN_EXIT"] = "11"
+            failed = self.run_make(
+                "build",
+                environment=environment,
+                docker=docker,
+                request=request,
+                build_parent=build_parent,
+                output_name="needs-review",
+            )
+            self.assertEqual(failed.returncode, 2, failed.stdout)
+            self.assertIn("BUILDER: FAIL[11]: fixture failure", failed.stdout)
+            self.assertIn("Error 11", failed.stdout)
 
     def test_make_validate_uses_hardened_keyless_container_with_request_only(self) -> None:
         with tempfile.TemporaryDirectory(prefix="hbcb-make-validate-") as temporary:

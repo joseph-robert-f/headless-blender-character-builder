@@ -418,8 +418,13 @@ def _run_moss_needs_review(blender: Path, work_dir: Path, timeout_seconds: int) 
             f"moss-hopper needs_review: expected exit 11, observed {completed.returncode}\n{detail}".rstrip()
         )
     _require(
-        "mandatory geometry QA status is needs_review" in completed.stdout,
-        "moss-hopper: exit 11 was not the frozen mandatory-unknown QA result",
+        "mandatory geometry QA status is needs_review; "
+        "safe diagnostics: minimum wall measurement unavailable" in completed.stdout,
+        "moss-hopper: exit 11 omitted its safe mandatory-unknown QA diagnostic",
+    )
+    _require(
+        "short strict candidates" not in completed.stdout and "ray misses" not in completed.stdout,
+        "moss-hopper: exit 11 exposed private detailed QA notes",
     )
     _require(not output.exists(), "moss-hopper needs_review published partial output")
     _require(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import subprocess
 import tempfile
@@ -14,6 +15,7 @@ from unittest import mock
 from builder_cli import commands
 from builder_cli.__main__ import main
 from builder_cli.exit_codes import ExitCode
+from shared.json_contract import ContractValidationError
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -45,15 +47,141 @@ class BuilderCliExitCodeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="hbcb-validate-") as raw:
             request = Path(raw) / "request.json"
             secret = "validate-canary-secret"
-            request.write_text('{"unexpected":"' + secret + '"}\n', encoding="utf-8")
+            secret_field = "private-field-canary"
+            request.write_text(
+                json.dumps({secret_field: secret}) + "\n", encoding="utf-8"
+            )
             stdout = io.StringIO()
             stderr = io.StringIO()
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                 result = main(("validate", "--request", str(request)))
         self.assertEqual(result, int(ExitCode.INVALID_REQUEST))
         self.assertEqual(stdout.getvalue(), "")
-        self.assertIn("BUILDER: FAIL[3]: BuildRequest was rejected", stderr.getvalue())
+        self.assertEqual(
+            stderr.getvalue(),
+            "BUILDER: FAIL[3]: BuildRequest was rejected: extra_property at $: "
+            "request contains unsupported field(s)\n",
+        )
         self.assertNotIn(secret, stderr.getvalue())
+        self.assertNotIn(secret_field, stderr.getvalue())
+
+    def test_validate_reports_safe_code_path_and_static_reason(self) -> None:
+        original = json.loads(
+            (ROOT / "examples" / "requests" / "facet-bot.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        cases = (
+            (
+                "invalid-color",
+                ("spec", "palette", 0),
+                "private-color-value",
+                "invalid_color at $.spec.palette[0]: "
+                "palette colors must use uppercase #RRGGBB",
+            ),
+            (
+                "invalid-enum",
+                ("spec", "style"),
+                "private-style-value",
+                "invalid_enum at $.spec.style: value is not one of the supported choices",
+            ),
+            (
+                "out-of-range",
+                ("spec", "height_mm"),
+                987654321,
+                "number_out_of_range at $.spec.height_mm: "
+                "number is outside the supported range",
+            ),
+        )
+        with tempfile.TemporaryDirectory(prefix="hbcb-validate-details-") as raw:
+            for name, path, submitted_value, expected in cases:
+                with self.subTest(name=name):
+                    payload = json.loads(json.dumps(original))
+                    target = payload
+                    for segment in path[:-1]:
+                        target = target[segment]
+                    target[path[-1]] = submitted_value
+                    request = Path(raw) / f"{name}.json"
+                    request.write_text(json.dumps(payload), encoding="utf-8")
+                    stdout = io.StringIO()
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                        result = main(("validate", "--request", str(request)))
+                    self.assertEqual(result, int(ExitCode.INVALID_REQUEST))
+                    self.assertEqual(stdout.getvalue(), "")
+                    self.assertEqual(
+                        stderr.getvalue(),
+                        f"BUILDER: FAIL[3]: BuildRequest was rejected: {expected}\n",
+                    )
+                    self.assertNotIn(str(submitted_value), stderr.getvalue())
+
+    def test_rejection_diagnostic_bounds_untrusted_code_and_path_metadata(self) -> None:
+        canary = "private-path-canary"
+        oversized_path = "$." + ("A" * 1_000_000) + canary
+        diagnostic = commands._request_rejection(
+            ContractValidationError(
+                "attacker_controlled_code", "attacker-controlled reason", oversized_path
+            )
+        )
+        self.assertEqual(
+            diagnostic,
+            "BuildRequest was rejected: invalid_request at $: "
+            "request does not satisfy the supported build contract",
+        )
+        self.assertLessEqual(len(diagnostic), 160)
+        self.assertNotIn(canary, diagnostic)
+
+    def test_dangling_output_symlink_is_no_clobber_failure(self) -> None:
+        request = ROOT / "examples" / "requests" / "facet-bot.json"
+        with tempfile.TemporaryDirectory(prefix="hbcb-output-symlink-") as raw:
+            root = Path(raw)
+            missing_target = root / "missing-target"
+            output = root / "claimed-output"
+            output.symlink_to(missing_target, target_is_directory=True)
+            stderr = io.StringIO()
+            with mock.patch(
+                "builder_cli.commands._blender_binary",
+                side_effect=AssertionError("no-clobber must fail before Blender"),
+            ), contextlib.redirect_stderr(stderr):
+                result = main(
+                    (
+                        "build",
+                        "--request",
+                        str(request),
+                        "--output",
+                        str(output),
+                    )
+                )
+            self.assertEqual(result, int(ExitCode.FILESYSTEM))
+            self.assertEqual(
+                stderr.getvalue(),
+                "BUILDER: FAIL[4]: output must not already exist\n",
+            )
+            self.assertTrue(output.is_symlink())
+            self.assertFalse(missing_target.exists())
+
+    def test_rejected_request_exit_is_stable_for_every_request_command(self) -> None:
+        request = ROOT / "tests" / "fixtures" / "rejected" / "unsafe-slug.json"
+        with tempfile.TemporaryDirectory(prefix="hbcb-invalid-request-exits-") as raw:
+            output = Path(raw) / "output"
+            for argv in (
+                ("validate", "--request", str(request)),
+                ("build", "--request", str(request), "--output", str(output)),
+                ("verify", "--request", str(request), "--output", str(output)),
+            ):
+                with self.subTest(command=argv[0]):
+                    stdout = io.StringIO()
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                        result = main(argv)
+                    self.assertEqual(result, int(ExitCode.INVALID_REQUEST))
+                    self.assertEqual(stdout.getvalue(), "")
+                    self.assertEqual(
+                        stderr.getvalue(),
+                        "BUILDER: FAIL[3]: BuildRequest was rejected: invalid_slug at "
+                        "$.spec.slug: slug must be a 1-48 character lowercase safe slug\n",
+                    )
+                    self.assertFalse(output.exists())
 
     def test_validate_rejects_output_option_as_invalid_cli(self) -> None:
         stdout = io.StringIO()

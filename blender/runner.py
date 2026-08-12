@@ -37,6 +37,7 @@ from blender.core.fingerprint import structural_report
 from blender.exporters.model import export_glb, export_stl, inspect_binary_stl, save_model
 from blender.generators.registry import generate_character, preflight_character
 from blender.qa.geometry import analyze_generated_scene
+from blender.qa_failure_summary import geometry_qa_failure_summary
 from blender.render.diagnostics import render_diagnostics
 
 
@@ -526,7 +527,11 @@ def build(request_path: Path, output: Path) -> None:
         except OSError as exc:
             raise RunnerFailure(4, "could not write qa.json") from exc
         if quality.status != "passed":
-            raise RunnerFailure(11, f"mandatory geometry QA status is {quality.status}")
+            diagnostic = geometry_qa_failure_summary(quality)
+            raise RunnerFailure(
+                11,
+                f"mandatory geometry QA status is {quality.status}; {diagnostic}",
+            )
         manifest = _manifest(request, quality, stage, execution)
         # Success manifest is deliberately the final staged artifact written.
         try:

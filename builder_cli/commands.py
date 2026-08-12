@@ -34,12 +34,45 @@ EXACT_FILES = set(REQUIRED_ARTIFACTS) | {"manifest.json"}
 EXACT_DIRECTORIES = {"diagnostics"}
 IMAGE_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_REFERENCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/@:+-]{0,254}$")
+CONTRACT_PATH = re.compile(
+    r"^\$(?:(?:\.[A-Za-z_][A-Za-z0-9_]{0,63})|(?:\[[0-9]{1,6}\])){0,16}$"
+)
+MAX_CONTRACT_PATH_CHARACTERS = 256
 PROVENANCE_ENV = (
     "HBCB_EXECUTION_MODE",
     "HBCB_WORKER_IMAGE_REFERENCE",
     "HBCB_WORKER_IMAGE_DIGEST",
     "HBCB_WORKER_IMAGE_ID",
 )
+REQUEST_REJECTION_REASONS = {
+    "duplicate_item": "items that must be unique contain a duplicate",
+    "duplicate_key": "duplicate object keys are forbidden",
+    "excessive_nesting": "JSON nesting exceeds the supported limit",
+    "expected_number": "value must be a number",
+    "expected_object": "value must be an object",
+    "extra_property": "request contains unsupported field(s)",
+    "incompatible_components": "component choices are mutually exclusive",
+    "invalid_color": "palette colors must use uppercase #RRGGBB",
+    "invalid_components": "components must be a bounded array of supported presets",
+    "invalid_enum": "value is not one of the supported choices",
+    "invalid_json": "payload is not valid JSON",
+    "invalid_json_value": "payload contains an unsupported JSON value",
+    "invalid_name": "name does not satisfy the documented character-name format",
+    "invalid_number": "payload contains an invalid JSON number",
+    "invalid_object_key": "JSON object keys must be strings",
+    "invalid_palette": "palette must contain between one and eight colors",
+    "invalid_payload_type": "JSON payload must be UTF-8 bytes or text",
+    "invalid_slug": "slug must be a 1-48 character lowercase safe slug",
+    "invalid_unicode": "JSON contains invalid Unicode",
+    "invalid_utf8": "JSON payload must be valid UTF-8",
+    "missing_property": "request is missing one or more required fields",
+    "nonfinite_number": "non-finite JSON numbers are forbidden",
+    "number_out_of_range": "number is outside the supported range",
+    "numeric_limit": "JSON number exceeds the bounded numeric policy",
+    "payload_too_large": f"JSON payload exceeds the {MAX_BUILD_REQUEST_BYTES}-byte limit",
+    "unsupported_contract_value": "value does not match the supported build contract",
+    "unsupported_version": "value does not match the supported character-spec version",
+}
 
 
 class BuilderCliFailure(RuntimeError):
@@ -47,6 +80,23 @@ class BuilderCliFailure(RuntimeError):
         super().__init__(message)
         self.exit_code = int(exit_code)
         self.message = message
+
+
+def _request_rejection(exc: ContractValidationError) -> str:
+    """Render a stable diagnostic without reflecting caller-controlled values."""
+
+    code = exc.code if exc.code in REQUEST_REJECTION_REASONS else "invalid_request"
+    path = (
+        exc.path
+        if isinstance(exc.path, str)
+        and len(exc.path) <= MAX_CONTRACT_PATH_CHARACTERS
+        and CONTRACT_PATH.fullmatch(exc.path) is not None
+        else "$"
+    )
+    reason = REQUEST_REJECTION_REASONS.get(
+        code, "request does not satisfy the supported build contract"
+    )
+    return f"BuildRequest was rejected: {code} at {path}: {reason}"
 
 
 def _hash_file(path: Path) -> str:
@@ -69,7 +119,11 @@ def _request(raw_path: str) -> tuple[Path, BuildRequest]:
         raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "could not read request") from exc
     try:
         return path, BuildRequest.from_json(payload)
-    except (ContractValidationError, TypeError, ValueError) as exc:
+    except ContractValidationError as exc:
+        raise BuilderCliFailure(
+            int(ExitCode.INVALID_REQUEST), _request_rejection(exc)
+        ) from exc
+    except (TypeError, ValueError) as exc:
         raise BuilderCliFailure(int(ExitCode.INVALID_REQUEST), "BuildRequest was rejected") from exc
 
 
@@ -81,10 +135,17 @@ def validate_request(request_path: str) -> None:
 
 def _new_output(raw_path: str) -> Path:
     try:
-        output = Path(raw_path).expanduser().resolve(strict=False)
+        supplied = Path(raw_path).expanduser()
+        if supplied.is_symlink():
+            raise BuilderCliFailure(
+                int(ExitCode.FILESYSTEM), "output must not already exist"
+            )
+        output = supplied.resolve(strict=False)
+    except BuilderCliFailure:
+        raise
     except (OSError, RuntimeError, ValueError) as exc:
         raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "output path could not be resolved") from exc
-    if output.exists():
+    if output.is_symlink() or output.exists():
         raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "output must not already exist")
     if not output.parent.is_dir():
         raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "output parent does not exist")
@@ -357,7 +418,7 @@ def build_artifacts(request_path: str, output_path: str) -> None:
         if not result.is_dir():
             raise BuilderCliFailure(int(ExitCode.INTERNAL), "Blender omitted staged artifacts")
         _validate_tree(result, request, blender)
-        if output.exists():
+        if output.is_symlink() or output.exists():
             raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "output appeared during build")
         try:
             os.rename(result, output)

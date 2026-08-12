@@ -7,6 +7,9 @@ Changelog, and releases use Semantic Versioning.
 
 ### Changed
 
+- Added caller-safe request validation details, bounded geometry-QA failure
+  summaries, actionable Make preflight markers, and explicit documentation of
+  GNU Make versus underlying builder exit statuses.
 - Updated every Debian-derived project image to the maintained
   `bookworm-20260803-slim` base, pinned its reviewed manifest digest, and
   advanced package installation to the immutable `20260804T000000Z` snapshot.

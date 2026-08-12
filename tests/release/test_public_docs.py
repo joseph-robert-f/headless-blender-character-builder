@@ -180,6 +180,36 @@ class PublicDocumentationTests(unittest.TestCase):
             self.assertIn(value, guide, value)
         self.assertNotIn("unittest discover -s tests", guide)
 
+    def test_make_preconditions_and_builder_codes_are_explained(self) -> None:
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        troubleshooting = (ROOT / "docs" / "troubleshooting.md").read_text(
+            encoding="utf-8"
+        )
+        examples = (ROOT / "examples" / "README.md").read_text(
+            encoding="utf-8"
+        )
+        guide = (ROOT / "docs" / "character-spec.md").read_text(
+            encoding="utf-8"
+        )
+        for marker in (
+            "HBCB_MAKE: FAIL[request_missing]",
+            "HBCB_MAKE: FAIL[output_exists]",
+            "HBCB_MAKE: FAIL[output_missing]",
+        ):
+            self.assertIn(marker, makefile)
+            self.assertIn(marker, troubleshooting)
+        self.assertIn("before building or inspecting an image", troubleshooting)
+        self.assertIn("GNU Make itself usually exits `2`", troubleshooting)
+        self.assertIn("`BUILDER: FAIL[n]`", troubleshooting)
+        self.assertIn("`Error n`", troubleshooting)
+        self.assertIn("BLENDER_BUILDER: FAIL[11]", troubleshooting)
+        self.assertIn("safe diagnostics:", troubleshooting)
+        self.assertIn("builder reports `BUILDER: FAIL[11]`", examples)
+        self.assertIn("`make` process itself normally exits `2`", examples)
+        self.assertNotIn("the build exits `11`", examples)
+        self.assertIn("GNU Make usually exits `2`", guide)
+        self.assertIn("`BUILDER: FAIL[n]`", guide)
+
     def test_api_and_environment_recovery_are_copyable_and_secret_aware(self) -> None:
         api = (ROOT / "docs" / "api.md").read_text(encoding="utf-8")
         for value in (
