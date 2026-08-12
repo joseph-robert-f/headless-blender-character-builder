@@ -21,6 +21,40 @@ CONSUMER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 RECEIPT_PATTERN = re.compile(r"^[0-9]+-[0-9]+$")
 GROUP_NAME = "workers-v1"
 STALE_CLAIM_IDLE_MS = 60_000
+DEFAULT_DEAD_LETTER_MAX_ENTRIES = 10_000
+MAX_DEAD_LETTER_MAX_ENTRIES = 1_000_000
+
+# Settling through Lua makes removal conditional on this consumer group's
+# acknowledgement.  A forged/stale receipt therefore cannot delete a live
+# entry which is no longer pending in this group.  Both streams share the
+# namespace hash tag, so the move script is Redis Cluster compatible.
+_ACK_AND_DELETE_SCRIPT = """
+local acknowledged = redis.call('XACK', KEYS[1], ARGV[1], ARGV[2])
+if acknowledged == 0 then
+    return {0, 0}
+end
+local deleted = redis.call('XDEL', KEYS[1], ARGV[2])
+return {acknowledged, deleted}
+"""
+
+_MOVE_AND_DELETE_SCRIPT = """
+local pending = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[2], ARGV[2], 1)
+if #pending == 0 then
+    return {ARGV[2], 0, 0}
+end
+local receipt
+if ARGV[4] == '0' then
+    receipt = redis.call('XADD', KEYS[2], '*', 'build_id', ARGV[3])
+else
+    receipt = redis.call('XADD', KEYS[2], 'MAXLEN', '=', ARGV[4], '*', 'build_id', ARGV[3])
+end
+local acknowledged = redis.call('XACK', KEYS[1], ARGV[1], ARGV[2])
+local deleted = 0
+if acknowledged == 1 then
+    deleted = redis.call('XDEL', KEYS[1], ARGV[2])
+end
+return {receipt, acknowledged, deleted}
+"""
 
 
 @dataclass(frozen=True)
@@ -77,13 +111,29 @@ def _canonical_uuid(value: Any) -> UUID:
 class RedisStreamsQueue:
     """Small redis-py-compatible adapter with a fixed one-field payload."""
 
-    def __init__(self, client: Any, namespace: str) -> None:
+    def __init__(
+        self,
+        client: Any,
+        namespace: str,
+        *,
+        dead_letter_max_entries: int = DEFAULT_DEAD_LETTER_MAX_ENTRIES,
+    ) -> None:
         if NAMESPACE_PATTERN.fullmatch(namespace) is None:
             raise QueueError("invalid_namespace", "queue namespace is outside policy")
+        if (
+            isinstance(dead_letter_max_entries, bool)
+            or not isinstance(dead_letter_max_entries, int)
+            or not 1 <= dead_letter_max_entries <= MAX_DEAD_LETTER_MAX_ENTRIES
+        ):
+            raise QueueError(
+                "invalid_dead_letter_limit",
+                "dead-letter retention limit is outside policy",
+            )
         self._client = client
         self.stream = f"hbcb:{{{namespace}}}:builds:v1"
         self.dead_stream = f"hbcb:{{{namespace}}}:dead:v1"
         self.group = GROUP_NAME
+        self.dead_letter_max_entries = dead_letter_max_entries
 
     def initialize(self) -> None:
         try:
@@ -180,28 +230,66 @@ class RedisStreamsQueue:
     def acknowledge(self, message: QueueMessage) -> None:
         self._require_message(message)
         try:
-            acknowledged = self._client.xack(self.stream, self.group, message.receipt)
+            results = self._client.eval(
+                _ACK_AND_DELETE_SCRIPT,
+                1,
+                self.stream,
+                self.group,
+                message.receipt,
+            )
         except Exception as exc:
             raise QueueError("queue_unavailable", "queue acknowledgement failed") from exc
-        if acknowledged not in (0, 1):
+        if (
+            not self._sequence(results)
+            or len(results) != 2
+            or results[0] not in (0, 1)
+            or results[1] not in (0, 1)
+            or (results[0] == 0 and results[1] != 0)
+            or (results[0] == 1 and results[1] != 1)
+        ):
             raise QueueError("invalid_queue_response", "queue acknowledgement was invalid")
 
     def requeue(self, message: QueueMessage) -> str:
-        return self._move(message, self.stream, "queue requeue failed")
+        return self._move(message, self.stream, "queue requeue failed", max_entries=0)
 
     def dead_letter(self, message: QueueMessage) -> str:
-        return self._move(message, self.dead_stream, "queue dead-letter failed")
+        return self._move(
+            message,
+            self.dead_stream,
+            "queue dead-letter failed",
+            max_entries=self.dead_letter_max_entries,
+        )
 
-    def _move(self, message: QueueMessage, target_stream: str, failure: str) -> str:
+    def _move(
+        self,
+        message: QueueMessage,
+        target_stream: str,
+        failure: str,
+        *,
+        max_entries: int,
+    ) -> str:
         self._require_message(message)
         try:
-            pipeline = self._client.pipeline(transaction=True)
-            pipeline.xadd(target_stream, {"build_id": str(message.build_id)})
-            pipeline.xack(self.stream, self.group, message.receipt)
-            results = pipeline.execute()
+            results = self._client.eval(
+                _MOVE_AND_DELETE_SCRIPT,
+                2,
+                self.stream,
+                target_stream,
+                self.group,
+                message.receipt,
+                str(message.build_id),
+                str(max_entries),
+            )
         except Exception as exc:
             raise QueueError("queue_unavailable", failure) from exc
-        if not isinstance(results, Sequence) or len(results) != 2 or results[1] not in (0, 1):
+        if (
+            not self._sequence(results)
+            or len(results) != 3
+            or results[1] not in (0, 1)
+            or results[2] not in (0, 1)
+            or (results[1] == 0 and results[2] != 0)
+            or (results[1] == 1 and results[2] != 1)
+        ):
             raise QueueError("invalid_queue_response", "queue move response was invalid")
         return self._receipt(results[0])
 
@@ -221,11 +309,22 @@ class RedisStreamsQueue:
 class InMemoryBuildQueue:
     """Deterministic reference queue; duplicate delivery remains permitted."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self, *, dead_letter_max_entries: int = DEFAULT_DEAD_LETTER_MAX_ENTRIES
+    ) -> None:
+        if (
+            isinstance(dead_letter_max_entries, bool)
+            or not isinstance(dead_letter_max_entries, int)
+            or not 1 <= dead_letter_max_entries <= MAX_DEAD_LETTER_MAX_ENTRIES
+        ):
+            raise QueueError(
+                "invalid_dead_letter_limit",
+                "dead-letter retention limit is outside policy",
+            )
         self._lock = RLock()
         self._ready: Deque[QueueMessage] = deque()
         self._claimed: dict[str, QueueMessage] = {}
-        self._dead: list[QueueMessage] = []
+        self._dead: Deque[QueueMessage] = deque(maxlen=dead_letter_max_entries)
         self._next = 1
 
     def enqueue(self, build_id: UUID) -> str:

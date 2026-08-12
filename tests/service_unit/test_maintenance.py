@@ -18,10 +18,12 @@ from hbcb_service.maintenance import (
     DeletionWorkItem,
     MaintenanceError,
     MaintenanceService,
+    MinioVersionedObjectClient,
     PostgresMaintenanceStore,
     RetentionApplyResult,
     RetentionCandidate,
     RetentionPolicy,
+    StoredObjectVersion,
     VersionRemap,
     validate_namespace,
 )
@@ -70,6 +72,31 @@ def deletion_item(
     )
 
 
+def stored_version(
+    *,
+    build_id: UUID = BUILD_A,
+    name: str = "model.stl",
+    version_id: str = "version-1",
+    modified: datetime = NOW - timedelta(days=8),
+    payload: bytes = b"mesh-bytes",
+) -> StoredObjectVersion:
+    attempt_id = UUID("11111111-1111-4111-8111-111111111111")
+    return StoredObjectVersion(
+        namespace="local",
+        build_id=build_id,
+        attempt_id=attempt_id,
+        relative_path=name,
+        bucket="hbcb-artifacts",
+        object_key=(
+            f"local/v1/builds/{build_id}/attempts/{attempt_id}/complete-v1/{name}"
+        ),
+        version_id=version_id,
+        sha256=hashlib.sha256(payload).hexdigest(),
+        bytes=len(payload),
+        last_modified=modified,
+    )
+
+
 class FakeStore:
     def __init__(self) -> None:
         self.candidates = (
@@ -97,6 +124,9 @@ class FakeStore:
         self.claim_calls: list[tuple[datetime, datetime, int, UUID, datetime]] = []
         self.deletion_attempts: list[tuple[DeletionWorkItem, str, str, str | None, datetime]] = []
         self.remap_calls: list[tuple[VersionRemap, ...]] = []
+        self.object_inventory: tuple[StoredObjectVersion, ...] = ()
+        self.orphan_candidates: tuple[StoredObjectVersion, ...] = ()
+        self.orphan_calls = []
 
     def select_retention_candidates(self, policy: RetentionPolicy, now: datetime, limit: int):
         self.retention_selects.append((policy, now, limit))
@@ -143,6 +173,17 @@ class FakeStore:
     ) -> None:
         self.deletion_attempts.append((item, worker_id, outcome, error_code, attempted_at))
 
+    def reconcile_orphan_versions(
+        self,
+        versions: tuple[StoredObjectVersion, ...],
+        eligible_before: datetime,
+        now: datetime,
+        apply: bool,
+        limit: int,
+    ):
+        self.orphan_calls.append((versions, eligible_before, now, apply, limit))
+        return self.orphan_candidates[:limit]
+
     def iter_queued_build_ids(self, page_size: int):
         ordered = tuple(sorted(self.queued_ids, key=lambda value: value.int))
         for offset in range(0, len(ordered), page_size):
@@ -164,6 +205,8 @@ class FakeObjects:
         self.uploaded: list[tuple[str, str, bytes, int, str, str]] = []
         self.inspected: list[tuple[str, str]] = []
         self.namespace_is_empty = True
+        self.inventory: tuple[StoredObjectVersion, ...] = ()
+        self.inventory_calls = []
 
     def iter_version(self, bucket: str, object_key: str, version_id: str):
         payload = self.versions[(bucket, object_key, version_id)]
@@ -176,6 +219,10 @@ class FakeObjects:
         self.deleted.append((bucket, object_key, version_id))
         if version_id in self.fail_delete:
             raise RuntimeError("secret storage failure details")
+
+    def inventory_namespace_versions(self, bucket: str, namespace: str, *, limit: int):
+        self.inventory_calls.append((bucket, namespace, limit))
+        return self.inventory
 
     def assert_namespace_empty(self, bucket: str, namespace: str) -> None:
         self.inspected.append((bucket, namespace))
@@ -219,6 +266,20 @@ class FakeExporter:
             raise RuntimeError("postgresql://user:password@database/hbcb")
         destination.write(self.payload[:3])
         destination.write(self.payload[3:])
+
+
+class ListedVersionsClient:
+    def __init__(self, entries: tuple[object, ...], stats: dict[tuple[str, str], object]) -> None:
+        self.entries = entries
+        self.stats = stats
+        self.list_calls = []
+
+    def list_objects(self, bucket: str, **kwargs: object):
+        self.list_calls.append((bucket, kwargs))
+        return iter(self.entries)
+
+    def stat_object(self, bucket: str, key: str, *, version_id: str):
+        return self.stats[(key, version_id)]
 
 
 class PolicyAndRetentionTests(unittest.TestCase):
@@ -336,6 +397,187 @@ class DeletionAndRedisTests(unittest.TestCase):
         self.assertEqual(result.derived_queued_builds, 1001)
         self.assertEqual(result.enqueued, 1001)
         self.assertEqual(tuple(queue.enqueued), store.queued_ids)
+
+    def test_orphan_discovery_is_bounded_dry_by_default_and_uses_object_age(self) -> None:
+        item = stored_version()
+        store = FakeStore()
+        store.orphan_candidates = (item,)
+        objects = FakeObjects({})
+        objects.inventory = (item,)
+        service = MaintenanceService(
+            store,
+            namespace="local",
+            bucket="hbcb-artifacts",
+            objects=objects,
+        )
+        result = service.discover_orphan_versions(now=NOW, limit=1, scan_limit=5)
+        self.assertEqual((result.dry_run, result.scanned, result.candidates, result.queued), (True, 1, 1, 0))
+        self.assertEqual(objects.inventory_calls, [("hbcb-artifacts", "local", 5)])
+        self.assertEqual(store.orphan_calls[0][1], NOW - timedelta(days=7))
+        self.assertFalse(store.orphan_calls[0][3])
+
+        applied = service.discover_orphan_versions(now=NOW, apply=True, limit=1, scan_limit=5)
+        self.assertEqual((applied.dry_run, applied.queued), (False, 1))
+        self.assertTrue(store.orphan_calls[1][3])
+
+    def test_orphan_discovery_rejects_fresh_or_uninventoried_store_candidates(self) -> None:
+        old = stored_version()
+        fresh = stored_version(version_id="fresh", modified=NOW - timedelta(hours=1))
+        store = FakeStore()
+        objects = FakeObjects({})
+        objects.inventory = (old, fresh)
+        service = MaintenanceService(
+            store, namespace="local", bucket="hbcb-artifacts", objects=objects
+        )
+        store.orphan_candidates = (fresh,)
+        with self.assertRaises(MaintenanceError) as captured:
+            service.discover_orphan_versions(now=NOW)
+        self.assertEqual(captured.exception.code, "invalid_orphan_result")
+
+        store.orphan_candidates = (stored_version(version_id="not-listed"),)
+        with self.assertRaises(MaintenanceError):
+            service.discover_orphan_versions(now=NOW)
+
+    def test_minio_inventory_consumes_all_versions_and_verifies_exact_evidence(self) -> None:
+        first = stored_version(version_id="version-1", payload=b"one")
+        second = stored_version(
+            build_id=BUILD_B,
+            name="model.glb",
+            version_id="version-2",
+            payload=b"two",
+        )
+        entries = tuple(
+            SimpleNamespace(
+                object_name=item.object_key,
+                version_id=item.version_id,
+                last_modified=item.last_modified,
+                size=item.bytes,
+                is_delete_marker=False,
+            )
+            for item in (first, second)
+        )
+        stats = {
+            (item.object_key, item.version_id): SimpleNamespace(
+                version_id=item.version_id,
+                size=item.bytes,
+                last_modified=item.last_modified,
+                metadata={"x-amz-meta-sha256": item.sha256},
+            )
+            for item in (first, second)
+        }
+        client = ListedVersionsClient(entries, stats)
+        inventoried = MinioVersionedObjectClient(client).inventory_namespace_versions(
+            "hbcb-artifacts", "local", limit=2
+        )
+        self.assertEqual({item.identity for item in inventoried}, {first.identity, second.identity})
+        self.assertEqual(
+            client.list_calls[0][1],
+            {
+                "prefix": "local/v1/builds/",
+                "recursive": True,
+                "include_version": True,
+            },
+        )
+
+    def test_minio_inventory_fails_closed_on_delete_marker_ambiguity_and_limit(self) -> None:
+        item = stored_version()
+        marker = SimpleNamespace(
+            object_name=item.object_key,
+            version_id="marker-version",
+            last_modified=item.last_modified,
+            size=0,
+            is_delete_marker=True,
+        )
+        with self.assertRaises(MaintenanceError) as captured:
+            MinioVersionedObjectClient(ListedVersionsClient((marker,), {})).inventory_namespace_versions(
+                "hbcb-artifacts", "local", limit=1
+            )
+        self.assertEqual(captured.exception.code, "ambiguous_object_inventory")
+
+        entry = SimpleNamespace(
+            object_name=item.object_key,
+            version_id=item.version_id,
+            last_modified=item.last_modified,
+            size=item.bytes,
+            is_delete_marker=False,
+        )
+        stat_item = SimpleNamespace(
+            version_id=item.version_id,
+            size=item.bytes,
+            last_modified=item.last_modified,
+            metadata={"sha256": item.sha256},
+        )
+        client = ListedVersionsClient((entry, entry), {(item.object_key, item.version_id): stat_item})
+        with self.assertRaises(MaintenanceError) as bounded:
+            MinioVersionedObjectClient(client).inventory_namespace_versions(
+                "hbcb-artifacts", "local", limit=1
+            )
+        self.assertEqual(bounded.exception.code, "object_inventory_too_large")
+
+        ambiguous = SimpleNamespace(
+            object_name=item.object_key,
+            version_id="null",
+            last_modified=item.last_modified,
+            size=item.bytes,
+            is_delete_marker=False,
+        )
+        with self.assertRaises(MaintenanceError) as unversioned:
+            MinioVersionedObjectClient(
+                ListedVersionsClient((ambiguous,), {})
+            ).inventory_namespace_versions("hbcb-artifacts", "local", limit=1)
+        self.assertEqual(unversioned.exception.code, "ambiguous_object_inventory")
+
+    def test_minio_inventory_rejects_missing_or_changed_listing_evidence(self) -> None:
+        item = stored_version()
+        base = {
+            "object_name": item.object_key,
+            "version_id": item.version_id,
+            "last_modified": item.last_modified,
+            "size": item.bytes,
+        }
+        stat_item = SimpleNamespace(
+            version_id=item.version_id,
+            size=item.bytes,
+            last_modified=item.last_modified,
+            metadata={"sha256": item.sha256},
+        )
+        identity = (item.object_key, item.version_id)
+        for entry in (
+            SimpleNamespace(**base),
+            SimpleNamespace(**base, is_delete_marker=None),
+        ):
+            with self.subTest(marker=getattr(entry, "is_delete_marker", "missing")):
+                with self.assertRaises(MaintenanceError) as marker:
+                    MinioVersionedObjectClient(
+                        ListedVersionsClient((entry,), {identity: stat_item})
+                    ).inventory_namespace_versions("hbcb-artifacts", "local", limit=1)
+                self.assertEqual(marker.exception.code, "ambiguous_object_inventory")
+
+        changed_stat = SimpleNamespace(
+            version_id=item.version_id,
+            size=item.bytes,
+            last_modified=item.last_modified + timedelta(seconds=1),
+            metadata={"sha256": item.sha256},
+        )
+        entry = SimpleNamespace(**base, is_delete_marker=False)
+        with self.assertRaises(MaintenanceError) as changed:
+            MinioVersionedObjectClient(
+                ListedVersionsClient((entry,), {identity: changed_stat})
+            ).inventory_namespace_versions("hbcb-artifacts", "local", limit=1)
+        self.assertEqual(changed.exception.code, "object_inventory_changed")
+
+        subsecond_stat = SimpleNamespace(
+            version_id=item.version_id,
+            size=item.bytes,
+            last_modified=item.last_modified + timedelta(microseconds=500000),
+            metadata={"sha256": item.sha256},
+        )
+        self.assertEqual(
+            MinioVersionedObjectClient(
+                ListedVersionsClient((entry,), {identity: subsecond_stat})
+            ).inventory_namespace_versions("hbcb-artifacts", "local", limit=1)[0].identity,
+            item.identity,
+        )
 
 
 class BackupRestoreTests(unittest.TestCase):
@@ -627,6 +869,23 @@ class PostgresOrderingTests(unittest.TestCase):
         self.assertIn("ORDER BY id", sql)
         self.assertNotIn("queue_outbox", sql)
 
+    def test_orphan_claim_query_rechecks_active_builds_and_exact_references(self) -> None:
+        connection = ScriptedConnection()
+        store = PostgresMaintenanceStore(lambda: connection, namespace="local")
+        store.claim_deletions(
+            NOW - timedelta(days=7),
+            NOW,
+            100,
+            CLAIM,
+            NOW + timedelta(minutes=15),
+        )
+        sql = connection.executions[0][0]
+        self.assertIn("LEFT JOIN hbcb.builds", sql)
+        self.assertIn("NOT EXISTS", sql)
+        self.assertIn("FROM hbcb.artifacts", sql)
+        self.assertIn("build.id IS NULL OR build.status NOT IN", sql)
+        self.assertIn("FOR UPDATE OF queue SKIP LOCKED", sql)
+
 
 class CommandTests(unittest.TestCase):
     def test_retain_alias_uses_bounded_environment_defaults_and_stays_dry(self) -> None:
@@ -726,6 +985,80 @@ class CommandTests(unittest.TestCase):
             json.loads(error.getvalue()),
             {"error": {"code": "database_unavailable"}, "ok": False},
         )
+
+    def test_orphan_command_is_dry_by_default_and_apply_is_explicit(self) -> None:
+        item = stored_version()
+        store = FakeStore()
+        store.orphan_candidates = (item,)
+        objects = FakeObjects({})
+        objects.inventory = (item,)
+        service = MaintenanceService(
+            store,
+            namespace="local",
+            bucket="hbcb-artifacts",
+            objects=objects,
+        )
+        preview_output = io.StringIO()
+        self.assertEqual(
+            run(
+                ["discover-orphans", "--limit", "1", "--scan-limit", "5"],
+                environment={"HBCB_ORPHAN_GRACE_DAYS": "7"},
+                service_factory=lambda _environment: service,
+                stdout=preview_output,
+            ),
+            0,
+        )
+        self.assertEqual(
+            json.loads(preview_output.getvalue()),
+            {"candidates": 1, "dry_run": True, "queued": 0, "scanned": 1},
+        )
+        apply_output = io.StringIO()
+        self.assertEqual(
+            run(
+                ["discover-orphans", "--apply", "--limit", "1", "--scan-limit", "5"],
+                environment={},
+                service_factory=lambda _environment: service,
+                stdout=apply_output,
+            ),
+            0,
+        )
+        self.assertEqual(json.loads(apply_output.getvalue())["queued"], 1)
+
+    def test_command_clock_injection_reaches_grace_period_decisions(self) -> None:
+        item = stored_version()
+        store = FakeStore()
+        store.orphan_candidates = (item,)
+        objects = FakeObjects({})
+        objects.inventory = (item,)
+        service = MaintenanceService(
+            store,
+            namespace="local",
+            bucket="hbcb-artifacts",
+            objects=objects,
+        )
+        self.assertEqual(
+            run(
+                ["discover-orphans", "--orphan-grace-days", "3"],
+                environment={},
+                service_factory=lambda _environment: service,
+                stdout=io.StringIO(),
+                now=NOW,
+            ),
+            0,
+        )
+        self.assertEqual(store.orphan_calls[0][1:3], (NOW - timedelta(days=3), NOW))
+
+        self.assertEqual(
+            run(
+                ["delete-artifacts", "--orphan-grace-days", "2"],
+                environment={},
+                service_factory=lambda _environment: service,
+                stdout=io.StringIO(),
+                now=NOW,
+            ),
+            0,
+        )
+        self.assertEqual(store.preview_calls[0][:2], (NOW - timedelta(days=2), NOW))
 
     def test_object_backup_and_restore_commands_require_explicit_paths_and_apply(self) -> None:
         payload = b"command backup bytes"

@@ -72,10 +72,10 @@ transaction in service mode.
 | `blender` | Compile reviewed primitives, render, export, and inspect real geometry | Fetch URLs or execute request-supplied code |
 | API | Authenticate, validate, submit, read status, cancel, and authorize downloads | Run Blender or hold worker credentials |
 | PostgreSQL | Own build state, attempts, leases, idempotency, artifacts, outbox, and retention work | Deliver job payloads or serve artifact bytes |
-| Redis | Deliver bounded build IDs and recover stale claims | Act as durable build truth |
+| Redis | Deliver bounded build IDs, recover stale claims, remove settled main entries, and retain a bounded dead-letter tail | Act as durable build truth |
 | Worker supervisor | Fence leases and launch one fresh builder process per attempt | Accept arbitrary commands or publish partial output |
 | Versioned S3 | Store immutable attempt-scoped artifacts and exact versions | Decide build success |
-| Maintenance process | Preview/apply retention, backup, restore, and reconstruct Redis | Administer the database or broadly delete a bucket |
+| Maintenance process | Preview/apply retention, reconcile bounded old orphan-version inventories, delete durably queued exact versions, backup, restore, and reconstruct Redis | Administer the database or broadly delete a bucket |
 
 ## Security and network boundaries
 
@@ -98,7 +98,13 @@ nested container. That child therefore shares the supervisor container's
 network namespace: it is internal-only, not `--network none`. The subprocess
 environment is scrubbed so it receives no API token, database password, Redis
 credential, object-storage secret, provider key, or Docker credential. The
-worker container has no Docker socket, host home mount, device, or SSH agent.
+launcher also closes nonstandard inherited descriptors. Before it constructs credential
+clients, the Linux supervisor marks itself non-dumpable—the kernel setting
+that controls whether another process may inspect it—and disables core dumps.
+It verifies and reasserts that boundary before each child launch. Because the
+container drops `CAP_SYS_PTRACE`, a same-UID Blender descendant cannot inspect
+the supervisor's procfs environment or memory. The worker container has no
+Docker socket, host home mount, device, or SSH agent.
 
 Auto-execution is disabled in every lane. These controls are defense in depth
 around trusted generator code; Blender is not treated as a sandbox for hostile

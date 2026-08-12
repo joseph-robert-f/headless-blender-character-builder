@@ -1,0 +1,12 @@
+{
+  "blender": {
+    "archive": "blender-4.5.12.tar.xz",
+    "bytes": 85105056,
+    "license": "GPL-3.0-or-later",
+    "official_md5": "5696670e8b7a8d8ffbd33824a140c1c3",
+    "sha256": "9cb86825c95e4f0a33bfd41eb574426f2f69aa6c310497e289fdb54cc6482f1b",
+    "source_url": "https://download.blender.org/source/blender-4.5.12.tar.xz",
+    "version": "4.5.12"
+  },
+  "format": "hbcb-corresponding-source-policy/v1"
+}

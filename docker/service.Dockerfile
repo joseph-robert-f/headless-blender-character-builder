@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1.25@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12
 
 ARG HBCB_BUILDER_IMAGE=headless-blender-character-builder:dev
+ARG HBCB_DISTRIBUTION_VERSION=0.1.0-local
+ARG HBCB_SOURCE_REVISION=uncommitted
 
 # Install the service wheel set with Blender's CPython 3.11 so the worker can
 # remain a strict child of the already-gated G4 builder image.  Nothing in this
@@ -9,14 +11,22 @@ FROM --platform=linux/amd64 ${HBCB_BUILDER_IMAGE} AS service-dependencies
 
 USER 0:0
 COPY docker/service-requirements.lock /opt/hbcb/service-requirements.lock
+ADD --checksum=sha256:71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e \
+    https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/pip-26.2.1-py3-none-any.whl \
+    /tmp/pip-26.2.1-py3-none-any.whl
 RUN set -eux; \
-    /opt/blender/4.5/python/bin/python3.11 -m pip install \
+    mkdir -p /opt/hbcb/build-pip; \
+    /opt/blender/4.5/python/bin/python3.11 -m zipfile \
+      -e /tmp/pip-26.2.1-py3-none-any.whl /opt/hbcb/build-pip; \
+    PYTHONPATH=/opt/hbcb/build-pip \
+      /opt/blender/4.5/python/bin/python3.11 -m pip install \
       --disable-pip-version-check \
       --no-cache-dir \
       --only-binary=:all: \
       --require-hashes \
       --requirement /opt/hbcb/service-requirements.lock \
       --target /opt/hbcb/site-packages; \
+    rm -f /tmp/pip-26.2.1-py3-none-any.whl; \
     find /opt/hbcb/site-packages -type d -name __pycache__ -prune -exec rm -rf '{}' +; \
     chmod -R a+rX,a-w /opt/hbcb/site-packages /opt/hbcb/service-requirements.lock
 
@@ -28,10 +38,14 @@ RUN set -eux; \
 # do not install the API operating-system layer while building the worker.
 FROM --platform=linux/amd64 ${HBCB_BUILDER_IMAGE} AS worker
 
+ARG HBCB_DISTRIBUTION_VERSION
+ARG HBCB_SOURCE_REVISION
+
 LABEL org.opencontainers.image.title="Headless Blender Character Builder supervisor" \
       org.opencontainers.image.source="https://github.com/joseph-robert-f/headless-blender-character-builder" \
       org.opencontainers.image.licenses="GPL-3.0-or-later" \
-      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.version="${HBCB_DISTRIBUTION_VERSION}" \
+      org.opencontainers.image.revision="${HBCB_SOURCE_REVISION}" \
       io.hbcb.builder.contract="complete-v1"
 
 USER 0:0
@@ -63,11 +77,14 @@ ENTRYPOINT ["/opt/blender/4.5/python/bin/python3.11", "-m", "hbcb_service.worker
 FROM --platform=linux/amd64 debian:bookworm-20260803-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241 AS service-base
 
 ARG DEBIAN_SNAPSHOT=20260804T000000Z
+ARG HBCB_DISTRIBUTION_VERSION
+ARG HBCB_SOURCE_REVISION
 
 LABEL org.opencontainers.image.title="Headless Blender Character Builder service" \
       org.opencontainers.image.source="https://github.com/joseph-robert-f/headless-blender-character-builder" \
       org.opencontainers.image.licenses="GPL-3.0-or-later" \
-      org.opencontainers.image.version="0.1.0"
+      org.opencontainers.image.version="${HBCB_DISTRIBUTION_VERSION}" \
+      org.opencontainers.image.revision="${HBCB_SOURCE_REVISION}"
 
 RUN set -eux; \
     sed -i \
@@ -122,7 +139,8 @@ FROM service-dependencies AS service-test-dependencies
 USER 0:0
 COPY docker/service-test-requirements.lock /opt/hbcb/service-test-requirements.lock
 RUN set -eux; \
-    /opt/blender/4.5/python/bin/python3.11 -m pip install \
+    PYTHONPATH=/opt/hbcb/build-pip \
+      /opt/blender/4.5/python/bin/python3.11 -m pip install \
       --disable-pip-version-check \
       --no-cache-dir \
       --no-deps \

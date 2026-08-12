@@ -174,14 +174,18 @@ HBCB_BUILDER_IMAGE_REFERENCE=$builder_image
 HBCB_BUILDER_IMAGE_ID=$builder_id
 export HBCB_BUILDER_IMAGE HBCB_BUILDER_IMAGE_REFERENCE HBCB_BUILDER_IMAGE_ID
 
-minio_version=RELEASE.2025-10-15T17-29-55Z
-minio_revision=9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
-minio_recipe_id=$(git hash-object docker/minio.Dockerfile)
-if [ "${#minio_recipe_id}" -ne 40 ]; then
+minio_version=final-community-20260212-hbcb.1
+minio_runtime_version=DEVELOPMENT.GOGET
+minio_revision=7aac2a2c5b7c882e68c1ce017d8256be2feea27f
+minio_recipe_id=$("$python_bin" "$script_dir/minio-recipe-id" --root .) || \
+  fail 'MinIO recipe ID could not be measured' 6
+if [ "${#minio_recipe_id}" -ne 71 ]; then
   fail 'MinIO recipe ID is invalid' 6
 fi
 case "$minio_recipe_id" in
-  *[!0-9a-f]*) fail 'MinIO recipe ID is invalid' 6 ;;
+  sha256:*[!0-9a-f]*|sha256:) fail 'MinIO recipe ID is invalid' 6 ;;
+  sha256:*) ;;
+  *) fail 'MinIO recipe ID is invalid' 6 ;;
 esac
 HBCB_MINIO_RECIPE_ID=$minio_recipe_id
 export HBCB_MINIO_RECIPE_ID
@@ -215,7 +219,7 @@ if [ "$rebuild_minio" = 0 ]; then
       --entrypoint /usr/local/bin/minio \
       "$HBCB_MINIO_IMAGE" --version 2>/dev/null || true)
     case "$version_output" in
-      *"version $minio_version"*"commit-id=$minio_revision"*) minio_cached=1 ;;
+      *"version $minio_runtime_version"*"commit-id=$minio_revision"*) minio_cached=1 ;;
     esac
   fi
 fi

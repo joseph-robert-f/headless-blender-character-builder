@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Print the canonical SHA-256 identity of every MinIO build-recipe input."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+import stat
+import sys
+from pathlib import Path
+from typing import Optional, Sequence
+
+
+RECIPE_FILES = (
+    "docker/minio.Dockerfile",
+    "docker/minio-modules/mc.go.mod",
+    "docker/minio-modules/mc.go.sum",
+    "docker/minio-modules/minio.go.mod",
+    "docker/minio-modules/minio.go.sum",
+)
+FORMAT_MARKER = b"hbcb-minio-recipe/v1\0"
+MAX_FILE_BYTES = 16 * 1024 * 1024
+MAX_RECIPE_BYTES = 32 * 1024 * 1024
+
+
+class RecipeFailure(RuntimeError):
+    pass
+
+
+def _payload(root: Path, relative: str) -> bytes:
+    path = root / relative
+    try:
+        metadata = path.lstat()
+    except OSError:
+        raise RecipeFailure("a required MinIO recipe input is unavailable") from None
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise RecipeFailure("a required MinIO recipe input is unsafe")
+    if not 1 <= metadata.st_size <= MAX_FILE_BYTES:
+        raise RecipeFailure("a required MinIO recipe input is outside the size policy")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+        with os.fdopen(descriptor, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            payload = stream.read(MAX_FILE_BYTES + 1)
+    except OSError:
+        raise RecipeFailure("a required MinIO recipe input could not be read") from None
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino)
+        or opened.st_size != metadata.st_size
+        or len(payload) != metadata.st_size
+    ):
+        raise RecipeFailure("a required MinIO recipe input changed while being read")
+    return payload
+
+
+def recipe_id(root: Path) -> str:
+    try:
+        selected_root = root.resolve(strict=True)
+    except OSError:
+        raise RecipeFailure("the repository root is unavailable") from None
+    if root.is_symlink() or not selected_root.is_dir():
+        raise RecipeFailure("the repository root is unsafe")
+
+    digest = hashlib.sha256(FORMAT_MARKER)
+    total = 0
+    for relative in RECIPE_FILES:
+        payload = _payload(selected_root, relative)
+        total += len(payload)
+        if total > MAX_RECIPE_BYTES:
+            raise RecipeFailure("the MinIO recipe exceeds the size policy")
+        name = relative.encode("ascii")
+        digest.update(len(name).to_bytes(4, "big"))
+        digest.update(name)
+        digest.update(len(payload).to_bytes(8, "big"))
+        digest.update(payload)
+    return "sha256:" + digest.hexdigest()
+
+
+def _arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=Path.cwd())
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    try:
+        print(recipe_id(_arguments(argv).root))
+        return 0
+    except RecipeFailure as failure:
+        print("MINIO_RECIPE_ID: FAIL: " + str(failure), file=sys.stderr)
+        return 1
+    except Exception:
+        print("MINIO_RECIPE_ID: FAIL: unexpected recipe identity failure", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

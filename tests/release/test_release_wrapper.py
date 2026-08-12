@@ -7,7 +7,6 @@ import re
 import shutil
 import stat
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -41,14 +40,69 @@ class ReleaseWrapperTests(unittest.TestCase):
                 encoding="utf-8",
             )
             fake_mktemp.chmod(0o700)
+            old_python = tools / "old-python"
+            old_python.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            old_python.chmod(0o700)
+            supported_python = tools / "supported-python"
+            supported_python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            supported_python.chmod(0o700)
             subprocess.run(("git", "init", "-q"), cwd=checkout, check=True)
             subprocess.run(("git", "add", "."), cwd=checkout, check=True)
 
             base_environment = {
                 **os.environ,
                 "PATH": str(tools) + os.pathsep + os.environ.get("PATH", ""),
-                "PYTHON": sys.executable,
+                "PYTHON": str(supported_python),
             }
+            base_environment.pop("HBCB_RELEASE_RUN_ID", None)
+            base_environment.pop("HBCB_RELEASE_VERSION", None)
+            completed = subprocess.run(
+                ("sh", "scripts/release-check"),
+                cwd=checkout,
+                env=base_environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 1, completed.stdout)
+            self.assertIn("HBCB_RELEASE_RUN_ID is required", completed.stdout)
+            self.assertFalse(marker.exists())
+
+            completed = subprocess.run(
+                ("sh", "scripts/release-check"),
+                cwd=checkout,
+                env={
+                    **base_environment,
+                    "PYTHON": str(old_python),
+                    "HBCB_RELEASE_RUN_ID": "runtime",
+                },
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 1, completed.stdout)
+            self.assertIn("Python 3.11 or newer is required", completed.stdout)
+            self.assertFalse(marker.exists())
+
+            completed = subprocess.run(
+                ("sh", "scripts/release-check"),
+                cwd=checkout,
+                env={
+                    **base_environment,
+                    "HBCB_RELEASE_VERSION": "not-semver",
+                    "HBCB_RELEASE_RUN_ID": "runtime",
+                },
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 1, completed.stdout)
+            self.assertIn("safe semantic version", completed.stdout)
+            self.assertFalse(marker.exists())
+
             invalid = (
                 "a" * 51,
                 "-leading",
@@ -105,33 +159,75 @@ class ReleaseWrapperTests(unittest.TestCase):
         self.assertEqual(text.count("umask 022"), 2)
         self.assertIn('chmod 0700 "$scratch"', text)
         self.assertGreaterEqual(text.count('DOCKER="$docker_bin"'), 7)
+        for cleanup_contract in (
+            "project_resources()",
+            "initial_resources=$(project_resources) ||",
+            "pre_service_resources=$(project_resources) ||",
+            ': > "$service_ownership"',
+            "remaining_resources=$(project_resources 2>/dev/null) ||",
+            "remaining_builder=",
+            "isolated resource cleanup failed",
+            "cleanup_signal_status=0",
+            "trap 'record_cleanup_signal 129' 1",
+            'status=$cleanup_signal_status',
+            "trap 'cancel_summary_publish 143' 15",
+            "trap '' 1 2 15",
+        ):
+            self.assertIn(cleanup_contract, text)
+        self.assertNotIn("down --volumes --remove-orphans >/dev/null 2>&1 || true", text)
+        cleanup_text = text[text.index("cleanup() {") : text.index("finalize_cleanup() {")]
+        self.assertTrue(
+            cleanup_text.startswith(
+                "cleanup() {\n"
+                "  # Disable recursive EXIT cleanup. Record only the first termination signal so\n"
+                "  # cleanup can finish, while repeated or different signals cannot replace it.\n"
+                "  trap 'record_cleanup_signal 129' 1\n"
+                "  trap 'record_cleanup_signal 130' 2\n"
+                "  trap 'record_cleanup_signal 143' 15\n"
+            )
+        )
+        self.assertIn("trap 'cleanup $?' 0", text)
+        publish_tail = (
+            'ln "$summary_stage" "$summary_target" || cancel_summary_publish 1',
+            "summary_promoted=1",
+            'rm -f -- "$summary_stage" || cancel_summary_publish 1',
+            'chmod 0600 "$summary_target" || cancel_summary_publish 1',
+            "trap '' 1 2 15",
+            "printf 'RELEASE_CHECK: PASS evidence=%s\\n' \"$evidence\"",
+        )
+        publish_text = text[text.index(publish_tail[0]) :]
+        publish_offsets = [publish_text.index(fragment) for fragment in publish_tail]
+        self.assertEqual(publish_offsets, sorted(publish_offsets))
         for required in (
             "scripts/release-audit",
             "make check",
             "make demo",
             "make verify-demo",
             "make service-smoke",
+            "make minio-security-check",
             "make g8-static",
             "make g8-caddy",
             "make g8-recovery",
             "scripts/dependency-audit",
             "scripts/service-sbom",
+            "scripts/fetch-corresponding-source",
             "scripts/release-artifacts",
+            "--corresponding-source-dir",
+            'MINIO_IMAGE="$HBCB_MINIO_IMAGE"',
             "--demo-artifacts",
             '"builder=$image_dir/builder.json"',
             '"api=$image_dir/api.json"',
             '"worker=$image_dir/worker.json"',
             "down --volumes --remove-orphans",
             'PYTHON="$python_bin"',
-            '"$api_work_image" "$api_release_image"',
-            '"$worker_work_image" "$worker_release_image"',
+            '--tag "$api_release_image"',
+            '--tag "$worker_release_image"',
         ):
             self.assertIn(required, text)
         for forbidden in (
             r"\bgit\s+push\b",
             r"\bdocker\s+push\b",
             r"\bgh\s+release\s+create\b",
-            r"\bcurl\b",
             r"\bwget\b",
             r"tag\s+hbcb-service-(?:api|worker):dev",
         ):
@@ -143,6 +239,7 @@ class ReleaseWrapperTests(unittest.TestCase):
             "dependency-check",
             "dependency-audit",
             "dependency-scan",
+            "worker-boundary-check",
             "release-static",
             "security-check",
             "release-check",
@@ -151,8 +248,37 @@ class ReleaseWrapperTests(unittest.TestCase):
         self.assertIn("HBCB_INDEX_AUDITED", makefile)
         self.assertIn("env -u HBCB_COMPOSE_BIN", makefile)
         self.assertIn("service-test-image", makefile)
+        self.assertGreaterEqual(
+            makefile.count(
+                'HBCB_DISTRIBUTION_VERSION=$${HBCB_DISTRIBUTION_VERSION:-0.1.0-local}'
+            ),
+            4,
+        )
+        self.assertGreaterEqual(
+            makefile.count('HBCB_SOURCE_REVISION=$${HBCB_SOURCE_REVISION:-uncommitted}'),
+            4,
+        )
+        self.assertNotIn("$(DISTRIBUTION_VERSION)", makefile)
+        self.assertNotIn("$(SOURCE_REVISION)", makefile)
         self.assertIn("tests/service_unit", makefile)
         self.assertIn("/test-exec:rw,nosuid,nodev,exec", makefile)
+        self.assertRegex(
+            makefile,
+            r"(?m)^check:.*\bworker-boundary-check\b",
+        )
+        boundary_recipe = makefile[
+            makefile.index("worker-boundary-image:") : makefile.index("validate:")
+        ]
+        for required in (
+            "--target worker",
+            "--network none",
+            "--read-only",
+            "--cap-drop ALL",
+            "--security-opt no-new-privileges:true",
+            "--user 65532:65532",
+            "tests/security/worker_process_boundary_gate.py",
+        ):
+            self.assertIn(required, boundary_recipe)
 
         builder = (ROOT / "docker" / "builder.Dockerfile").read_text(
             encoding="utf-8"
@@ -178,7 +304,7 @@ class ReleaseWrapperTests(unittest.TestCase):
         test_lock = (ROOT / "docker" / "service-test-requirements.lock").read_text(
             encoding="utf-8"
         )
-        for package in ("httpcore2==2.7.0", "httpx2==2.7.0", "truststore==0.10.4"):
+        for package in ("httpcore2==2.10.0", "httpx2==2.10.0", "truststore==0.10.4"):
             self.assertIn(package, test_lock)
         self.assertEqual(test_lock.count("--hash=sha256:"), 3)
 
@@ -246,6 +372,7 @@ class ReleaseWrapperTests(unittest.TestCase):
             ".github/pull_request_template.md",
             ".github/workflows/dependency-audit.yml",
             "release/dependency-policy.json",
+            "release/vulnerability-policy.json",
             "scripts/dependency-audit",
             "scripts/dependency-lock-from-wheels",
             "scripts/dependency-scan",
@@ -303,10 +430,27 @@ class ReleaseWrapperTests(unittest.TestCase):
                 (ROOT / relative).read_text(encoding="utf-8"),
             )
         for relative in ("docker/builder.Dockerfile", "docker/service.Dockerfile"):
+            dockerfile = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertIn(f"HBCB_DISTRIBUTION_VERSION={version}-local", dockerfile)
             self.assertIn(
-                f'org.opencontainers.image.version="{version}"',
-                (ROOT / relative).read_text(encoding="utf-8"),
+                'org.opencontainers.image.version="${HBCB_DISTRIBUTION_VERSION}"',
+                dockerfile,
             )
+            self.assertIn(
+                'org.opencontainers.image.revision="${HBCB_SOURCE_REVISION}"',
+                dockerfile,
+            )
+        wrapper = (ROOT / "scripts" / "release-check").read_text(encoding="utf-8")
+        self.assertIn('HBCB_DISTRIBUTION_VERSION="$rc_version"', wrapper)
+        self.assertIn('HBCB_SOURCE_REVISION="$source_revision"', wrapper)
+        self.assertGreaterEqual(
+            wrapper.count('--build-arg "HBCB_DISTRIBUTION_VERSION=$rc_version"'),
+            2,
+        )
+        self.assertGreaterEqual(
+            wrapper.count('--build-arg "HBCB_SOURCE_REVISION=$source_revision"'),
+            2,
+        )
         self.assertIn(
             f"[{version}-rc.1]",
             (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"),

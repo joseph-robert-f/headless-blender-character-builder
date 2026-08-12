@@ -1,0 +1,161 @@
+# Destructive orphan-cleanup gate topology.  The wrapper supplies a unique
+# project name, fresh credentials, exact local image IDs, no host ports, and
+# always removes these project-scoped volumes before returning.
+
+x-hardened: &hardened
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
+services:
+  postgres:
+    image: postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8
+    platform: linux/amd64
+    restart: "no"
+    environment:
+      POSTGRES_DB: hbcb
+      POSTGRES_USER: hbcb_orphan_admin
+      POSTGRES_PASSWORD: ${HBCB_ORPHAN_DATABASE_ADMIN_PASSWORD:?set disposable database admin password}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 5s
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [orphan-gate]
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.0
+
+  minio:
+    image: ${HBCB_ORPHAN_MINIO_IMAGE_ID:?set exact local MinIO image ID}
+    platform: linux/amd64
+    restart: "no"
+    environment:
+      MINIO_ROOT_USER: hbcb_orphan_root
+      MINIO_ROOT_PASSWORD: ${HBCB_ORPHAN_MINIO_ROOT_PASSWORD:?set disposable MinIO root password}
+      MINIO_BROWSER: "off"
+      MINIO_UPDATE: "off"
+    command: ["server", "/data", "--address", ":9000"]
+    healthcheck:
+      test: ["CMD-SHELL", "mc alias set health http://127.0.0.1:9000 \"$${MINIO_ROOT_USER}\" \"$${MINIO_ROOT_PASSWORD}\" >/dev/null && mc ready health >/dev/null"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 5s
+    <<: *hardened
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777
+      - /work:rw,nosuid,nodev,noexec,size=16m,mode=0700,uid=65532,gid=65532
+    volumes:
+      - minio-data:/data
+    networks: [orphan-gate]
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.0
+
+  minio-init:
+    image: ${HBCB_ORPHAN_MINIO_IMAGE_ID:?set exact local MinIO image ID}
+    platform: linux/amd64
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/sh", "/opt/hbcb/minio-init.sh"]
+    environment:
+      MINIO_ROOT_USER: hbcb_orphan_root
+      MINIO_ROOT_PASSWORD: ${HBCB_ORPHAN_MINIO_ROOT_PASSWORD:?set disposable MinIO root password}
+      HBCB_DEPLOYMENT_NAMESPACE: local
+      HBCB_STORAGE_API_ACCESS_KEY: hbcb_api_o
+      HBCB_STORAGE_API_SECRET_KEY: ${HBCB_ORPHAN_STORAGE_API_SECRET:?set disposable API storage secret}
+      HBCB_STORAGE_WORKER_ACCESS_KEY: hbcb_worker_o
+      HBCB_STORAGE_WORKER_SECRET_KEY: ${HBCB_ORPHAN_STORAGE_WORKER_SECRET:?set disposable worker storage secret}
+      HBCB_STORAGE_MAINTENANCE_ACCESS_KEY: hbcb_maintenance_o
+      HBCB_STORAGE_MAINTENANCE_SECRET_KEY: ${HBCB_ORPHAN_STORAGE_MAINTENANCE_SECRET:?set disposable maintenance storage secret}
+      HBCB_STORAGE_BUCKET: hbcb-artifacts
+    volumes:
+      - ./compose/minio-init.sh:/opt/hbcb/minio-init.sh:ro
+      - ./compose/minio-api-policy.json:/policies/minio-api-policy.json:ro
+      - ./compose/minio-worker-policy.json:/policies/minio-worker-policy.json:ro
+      - ./compose/minio-maintenance-policy.json:/policies/minio-maintenance-policy.json:ro
+    <<: *hardened
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777
+      - /work:rw,nosuid,nodev,noexec,size=16m,mode=0700,uid=65532,gid=65532
+    networks: [orphan-gate]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.25
+
+  database-init:
+    image: ${HBCB_ORPHAN_SERVICE_IMAGE_ID:?set exact local service-test image ID}
+    platform: linux/amd64
+    entrypoint: ["/usr/bin/python3", "-m", "hbcb_service.initialize_main"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      HBCB_DEPLOYMENT_NAMESPACE: local
+      POSTGRES_DB: hbcb
+      HBCB_DATABASE_ADMIN_URL: postgresql://hbcb_orphan_admin:${HBCB_ORPHAN_DATABASE_ADMIN_PASSWORD}@postgres:5432/hbcb
+      HBCB_DATABASE_MIGRATOR_URL: postgresql://hbcb_orphan_migrator:${HBCB_ORPHAN_DATABASE_MIGRATOR_PASSWORD}@postgres:5432/hbcb
+      HBCB_DATABASE_API_USER: hbcb_orphan_api
+      HBCB_DATABASE_API_PASSWORD: ${HBCB_ORPHAN_DATABASE_API_PASSWORD:?set disposable API database password}
+      HBCB_DATABASE_WORKER_USER: hbcb_orphan_worker
+      HBCB_DATABASE_WORKER_PASSWORD: ${HBCB_ORPHAN_DATABASE_WORKER_PASSWORD:?set disposable worker database password}
+      HBCB_DATABASE_MAINTENANCE_USER: hbcb_orphan_maintenance
+      HBCB_DATABASE_MAINTENANCE_PASSWORD: ${HBCB_ORPHAN_DATABASE_MAINTENANCE_PASSWORD:?set disposable maintenance database password}
+      HBCB_DATABASE_MIGRATOR_USER: hbcb_orphan_migrator
+      HBCB_DATABASE_MIGRATOR_PASSWORD: ${HBCB_ORPHAN_DATABASE_MIGRATOR_PASSWORD:?set disposable migrator database password}
+    <<: *hardened
+    tmpfs:
+      - /work:rw,nosuid,nodev,noexec,size=64m,mode=0700,uid=65532,gid=65532
+    networks: [orphan-gate]
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.5
+
+  gate:
+    image: ${HBCB_ORPHAN_SERVICE_IMAGE_ID:?set exact local service-test image ID}
+    platform: linux/amd64
+    depends_on:
+      database-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    restart: "no"
+    entrypoint: ["/usr/bin/python3"]
+    command: ["tests/service_integration/g8_orphan_minio_gate.py"]
+    environment:
+      HBCB_LIFECYCLE_DESTRUCTIVE_DISPOSABLE: "1"
+      HBCB_DEPLOYMENT_NAMESPACE: local
+      HBCB_G8_POSTGRES_ADMIN_DSN: postgresql://hbcb_orphan_admin:${HBCB_ORPHAN_DATABASE_ADMIN_PASSWORD}@postgres:5432/hbcb
+      HBCB_G8_POSTGRES_DSN: postgresql://hbcb_orphan_maintenance:${HBCB_ORPHAN_DATABASE_MAINTENANCE_PASSWORD}@postgres:5432/hbcb
+      HBCB_STORAGE_INTERNAL_ENDPOINT: minio:9000
+      HBCB_STORAGE_WORKER_ACCESS_KEY: hbcb_worker_o
+      HBCB_STORAGE_WORKER_SECRET_KEY: ${HBCB_ORPHAN_STORAGE_WORKER_SECRET:?set disposable worker storage secret}
+      HBCB_STORAGE_MAINTENANCE_ACCESS_KEY: hbcb_maintenance_o
+      HBCB_STORAGE_MAINTENANCE_SECRET_KEY: ${HBCB_ORPHAN_STORAGE_MAINTENANCE_SECRET:?set disposable maintenance storage secret}
+      HBCB_ORPHAN_EXPECTED_MAINTENANCE_SECRET_SHA256: ${HBCB_ORPHAN_STORAGE_MAINTENANCE_SECRET_SHA256:?set disposable maintenance secret digest}
+      HBCB_STORAGE_BUCKET: hbcb-artifacts
+      HBCB_STORAGE_INTERNAL_SECURE: "false"
+      HBCB_STORAGE_REGION: us-east-1
+    <<: *hardened
+    tmpfs:
+      - /work:rw,nosuid,nodev,noexec,size=128m,mode=0700,uid=65532,gid=65532
+    networks: [orphan-gate]
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+
+networks:
+  orphan-gate:
+    internal: true
+
+volumes:
+  minio-data:
+  postgres-data:

@@ -9,14 +9,19 @@ import json
 import os
 import platform
 import re
+import selectors
+import signal
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.request
+from datetime import date, timedelta
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,20 +40,162 @@ MAX_AUDIT_REPORT_BYTES = 4 * 1024 * 1024
 MAX_OUTPUT_BYTES = 32 * 1024 * 1024
 REPORT_RESERVE_BYTES = 1024 * 1024
 MAX_POLICY_BYTES = 1024 * 1024
+MAX_REGISTRY_MANIFEST_BYTES = 4 * 1024 * 1024
+MAX_DOCKER_INSPECT_BYTES = 4 * 1024 * 1024
+MAX_DOCKER_COMMAND_BYTES = 256 * 1024
+MAX_DOCKER_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
+MAX_DOCKER_ARCHIVE_MEMBERS = 20_000
+MAX_DOCKER_CONFIG_BYTES = 4 * 1024 * 1024
+MAX_DOCKER_MANIFEST_BYTES = 1024 * 1024
+MAX_SUBPROCESS_STDERR_BYTES = 256 * 1024
+PROCESS_TERM_GRACE_SECONDS = 2.0
+PROCESS_KILL_GRACE_SECONDS = 2.0
+PROCESS_GROUP_POLL_SECONDS = 0.02
+PROCESS_SIGNAL_POLL_SECONDS = 0.1
+VULNERABILITY_POLICY_PATH = Path("release/vulnerability-policy.json")
+VULNERABILITY_POLICY_FORMAT = "hbcb-vulnerability-policy/v1"
+MAX_DISPOSITION_DAYS = 90
+MAX_DISPOSITIONS = 500
+MAX_EVIDENCE_BYTES = 4 * 1024 * 1024
+MAX_FINDING_FAMILIES = 50_000
+MAX_PACKAGE_FINDING_FAMILIES = 2_000
+BLOCKING_SEVERITIES = frozenset({"HIGH", "CRITICAL"})
+SEVERITY_ORDER = {
+    "UNRATED": 0,
+    "NONE": 1,
+    "LOW": 2,
+    "MODERATE": 3,
+    "HIGH": 4,
+    "CRITICAL": 5,
+}
+DISPOSITIONS = frozenset({"accepted-risk", "mitigated", "not-affected"})
 SAFE_ID = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
+ADVISORY_ID = re.compile(r"^[A-Z0-9][A-Z0-9._:-]{1,127}$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+DECIMAL_SCORE = re.compile(r"^(?:[0-9]\.[0-9]|10\.0)$")
 SAFE_IMAGE_REFERENCE = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9._/:@+-]{0,510}[A-Za-z0-9])?$"
 )
-LOCAL_IMAGES = (
-    ("builder", "hbcb-dependency-audit-builder:local"),
-    ("minio", "hbcb-dependency-audit-minio:local"),
-    ("api", "hbcb-dependency-audit-api:local"),
-    ("worker", "hbcb-dependency-audit-worker:local"),
+DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+OCI_INDEX_MEDIA_TYPES = frozenset(
+    {
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.oci.image.index.v1+json",
+    }
+)
+OCI_MANIFEST_MEDIA_TYPES = frozenset(
+    {
+        "application/vnd.docker.distribution.manifest.v2+json",
+        "application/vnd.oci.image.manifest.v1+json",
+    }
+)
+OCI_CONFIG_MEDIA_TYPES = frozenset(
+    {
+        "application/vnd.docker.container.image.v1+json",
+        "application/vnd.oci.image.config.v1+json",
+    }
+)
+LOCAL_IMAGE_IDS = ("builder", "minio", "api", "worker")
+LOCAL_SCAN_TOKEN = re.compile(r"^[0-9a-f]{24}$")
+KNOWN_VULNERABILITY_TARGETS = frozenset(
+    {"osv-source"}
+    | {"osv-image-" + identifier for identifier in LOCAL_IMAGE_IDS}
+    | {
+        "osv-image-caddy",
+        "osv-image-docker-base",
+        "osv-image-postgres",
+        "osv-image-redis-server",
+    }
 )
 
 
 class ScanError(RuntimeError):
     pass
+
+
+class TerminationSignal(SystemExit):
+    def __init__(self, signum: int) -> None:
+        self.signum = signum
+        super().__init__(128 + signum)
+
+
+class _TerminationGuard:
+    """Translate default INT/TERM/HUP into pending state outside the handler."""
+
+    def __init__(self) -> None:
+        self.received: Optional[int] = None
+        self.previous: Dict[int, object] = {}
+        self.installed = set()
+        self.defer_nested = False
+
+    def _record(self, signum, _frame) -> None:
+        if self.received is None:
+            self.received = int(signum)
+
+    def __enter__(self) -> "_TerminationGuard":
+        selected_signals = tuple(
+            signum
+            for signum in (
+                signal.SIGINT,
+                getattr(signal, "SIGHUP", None),
+                signal.SIGTERM,
+            )
+            if isinstance(signum, int)
+        )
+        for signum in selected_signals:
+            if signum in self.previous:
+                continue
+            self.previous[signum] = signal.getsignal(signum)
+
+        # A normal nested guard takes temporary ownership so the child process
+        # is torn down promptly. A cleanup-phase parent deliberately retains
+        # ownership, deferring further interrupts until every private tag has
+        # been considered for removal.
+        parents = {
+            getattr(previous, "__self__", None)
+            for previous in self.previous.values()
+            if isinstance(getattr(previous, "__self__", None), _TerminationGuard)
+            and getattr(previous, "__func__", None) is _TerminationGuard._record
+        }
+        for parent in parents:
+            if not parent.defer_nested:
+                parent.raise_if_pending()
+
+        for signum, previous in self.previous.items():
+            parent = getattr(previous, "__self__", None)
+            previous_is_guard = (
+                isinstance(parent, _TerminationGuard)
+                and getattr(previous, "__func__", None) is _TerminationGuard._record
+            )
+            # Respect an embedding application's explicit ignore/custom
+            # handler. Python's normal SIGINT handler is also a CLI default.
+            if (
+                (previous_is_guard and not parent.defer_nested)
+                or previous == signal.SIG_DFL
+                or (
+                    signum == signal.SIGINT
+                    and previous == signal.default_int_handler
+                )
+            ):
+                signal.signal(signum, self._record)
+                self.installed.add(signum)
+        return self
+
+    def __exit__(self, exception_type, _value, _traceback) -> None:
+        for signum, previous in self.previous.items():
+            if signum in self.installed:
+                signal.signal(signum, previous)
+        if exception_type is None:
+            self.raise_if_pending()
+
+    def raise_if_pending(self) -> None:
+        if self.received is not None:
+            if self.received == signal.SIGINT:
+                raise KeyboardInterrupt
+            raise TerminationSignal(self.received)
+
+    def defer_nested_signals_until_exit(self) -> None:
+        self.defer_nested = True
 
 
 def bounded(value: object, maximum: int = 500) -> str:
@@ -58,6 +205,25 @@ def bounded(value: object, maximum: int = 500) -> str:
 
 def write_json(path: Path, document: Mapping[str, object]) -> None:
     path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def strict_json_loads(payload: str) -> object:
+    def object_pairs(pairs):
+        document = {}
+        for key, value in pairs:
+            if key in document:
+                raise ValueError("duplicate JSON key")
+            document[key] = value
+        return document
+
+    def invalid_constant(_value):
+        raise ValueError("non-finite JSON number")
+
+    return json.loads(
+        payload,
+        object_pairs_hook=object_pairs,
+        parse_constant=invalid_constant,
+    )
 
 
 def directory_bytes(directory: Path, exclude: Optional[Path] = None) -> int:
@@ -93,7 +259,7 @@ def expected_external_image_ids(root: Path = ROOT) -> tuple:
                 raise ScanError("dependency policy %s identifier is invalid" % key)
             identifiers.append(identifier)
 
-    local_ids = {item[0] for item in LOCAL_IMAGES}
+    local_ids = set(LOCAL_IMAGE_IDS)
     seen = set()
     for identifier in identifiers:
         if SAFE_ID.fullmatch(identifier) is None:
@@ -129,28 +295,1432 @@ def validate_external_images(raw_images: object, expected_ids: Sequence[str]) ->
     return [{"id": identifier, "reference": images[identifier]} for identifier in sorted(images)]
 
 
+def local_image_references(run_token: Optional[str] = None) -> Tuple[Tuple[str, str], ...]:
+    token = (
+        hashlib.sha256(os.urandom(32)).hexdigest()[:24]
+        if run_token is None
+        else run_token
+    )
+    if not isinstance(token, str) or LOCAL_SCAN_TOKEN.fullmatch(token) is None:
+        raise ScanError("local image scan token is invalid")
+    return tuple(
+        (
+            identifier,
+            "hbcb-dependency-audit-%s:scan-%s" % (identifier, token),
+        )
+        for identifier in LOCAL_IMAGE_IDS
+    )
+
+
+def validate_local_image_references(
+    raw_images: Sequence[Tuple[str, str]],
+) -> Tuple[Tuple[str, str], ...]:
+    if not isinstance(raw_images, (list, tuple)) or len(raw_images) != len(
+        LOCAL_IMAGE_IDS
+    ):
+        raise ScanError("local image inventory is invalid")
+    normalized = []
+    tokens = set()
+    for position, item in enumerate(raw_images):
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            raise ScanError("local image inventory is invalid")
+        identifier, reference = item
+        if identifier != LOCAL_IMAGE_IDS[position] or not isinstance(reference, str):
+            raise ScanError("local image inventory is invalid")
+        match = re.fullmatch(
+            r"hbcb-dependency-audit-%s:scan-([0-9a-f]{24})"
+            % re.escape(identifier),
+            reference,
+        )
+        if match is None or SAFE_IMAGE_REFERENCE.fullmatch(reference) is None:
+            raise ScanError("local image reference is invalid")
+        tokens.add(match.group(1))
+        normalized.append((identifier, reference))
+    if len(tokens) != 1 or len({reference for _identifier, reference in normalized}) != len(
+        normalized
+    ):
+        raise ScanError("local image inventory is inconsistent")
+    return tuple(normalized)
+
+
+def _bounded_text(value: object, label: str, maximum: int = 512) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > maximum
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise ScanError("vulnerability %s is invalid" % label)
+    return value
+
+
+def _advisory_id(value: object) -> str:
+    rendered = _bounded_text(value, "advisory identifier", 128).upper()
+    if ADVISORY_ID.fullmatch(rendered) is None:
+        raise ScanError("vulnerability advisory identifier is invalid")
+    return rendered
+
+
+def _repository_evidence(root: Path, relative: object, expected_sha256: object) -> None:
+    rendered = _bounded_text(relative, "evidence path", 300)
+    path = Path(rendered)
+    if path.is_absolute() or ".." in path.parts or path == VULNERABILITY_POLICY_PATH:
+        raise ScanError("vulnerability disposition evidence path is unsafe")
+    candidate = root / path
+    try:
+        resolved_root = root.resolve()
+        resolved = candidate.resolve()
+        resolved.relative_to(resolved_root)
+        if (
+            candidate.is_symlink()
+            or not candidate.is_file()
+            or candidate.stat().st_size <= 0
+            or candidate.stat().st_size > MAX_EVIDENCE_BYTES
+        ):
+            raise ScanError("vulnerability disposition evidence is unavailable")
+        payload = candidate.read_bytes()
+    except (OSError, ValueError):
+        raise ScanError("vulnerability disposition evidence is unavailable") from None
+    if not isinstance(expected_sha256, str) or SHA256.fullmatch(expected_sha256) is None:
+        raise ScanError("vulnerability disposition evidence digest is invalid")
+    if hashlib.sha256(payload).hexdigest() != expected_sha256:
+        raise ScanError("vulnerability disposition evidence digest is stale")
+
+
+def _policy_date(value: object, label: str) -> date:
+    rendered = _bounded_text(value, label, 10)
+    try:
+        parsed = date.fromisoformat(rendered)
+    except ValueError:
+        raise ScanError("vulnerability disposition %s is invalid" % label) from None
+    if parsed.isoformat() != rendered:
+        raise ScanError("vulnerability disposition %s is invalid" % label)
+    return parsed
+
+
+def _normalize_package(raw: object, *, policy: bool) -> Dict[str, object]:
+    if not isinstance(raw, dict):
+        raise ScanError("vulnerability package identity is invalid")
+    expected = {"ecosystem", "name", "source_revision", "version"}
+    if policy and set(raw) != expected:
+        raise ScanError("vulnerability disposition package identity is not exact")
+    ecosystem = _bounded_text(raw.get("ecosystem"), "package ecosystem", 100)
+    name = _bounded_text(raw.get("name"), "package name", 300)
+    version = _bounded_text(raw.get("version"), "package version", 300)
+    source_revision = raw.get("source_revision") if policy else raw.get("commit")
+    if source_revision is not None:
+        source_revision = _bounded_text(
+            source_revision,
+            "package source revision",
+            300,
+        )
+    return {
+        "ecosystem": ecosystem,
+        "name": name,
+        "source_revision": source_revision,
+        "version": version,
+    }
+
+
+def load_vulnerability_policy(
+    root: Path = ROOT,
+    *,
+    today: Optional[date] = None,
+) -> Mapping[str, object]:
+    path = root / VULNERABILITY_POLICY_PATH
+    try:
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or path.stat().st_size <= 0
+            or path.stat().st_size > MAX_POLICY_BYTES
+        ):
+            raise ScanError("vulnerability policy is missing, linked, empty, or oversized")
+        document = strict_json_loads(path.read_text(encoding="utf-8"))
+    except ScanError:
+        raise
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        raise ScanError("vulnerability policy is not valid JSON") from None
+    if (
+        not isinstance(document, dict)
+        or set(document) != {"default_action", "dispositions", "format"}
+        or document.get("format") != VULNERABILITY_POLICY_FORMAT
+        or document.get("default_action") != "deny"
+    ):
+        raise ScanError("vulnerability policy contract is unsupported")
+    raw_dispositions = document.get("dispositions")
+    if not isinstance(raw_dispositions, list) or len(raw_dispositions) > MAX_DISPOSITIONS:
+        raise ScanError("vulnerability policy dispositions are invalid")
+
+    current = date.today() if today is None else today
+    normalized: List[Dict[str, object]] = []
+    seen = set()
+    disposition_keys = {
+        "advisory_family",
+        "disposition",
+        "evidence",
+        "expires_on",
+        "fixed_versions",
+        "image_identity",
+        "package",
+        "rationale",
+        "reviewed_on",
+        "score",
+        "severity",
+        "target",
+    }
+    for raw in raw_dispositions:
+        if not isinstance(raw, dict) or set(raw) != disposition_keys:
+            raise ScanError("vulnerability disposition contract is unsupported")
+        target = _bounded_text(raw.get("target"), "disposition target", 80)
+        if target not in KNOWN_VULNERABILITY_TARGETS:
+            raise ScanError("vulnerability disposition target is invalid")
+        image_identity = raw.get("image_identity")
+        if target == "osv-source":
+            if image_identity is not None:
+                raise ScanError("source vulnerability disposition has an image identity")
+        elif not isinstance(image_identity, str) or DIGEST.fullmatch(image_identity) is None:
+            raise ScanError("image vulnerability disposition identity is invalid")
+        package = _normalize_package(raw.get("package"), policy=True)
+        family_raw = raw.get("advisory_family")
+        if not isinstance(family_raw, list) or not 1 <= len(family_raw) <= 64:
+            raise ScanError("vulnerability disposition advisory family is invalid")
+        family = tuple(sorted({_advisory_id(item) for item in family_raw}))
+        if list(family) != family_raw:
+            raise ScanError("vulnerability disposition advisory family is not canonical")
+        severity = raw.get("severity")
+        if not isinstance(severity, str) or severity not in BLOCKING_SEVERITIES:
+            raise ScanError("vulnerability disposition severity is not blocking")
+        score = raw.get("score")
+        if score is not None:
+            _severity_from_score(score)
+        fixed_versions_raw = raw.get("fixed_versions")
+        if not isinstance(fixed_versions_raw, list) or len(fixed_versions_raw) > 256:
+            raise ScanError("vulnerability disposition fixed versions are invalid")
+        fixed_versions = tuple(
+            sorted({_bounded_text(item, "fixed version", 300) for item in fixed_versions_raw})
+        )
+        if list(fixed_versions) != fixed_versions_raw:
+            raise ScanError("vulnerability disposition fixed versions are not canonical")
+        disposition = raw.get("disposition")
+        if not isinstance(disposition, str) or disposition not in DISPOSITIONS:
+            raise ScanError("vulnerability disposition decision is invalid")
+        reviewed_on = _policy_date(raw.get("reviewed_on"), "reviewed_on")
+        expires_on = _policy_date(raw.get("expires_on"), "expires_on")
+        if (
+            reviewed_on > current
+            or expires_on <= current
+            or expires_on < reviewed_on
+            or expires_on - reviewed_on > timedelta(days=MAX_DISPOSITION_DAYS)
+        ):
+            raise ScanError("vulnerability disposition review window is invalid or expired")
+        rationale = _bounded_text(raw.get("rationale"), "disposition rationale", 1000)
+        if len(rationale) < 20:
+            raise ScanError("vulnerability disposition rationale is too short")
+        evidence = raw.get("evidence")
+        if not isinstance(evidence, list) or not 1 <= len(evidence) <= 10:
+            raise ScanError("vulnerability disposition evidence is required")
+        evidence_paths = set()
+        normalized_evidence = []
+        for item in evidence:
+            if not isinstance(item, dict) or set(item) != {"path", "sha256"}:
+                raise ScanError("vulnerability disposition evidence is invalid")
+            evidence_path = item.get("path")
+            if not isinstance(evidence_path, str):
+                raise ScanError("vulnerability disposition evidence path is invalid")
+            if evidence_path in evidence_paths:
+                raise ScanError("vulnerability disposition evidence is duplicated")
+            _repository_evidence(root, evidence_path, item.get("sha256"))
+            evidence_paths.add(evidence_path)
+            normalized_evidence.append(dict(item))
+        identity = (
+            target,
+            image_identity,
+            package["ecosystem"],
+            package["name"],
+            package["version"],
+            package["source_revision"],
+            family,
+            score,
+            fixed_versions,
+        )
+        if identity in seen:
+            raise ScanError("vulnerability disposition is duplicated")
+        seen.add(identity)
+        normalized.append(
+            {
+                "advisory_family": list(family),
+                "disposition": disposition,
+                "evidence": normalized_evidence,
+                "expires_on": expires_on.isoformat(),
+                "fixed_versions": list(fixed_versions),
+                "image_identity": image_identity,
+                "package": package,
+                "rationale": rationale,
+                "reviewed_on": reviewed_on.isoformat(),
+                "score": score,
+                "severity": severity,
+                "target": target,
+            }
+        )
+    return {
+        "default_action": "deny",
+        "dispositions": normalized,
+        "format": VULNERABILITY_POLICY_FORMAT,
+    }
+
+
+def _severity_from_score(raw: object) -> str:
+    if raw == "":
+        return "UNRATED"
+    if not isinstance(raw, str) or DECIMAL_SCORE.fullmatch(raw) is None:
+        raise ScanError("vulnerability group severity score is invalid")
+    score = float(raw)
+    if score == 0:
+        return "NONE"
+    if score < 4:
+        return "LOW"
+    if score < 7:
+        return "MODERATE"
+    if score < 9:
+        return "HIGH"
+    return "CRITICAL"
+
+
+def _matching_fixed_versions(
+    raw: Mapping[str, object],
+    package: Mapping[str, object],
+) -> set:
+    fixed = set()
+    affected = raw.get("affected", [])
+    if affected is None:
+        affected = []
+    if not isinstance(affected, list):
+        raise ScanError("vulnerability affected-package metadata is invalid")
+    for item in affected:
+        if not isinstance(item, dict):
+            raise ScanError("vulnerability affected-package metadata is invalid")
+        affected_package = item.get("package")
+        if not isinstance(affected_package, dict):
+            raise ScanError("vulnerability affected-package identity is invalid")
+        if (
+            affected_package.get("ecosystem") != package["ecosystem"]
+            or affected_package.get("name") != package["name"]
+        ):
+            continue
+        ranges = item.get("ranges", [])
+        if ranges is None:
+            ranges = []
+        if not isinstance(ranges, list):
+            raise ScanError("vulnerability affected ranges are invalid")
+        for affected_range in ranges:
+            if not isinstance(affected_range, dict):
+                raise ScanError("vulnerability affected range is invalid")
+            events = affected_range.get("events", [])
+            if not isinstance(events, list):
+                raise ScanError("vulnerability affected range events are invalid")
+            for event in events:
+                if not isinstance(event, dict):
+                    raise ScanError("vulnerability affected range event is invalid")
+                fixed_version = event.get("fixed")
+                if fixed_version is not None:
+                    fixed.add(_bounded_text(fixed_version, "fixed version", 300))
+    return fixed
+
+
+def _max_severity(values: Iterable[str]) -> str:
+    return max(values, key=lambda value: SEVERITY_ORDER[value], default="UNRATED")
+
+
+def _advisory_labeled_severity(raw: Mapping[str, object]) -> str:
+    severities = [_severity_from_score("")]
+    database = raw.get("database_specific")
+    if database is not None:
+        if not isinstance(database, dict):
+            raise ScanError("vulnerability database severity metadata is invalid")
+        label = database.get("severity")
+        if label is not None:
+            if not isinstance(label, str):
+                raise ScanError("vulnerability database severity label is invalid")
+            mapped = {
+                "CRITICAL": "CRITICAL",
+                "HIGH": "HIGH",
+                "MODERATE": "MODERATE",
+                "MEDIUM": "MODERATE",
+                "LOW": "LOW",
+                "NEGLIGIBLE": "LOW",
+                "NONE": "NONE",
+                "UNKNOWN": "UNRATED",
+                "UNRATED": "UNRATED",
+            }.get(label.upper())
+            if mapped is None:
+                raise ScanError("vulnerability database severity label is unsupported")
+            severities.append(mapped)
+    affected = raw.get("affected")
+    if affected is not None:
+        if not isinstance(affected, list):
+            raise ScanError("vulnerability affected-package metadata is invalid")
+        for item in affected:
+            if not isinstance(item, dict):
+                raise ScanError("vulnerability affected-package metadata is invalid")
+            ecosystem = item.get("ecosystem_specific")
+            if ecosystem is None:
+                continue
+            if not isinstance(ecosystem, dict):
+                raise ScanError("vulnerability ecosystem severity metadata is invalid")
+            urgency = ecosystem.get("urgency")
+            if urgency is None:
+                continue
+            if not isinstance(urgency, str):
+                raise ScanError("vulnerability ecosystem urgency is invalid")
+            mapped = {
+                "high": "HIGH",
+                "medium": "MODERATE",
+                "moderate": "MODERATE",
+                "low": "LOW",
+                "unimportant": "LOW",
+                "negligible": "LOW",
+                "none": "NONE",
+                "not affected": "NONE",
+                "not yet assigned": "UNRATED",
+                "end-of-life": "UNRATED",
+                "unknown": "UNRATED",
+            }.get(urgency.lower())
+            if mapped is None:
+                raise ScanError("vulnerability ecosystem urgency is unsupported")
+            severities.append(mapped)
+    raw_scores = raw.get("severity")
+    if raw_scores is not None:
+        if not isinstance(raw_scores, list):
+            raise ScanError("vulnerability severity vectors are invalid")
+        for item in raw_scores:
+            if not isinstance(item, dict):
+                raise ScanError("vulnerability severity vector is invalid")
+            score_type = item.get("type")
+            score = item.get("score")
+            prefixes = {
+                "CVSS_V2": "CVSS:2.0/",
+                "CVSS_V3": "CVSS:3.",
+                "CVSS_V4": "CVSS:4.0/",
+            }
+            if (
+                not isinstance(score_type, str)
+                or score_type not in prefixes
+                or not isinstance(score, str)
+                or len(score) > 1000
+                or not score.startswith(prefixes[score_type])
+            ):
+                raise ScanError("vulnerability severity vector is unsupported")
+    return _max_severity(severities)
+
+
+def _merge_observation(
+    observations: List[Dict[str, object]],
+    candidate: Dict[str, object],
+) -> None:
+    candidate_family = set(candidate["advisory_family"])
+    merged = []
+    for existing in observations:
+        if existing["package"] == candidate["package"] and candidate_family.intersection(
+            existing["advisory_family"]
+        ):
+            if (
+                existing["severity"] != candidate["severity"]
+                or existing["score"] != candidate["score"]
+                or existing["fixed_versions"] != candidate["fixed_versions"]
+            ):
+                raise ScanError("vulnerability advisory family snapshot conflicts")
+            candidate_family.update(existing["advisory_family"])
+        else:
+            merged.append(existing)
+    candidate["advisory_family"] = sorted(candidate_family)
+    merged.append(candidate)
+    observations[:] = merged
+
+
+def normalize_vulnerability_report(
+    document: object,
+    target: str,
+) -> List[Dict[str, object]]:
+    if (
+        not isinstance(target, str)
+        or SAFE_ID.fullmatch(target) is None
+        or not target.startswith("osv-")
+    ):
+        raise ScanError("vulnerability scan target is invalid")
+    if not isinstance(document, dict) or not isinstance(document.get("results"), list):
+        raise ScanError("vulnerability report contract is invalid")
+    observation_buckets: Dict[Tuple[object, ...], List[Dict[str, object]]] = {}
+    parsed_groups = 0
+    for result in document["results"]:
+        if not isinstance(result, dict) or not isinstance(result.get("packages"), list):
+            raise ScanError("vulnerability report result is invalid")
+        for item in result["packages"]:
+            if not isinstance(item, dict):
+                raise ScanError("vulnerability report package is invalid")
+            package = _normalize_package(item.get("package"), policy=False)
+            package_key = (
+                package["ecosystem"],
+                package["name"],
+                package["version"],
+                package["source_revision"],
+            )
+            observations = observation_buckets.setdefault(package_key, [])
+            vulnerabilities = item.get("vulnerabilities")
+            groups = item.get("groups")
+            if not isinstance(vulnerabilities, list) or not isinstance(groups, list):
+                raise ScanError("vulnerability report package findings are invalid")
+            advisory_by_id: Dict[str, Mapping[str, object]] = {}
+            aliases_by_id: Dict[str, set] = {}
+            for advisory in vulnerabilities:
+                if not isinstance(advisory, dict):
+                    raise ScanError("vulnerability advisory is invalid")
+                identifier = _advisory_id(advisory.get("id"))
+                if identifier in advisory_by_id:
+                    raise ScanError("vulnerability advisory is duplicated")
+                aliases = advisory.get("aliases", [])
+                if aliases is None:
+                    aliases = []
+                upstream = advisory.get("upstream", [])
+                if upstream is None:
+                    upstream = []
+                if (
+                    not isinstance(aliases, list)
+                    or not isinstance(upstream, list)
+                    or len(aliases) + len(upstream) > 64
+                ):
+                    raise ScanError("vulnerability advisory aliases are invalid")
+                normalized_aliases = {
+                    _advisory_id(alias) for alias in aliases + upstream
+                }
+                normalized_aliases.add(identifier)
+                advisory_by_id[identifier] = advisory
+                aliases_by_id[identifier] = normalized_aliases
+            covered = set()
+            group_families = []
+            for group in groups:
+                if not isinstance(group, dict):
+                    raise ScanError("vulnerability advisory group is invalid")
+                identifiers = group.get("ids")
+                aliases = group.get("aliases")
+                if (
+                    not isinstance(identifiers, list)
+                    or not identifiers
+                    or not isinstance(aliases, list)
+                    or not aliases
+                    or len(identifiers) > 64
+                    or len(aliases) > 64
+                ):
+                    raise ScanError("vulnerability advisory group is invalid")
+                normalized_ids = {_advisory_id(identifier) for identifier in identifiers}
+                family = {_advisory_id(alias) for alias in aliases}
+                family.update(normalized_ids)
+                if not normalized_ids.issubset(advisory_by_id) or covered.intersection(
+                    normalized_ids
+                ):
+                    raise ScanError("vulnerability advisory groups are inconsistent")
+                if any(not aliases_by_id[identifier].issubset(family) for identifier in normalized_ids):
+                    raise ScanError("vulnerability advisory family is incomplete")
+                if any(family.intersection(other) for other in group_families):
+                    raise ScanError("vulnerability advisory families overlap")
+                covered.update(normalized_ids)
+                group_families.append(family)
+                raw_score = group.get("max_severity")
+                score_severity = _severity_from_score(raw_score)
+                labeled_severities = [
+                    _advisory_labeled_severity(advisory_by_id[identifier])
+                    for identifier in normalized_ids
+                ]
+                if raw_score == "" and any(
+                    advisory_by_id[identifier].get("severity")
+                    for identifier in normalized_ids
+                ):
+                    raise ScanError("vulnerability group omitted a vector severity score")
+                # Distro urgency is additive evidence, not an override: a lower
+                # Debian label must never downgrade OSV-Scanner's group score.
+                severity = _max_severity([score_severity] + labeled_severities)
+                fixed_versions = set()
+                for identifier in normalized_ids:
+                    fixed_versions.update(
+                        _matching_fixed_versions(advisory_by_id[identifier], package)
+                    )
+                _merge_observation(
+                    observations,
+                    {
+                        "advisory_family": sorted(family),
+                        "fixed_versions": sorted(fixed_versions),
+                        "package": package,
+                        "score": None if raw_score == "" else raw_score,
+                        "severity": severity,
+                        "target": target,
+                    },
+                )
+                parsed_groups += 1
+                if (
+                    parsed_groups > MAX_FINDING_FAMILIES
+                    or len(observations) > MAX_PACKAGE_FINDING_FAMILIES
+                ):
+                    raise ScanError("vulnerability report has too many finding families")
+            if covered != set(advisory_by_id):
+                raise ScanError("vulnerability advisory group coverage is incomplete")
+    flattened = [
+        observation
+        for observations in observation_buckets.values()
+        for observation in observations
+    ]
+    if len(flattened) > MAX_FINDING_FAMILIES:
+        raise ScanError("vulnerability report has too many finding families")
+    return sorted(
+        flattened,
+        key=lambda item: (
+            str(item["package"]["ecosystem"]),
+            str(item["package"]["name"]),
+            str(item["package"]["version"]),
+            tuple(item["advisory_family"]),
+        ),
+    )
+
+
+def evaluate_vulnerability_report(
+    document: object,
+    target: str,
+    policy: Mapping[str, object],
+    image_identity: Optional[str] = None,
+) -> Mapping[str, object]:
+    observations = normalize_vulnerability_report(document, target)
+    if target == "osv-source":
+        if image_identity is not None:
+            raise ScanError("source vulnerability scan has an image identity")
+    elif not isinstance(image_identity, str) or DIGEST.fullmatch(image_identity) is None:
+        raise ScanError("image vulnerability scan identity is invalid")
+    dispositions = policy.get("dispositions")
+    if (
+        policy.get("format") != VULNERABILITY_POLICY_FORMAT
+        or policy.get("default_action") != "deny"
+        or not isinstance(dispositions, list)
+    ):
+        raise ScanError("vulnerability policy was not validated")
+    disposition_index = {}
+    for disposition in dispositions:
+        if not isinstance(disposition, dict):
+            raise ScanError("vulnerability policy was not validated")
+        package = disposition.get("package")
+        family = disposition.get("advisory_family")
+        if not isinstance(package, dict) or not isinstance(family, list):
+            raise ScanError("vulnerability policy was not validated")
+        key = (
+            disposition.get("target"),
+            disposition.get("image_identity"),
+            package.get("ecosystem"),
+            package.get("name"),
+            package.get("version"),
+            package.get("source_revision"),
+            tuple(family),
+            disposition.get("score"),
+            tuple(disposition.get("fixed_versions", [])),
+            disposition.get("severity"),
+        )
+        disposition_index[key] = disposition
+    severity_counts = {name: 0 for name in SEVERITY_ORDER}
+    blocking = 0
+    dispositioned = 0
+    for observation in observations:
+        severity = str(observation["severity"])
+        severity_counts[severity] += 1
+        if severity not in BLOCKING_SEVERITIES:
+            continue
+        package = observation["package"]
+        key = (
+            target,
+            image_identity,
+            package["ecosystem"],
+            package["name"],
+            package["version"],
+            package["source_revision"],
+            tuple(observation["advisory_family"]),
+            observation["score"],
+            tuple(observation["fixed_versions"]),
+            severity,
+        )
+        if key in disposition_index:
+            dispositioned += 1
+        else:
+            blocking += 1
+    return {
+        "blocking": blocking,
+        "dispositioned": dispositioned,
+        "families": len(observations),
+        "severity": severity_counts,
+        "status": "findings" if blocking else "pass",
+    }
+
+
 def run(
     command: Sequence[str],
     cwd: Path = ROOT,
     quiet: bool = False,
     timeout: int = 900,
 ) -> int:
+    with _TerminationGuard() as termination:
+        termination.raise_if_pending()
+        try:
+            process = subprocess.Popen(
+                list(command),
+                cwd=str(cwd),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL if quiet else None,
+                stderr=subprocess.DEVNULL if quiet else None,
+                env=dict(os.environ, LC_ALL="C", PYTHONDONTWRITEBYTECODE="1"),
+                start_new_session=True,
+            )
+        except OSError:
+            termination.raise_if_pending()
+            return 127
+        deadline = time.monotonic() + timeout
+        try:
+            while True:
+                termination.raise_if_pending()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return 124 if _terminate_process(process) else 127
+                try:
+                    code = process.wait(
+                        timeout=min(PROCESS_SIGNAL_POLL_SECONDS, remaining)
+                    )
+                except subprocess.TimeoutExpired:
+                    continue
+                termination.raise_if_pending()
+                return code
+        except BaseException:
+            _terminate_process(process)
+            raise
+
+
+def _process_group_exists(process_group: int) -> bool:
     try:
-        completed = subprocess.run(
-            list(command),
-            cwd=str(cwd),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE if quiet else None,
-            stderr=subprocess.PIPE if quiet else None,
-            check=False,
-            env=dict(os.environ, LC_ALL="C", PYTHONDONTWRITEBYTECODE="1"),
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        return 124
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return False
+    except (OSError, PermissionError):
+        # An unexpected permissions/OS error cannot prove that the group is
+        # gone, so teardown must continue and ultimately fail closed.
+        return True
+    return True
+
+
+def _wait_for_process_group_exit(
+    process: subprocess.Popen,
+    deadline: float,
+) -> bool:
+    while True:
+        try:
+            process.poll()
+        except OSError:
+            pass
+        if not _process_group_exists(process.pid):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(PROCESS_GROUP_POLL_SECONDS, remaining))
+
+
+def _signal_process_group(process: subprocess.Popen, selected_signal: int) -> None:
+    try:
+        os.killpg(process.pid, selected_signal)
+        return
+    except ProcessLookupError:
+        return
     except OSError:
-        return 127
-    return completed.returncode
+        # Retain a direct-child fallback, but group-existence polling below
+        # still refuses to claim success while descendants remain.
+        try:
+            if selected_signal == signal.SIGKILL:
+                process.kill()
+            else:
+                process.terminate()
+        except OSError:
+            pass
+
+
+def _terminate_process(process: subprocess.Popen) -> bool:
+    """Boundedly stop the entire new-session process group and reap its leader."""
+
+    _signal_process_group(process, signal.SIGTERM)
+    group_gone = _wait_for_process_group_exit(
+        process,
+        time.monotonic() + PROCESS_TERM_GRACE_SECONDS,
+    )
+    if not group_gone:
+        _signal_process_group(process, signal.SIGKILL)
+        group_gone = _wait_for_process_group_exit(
+            process,
+            time.monotonic() + PROCESS_KILL_GRACE_SECONDS,
+        )
+
+    try:
+        leader_reaped = process.poll() is not None
+    except OSError:
+        leader_reaped = False
+    if not leader_reaped:
+        try:
+            process.wait(timeout=PROCESS_KILL_GRACE_SECONDS)
+            leader_reaped = True
+        except (OSError, subprocess.TimeoutExpired):
+            try:
+                leader_reaped = process.poll() is not None
+            except OSError:
+                leader_reaped = False
+    return group_gone and leader_reaped
+
+
+def _run_bounded_process(
+    command: Sequence[str],
+    *,
+    label: str,
+    stdout_limit: int,
+    timeout: int,
+    stdout_file=None,
+) -> bytes:
+    """Run a trusted command without permitting unbounded pipe or file output."""
+
+    if stdout_limit <= 0 or timeout <= 0:
+        raise ScanError(label + " bounds are invalid")
+    with _TerminationGuard() as termination:
+        termination.raise_if_pending()
+        try:
+            process = subprocess.Popen(
+                list(command),
+                cwd=str(ROOT),
+                env=dict(os.environ, LC_ALL="C", PYTHONDONTWRITEBYTECODE="1"),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+        except OSError as failure:
+            termination.raise_if_pending()
+            raise ScanError(label + " could not start") from failure
+        if process.stdout is None or process.stderr is None:
+            _terminate_process(process)
+            raise ScanError(label + " pipes were unavailable")
+
+        selector = None
+        output = bytearray()
+        totals = {"stdout": 0, "stderr": 0}
+        deadline = time.monotonic() + timeout
+        try:
+            selector = selectors.DefaultSelector()
+            selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+            selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+            while selector.get_map():
+                termination.raise_if_pending()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ScanError(label + " timed out")
+                events = selector.select(
+                    min(remaining, PROCESS_SIGNAL_POLL_SECONDS)
+                )
+                termination.raise_if_pending()
+                for key, _mask in events:
+                    stream_name = str(key.data)
+                    try:
+                        chunk = os.read(key.fileobj.fileno(), 64 * 1024)
+                    except OSError as failure:
+                        raise ScanError(label + " output could not be read") from failure
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    totals[stream_name] += len(chunk)
+                    limit = (
+                        stdout_limit
+                        if stream_name == "stdout"
+                        else MAX_SUBPROCESS_STDERR_BYTES
+                    )
+                    if totals[stream_name] > limit:
+                        raise ScanError(label + " output exceeded its size limit")
+                    if stream_name == "stdout":
+                        if stdout_file is None:
+                            output.extend(chunk)
+                        else:
+                            stdout_file.write(chunk)
+            while True:
+                termination.raise_if_pending()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ScanError(label + " timed out")
+                try:
+                    code = process.wait(
+                        timeout=min(PROCESS_SIGNAL_POLL_SECONDS, remaining)
+                    )
+                except subprocess.TimeoutExpired:
+                    continue
+                termination.raise_if_pending()
+                break
+            if code != 0:
+                raise ScanError(label + " failed with exit %d" % code)
+        except BaseException:
+            _terminate_process(process)
+            raise
+        finally:
+            if selector is not None:
+                selector.close()
+            process.stdout.close()
+            process.stderr.close()
+        return bytes(output)
+
+
+def run_bounded_capture(
+    command: Sequence[str],
+    *,
+    label: str,
+    maximum: int,
+    timeout: int,
+) -> bytes:
+    return _run_bounded_process(
+        command,
+        label=label,
+        stdout_limit=maximum,
+        timeout=timeout,
+    )
+
+
+def _bind_image_identity(identity: Mapping[str, object]) -> Dict[str, object]:
+    if "policy_digest" in identity:
+        raise ScanError("image identity contains a reserved policy digest")
+    try:
+        canonical = json.dumps(
+            identity,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("ascii", "strict")
+    except (TypeError, UnicodeError, ValueError, RecursionError):
+        raise ScanError("image identity metadata is invalid") from None
+    if len(canonical) > MAX_POLICY_BYTES:
+        raise ScanError("image identity metadata exceeded its size limit")
+    result = dict(identity)
+    result["policy_digest"] = "sha256:" + hashlib.sha256(canonical).hexdigest()
+    return result
+
+
+def _manifest_document(payload: bytes, label: str) -> Mapping[str, object]:
+    try:
+        document = strict_json_loads(payload.decode("utf-8", "strict"))
+    except (UnicodeError, ValueError, RecursionError):
+        raise ScanError(label + " metadata is not valid JSON") from None
+    if not isinstance(document, dict) or document.get("schemaVersion") != 2:
+        raise ScanError(label + " metadata contract is invalid")
+    return document
+
+
+def _descriptor_digest(raw: object, label: str) -> str:
+    if not isinstance(raw, str) or DIGEST.fullmatch(raw) is None:
+        raise ScanError(label + " digest is invalid")
+    return raw
+
+
+def _validate_descriptor(
+    raw: object,
+    label: str,
+    maximum: int = MAX_DOCKER_ARCHIVE_BYTES,
+) -> Mapping[str, object]:
+    if not isinstance(raw, dict):
+        raise ScanError(label + " descriptor is invalid")
+    _descriptor_digest(raw.get("digest"), label)
+    size = raw.get("size")
+    if (
+        not isinstance(size, int)
+        or isinstance(size, bool)
+        or size <= 0
+        or size > maximum
+    ):
+        raise ScanError(label + " descriptor size is invalid")
+    media_type = raw.get("mediaType")
+    if (
+        not isinstance(media_type, str)
+        or not media_type
+        or len(media_type) > 200
+        or any(ord(character) < 32 or ord(character) == 127 for character in media_type)
+    ):
+        raise ScanError(label + " descriptor media type is invalid")
+    return raw
+
+
+def _select_linux_amd64_manifest(
+    payload: bytes,
+    requested_digest: str,
+) -> Tuple[str, Optional[int], bytes]:
+    if "sha256:" + hashlib.sha256(payload).hexdigest() != requested_digest:
+        raise ScanError("pinned external image manifest digest did not match")
+    document = _manifest_document(payload, "pinned external image manifest")
+    media_type = document.get("mediaType")
+    if media_type in OCI_MANIFEST_MEDIA_TYPES:
+        if "manifests" in document:
+            raise ScanError("pinned external image manifest shape is ambiguous")
+        return requested_digest, None, payload
+    if media_type not in OCI_INDEX_MEDIA_TYPES:
+        raise ScanError("pinned external image media type is unsupported")
+    manifests = document.get("manifests")
+    if not isinstance(manifests, list) or not 1 <= len(manifests) <= 4096:
+        raise ScanError("pinned external image index is invalid")
+    selected: List[Mapping[str, object]] = []
+    observed_digests = set()
+    for position, raw in enumerate(manifests):
+        descriptor = _validate_descriptor(
+            raw,
+            "pinned external image index entry %d" % position,
+            MAX_REGISTRY_MANIFEST_BYTES,
+        )
+        descriptor_digest = str(descriptor["digest"])
+        if descriptor_digest in observed_digests:
+            raise ScanError("pinned external image index contains duplicate descriptors")
+        observed_digests.add(descriptor_digest)
+        platform_document = descriptor.get("platform")
+        if not isinstance(platform_document, dict):
+            raise ScanError("pinned external image platform metadata is invalid")
+        image_os = platform_document.get("os")
+        architecture = platform_document.get("architecture")
+        variant = platform_document.get("variant")
+        if (
+            not isinstance(image_os, str)
+            or not image_os
+            or len(image_os) > 100
+            or not isinstance(architecture, str)
+            or not architecture
+            or len(architecture) > 100
+            or (variant is not None and (not isinstance(variant, str) or len(variant) > 100))
+        ):
+            raise ScanError("pinned external image platform metadata is invalid")
+        if image_os == "linux" and architecture == "amd64" and variant in (None, "", "v1"):
+            if descriptor.get("mediaType") not in OCI_MANIFEST_MEDIA_TYPES:
+                raise ScanError("linux/amd64 external image descriptor is not an image manifest")
+            selected.append(descriptor)
+    if len(selected) != 1:
+        raise ScanError("pinned external image index does not select exactly one linux/amd64 manifest")
+    return (
+        str(selected[0]["digest"]),
+        int(selected[0]["size"]),
+        b"",
+    )
+
+
+def _image_config_digest(
+    payload: bytes,
+    manifest_digest: str,
+    expected_size: Optional[int],
+) -> str:
+    if "sha256:" + hashlib.sha256(payload).hexdigest() != manifest_digest:
+        raise ScanError("selected external image manifest digest did not match")
+    if expected_size is not None and len(payload) != expected_size:
+        raise ScanError("selected external image manifest size did not match")
+    document = _manifest_document(payload, "selected external image manifest")
+    if document.get("mediaType") not in OCI_MANIFEST_MEDIA_TYPES or "manifests" in document:
+        raise ScanError("selected external image manifest contract is invalid")
+    config = _validate_descriptor(
+        document.get("config"),
+        "selected external image config",
+        MAX_DOCKER_CONFIG_BYTES,
+    )
+    if config.get("mediaType") not in OCI_CONFIG_MEDIA_TYPES:
+        raise ScanError("selected external image config media type is unsupported")
+    layers = document.get("layers")
+    if not isinstance(layers, list) or len(layers) > MAX_DOCKER_ARCHIVE_MEMBERS:
+        raise ScanError("selected external image layers are invalid")
+    for position, layer in enumerate(layers):
+        _validate_descriptor(layer, "selected external image layer %d" % position)
+    return str(config["digest"])
+
+
+def _inspect_external_image(
+    reference: str,
+    requested_digest: str,
+    selected_digest: str,
+    config_digest: str,
+) -> None:
+    payload = run_bounded_capture(
+        ["docker", "image", "inspect", reference],
+        label="external image inspection",
+        maximum=MAX_DOCKER_INSPECT_BYTES,
+        timeout=60,
+    )
+    try:
+        document = strict_json_loads(payload.decode("utf-8", "strict"))
+    except (UnicodeError, ValueError, RecursionError):
+        raise ScanError("external image inspection metadata is invalid") from None
+    if not isinstance(document, list) or len(document) != 1 or not isinstance(document[0], dict):
+        raise ScanError("external image inspection metadata is invalid")
+    image = document[0]
+    if image.get("Os") != "linux" or image.get("Architecture") != "amd64":
+        raise ScanError("external image runtime platform is not linux/amd64")
+    image_id = image.get("Id")
+    if image_id not in {config_digest, selected_digest}:
+        raise ScanError("external image runtime config digest did not match")
+    descriptor = image.get("Descriptor")
+    if descriptor is not None:
+        if not isinstance(descriptor, dict):
+            raise ScanError("external image runtime descriptor is invalid")
+        if _descriptor_digest(
+            descriptor.get("digest"),
+            "external image runtime descriptor",
+        ) != selected_digest:
+            raise ScanError("external image runtime descriptor did not match")
+    elif image_id != config_digest:
+        raise ScanError("external image runtime descriptor is unavailable")
+    repo_digests = image.get("RepoDigests")
+    if not isinstance(repo_digests, list) or not repo_digests:
+        raise ScanError("external image repository digest metadata is invalid")
+    observed = set()
+    for item in repo_digests:
+        if not isinstance(item, str) or item.count("@") != 1:
+            raise ScanError("external image repository digest metadata is invalid")
+        repository, digest = item.rsplit("@", 1)
+        if not repository or DIGEST.fullmatch(digest) is None:
+            raise ScanError("external image repository digest metadata is invalid")
+        observed.add(digest)
+    if not observed.intersection({requested_digest, selected_digest}):
+        raise ScanError("external image repository digest did not match")
+
+
+def _safe_archive_member(name: object) -> str:
+    if not isinstance(name, str) or not name or len(name) > 500:
+        raise ScanError("external image archive member name is invalid")
+    path = Path(name)
+    if path.is_absolute() or ".." in path.parts or "\\" in name:
+        raise ScanError("external image archive member name is unsafe")
+    return path.as_posix()
+
+
+def _read_docker_archive_config(archive: Path) -> Tuple[str, Mapping[str, object]]:
+    try:
+        with tarfile.open(archive, mode="r:") as handle:
+            members = []
+            for member in handle:
+                members.append(member)
+                if len(members) > MAX_DOCKER_ARCHIVE_MEMBERS:
+                    raise ScanError("external image archive member inventory is invalid")
+            if not 1 <= len(members) <= MAX_DOCKER_ARCHIVE_MEMBERS:
+                raise ScanError("external image archive member inventory is invalid")
+            by_name = {}
+            for member in members:
+                name = _safe_archive_member(member.name)
+                if name in by_name or (not member.isfile() and not member.isdir()):
+                    raise ScanError("external image archive member inventory is invalid")
+                by_name[name] = member
+            manifest_member = by_name.get("manifest.json")
+            if (
+                manifest_member is None
+                or not manifest_member.isfile()
+                or manifest_member.size <= 0
+                or manifest_member.size > MAX_DOCKER_MANIFEST_BYTES
+            ):
+                raise ScanError("external image archive manifest is invalid")
+            manifest_stream = handle.extractfile(manifest_member)
+            if manifest_stream is None:
+                raise ScanError("external image archive manifest is unavailable")
+            manifest_payload = manifest_stream.read(MAX_DOCKER_MANIFEST_BYTES + 1)
+            manifest_stream.close()
+            manifest = strict_json_loads(manifest_payload.decode("utf-8", "strict"))
+            if not isinstance(manifest, list) or len(manifest) != 1 or not isinstance(manifest[0], dict):
+                raise ScanError("external image archive manifest contract is invalid")
+            config_name = _safe_archive_member(manifest[0].get("Config"))
+            classic_config = re.fullmatch(r"([0-9a-f]{64})\.json", config_name)
+            oci_config = re.fullmatch(r"blobs/sha256/([0-9a-f]{64})", config_name)
+            config_match = classic_config or oci_config
+            if config_match is None:
+                raise ScanError("external image archive config identity did not match")
+            config_digest = "sha256:" + config_match.group(1)
+            layers = manifest[0].get("Layers")
+            if (
+                not isinstance(layers, list)
+                or len(layers) > MAX_DOCKER_ARCHIVE_MEMBERS
+                or not all(isinstance(layer, str) for layer in layers)
+                or len(set(layers)) != len(layers)
+            ):
+                raise ScanError("external image archive layer inventory is invalid")
+            for layer in layers:
+                layer_name = _safe_archive_member(layer)
+                member = by_name.get(layer_name)
+                if member is None or not member.isfile():
+                    raise ScanError("external image archive layer inventory is invalid")
+            config_member = by_name.get(config_name)
+            if (
+                config_member is None
+                or not config_member.isfile()
+                or config_member.size <= 0
+                or config_member.size > MAX_DOCKER_CONFIG_BYTES
+            ):
+                raise ScanError("external image archive config is invalid")
+            config_stream = handle.extractfile(config_member)
+            if config_stream is None:
+                raise ScanError("external image archive config is unavailable")
+            config_payload = config_stream.read(MAX_DOCKER_CONFIG_BYTES + 1)
+            config_stream.close()
+    except ScanError:
+        raise
+    except (OSError, tarfile.TarError, UnicodeError, ValueError, RecursionError):
+        raise ScanError("external image archive is malformed") from None
+    if len(config_payload) > MAX_DOCKER_CONFIG_BYTES:
+        raise ScanError("external image archive config exceeded its size limit")
+    if "sha256:" + hashlib.sha256(config_payload).hexdigest() != config_digest:
+        raise ScanError("external image archive config digest did not match")
+    try:
+        config = strict_json_loads(config_payload.decode("utf-8", "strict"))
+    except (UnicodeError, ValueError, RecursionError):
+        raise ScanError("external image archive config metadata is invalid") from None
+    if (
+        not isinstance(config, dict)
+        or config.get("os") != "linux"
+        or config.get("architecture") != "amd64"
+    ):
+        raise ScanError("external image archive platform is not linux/amd64")
+    return config_digest, config
+
+
+def _validate_external_image_archive(archive: Path, config_digest: str) -> None:
+    observed_digest, _config = _read_docker_archive_config(archive)
+    if observed_digest != config_digest:
+        raise ScanError("external image archive config identity did not match")
+
+
+def _save_external_image_archive(reference: str, archive: Path) -> Tuple[int, str]:
+    created = False
+    try:
+        with archive.open("xb") as output:
+            created = True
+            archive.chmod(0o600)
+            _run_bounded_process(
+                ["docker", "image", "save", reference],
+                label="external image archive export",
+                stdout_limit=MAX_DOCKER_ARCHIVE_BYTES,
+                timeout=600,
+                stdout_file=output,
+            )
+            output.flush()
+            os.fsync(output.fileno())
+        size = archive.stat().st_size
+        if size <= 0 or size > MAX_DOCKER_ARCHIVE_BYTES or archive.is_symlink():
+            raise ScanError("external image archive size is invalid")
+        digest = hashlib.sha256()
+        with archive.open("rb") as stream:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return size, digest.hexdigest()
+    except BaseException:
+        try:
+            if created and (archive.exists() or archive.is_symlink()):
+                archive.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def prepare_external_image_archive(reference: str, archive: Path) -> Dict[str, object]:
+    if (
+        SAFE_IMAGE_REFERENCE.fullmatch(reference) is None
+        or re.search(r"@sha256:[0-9a-f]{64}$", reference) is None
+    ):
+        raise ScanError("external image reference is unsafe or mutable")
+    requested_digest = reference.rsplit("@", 1)[1]
+    requested_manifest = run_bounded_capture(
+        ["docker", "buildx", "imagetools", "inspect", "--raw", reference],
+        label="pinned external image resolution",
+        maximum=MAX_REGISTRY_MANIFEST_BYTES,
+        timeout=120,
+    )
+    selected_digest, expected_size, selected_manifest = _select_linux_amd64_manifest(
+        requested_manifest,
+        requested_digest,
+    )
+    child_reference = reference.rsplit("@", 1)[0] + "@" + selected_digest
+    if not selected_manifest:
+        selected_manifest = run_bounded_capture(
+            [
+                "docker",
+                "buildx",
+                "imagetools",
+                "inspect",
+                "--raw",
+                child_reference,
+            ],
+            label="selected linux/amd64 image resolution",
+            maximum=MAX_REGISTRY_MANIFEST_BYTES,
+            timeout=120,
+        )
+    config_digest = _image_config_digest(
+        selected_manifest,
+        selected_digest,
+        expected_size,
+    )
+    run_bounded_capture(
+        [
+            "docker",
+            "pull",
+            "--quiet",
+            "--platform",
+            "linux/amd64",
+            child_reference,
+        ],
+        label="external linux/amd64 image pull",
+        maximum=MAX_DOCKER_COMMAND_BYTES,
+        timeout=600,
+    )
+    _inspect_external_image(
+        child_reference,
+        requested_digest,
+        selected_digest,
+        config_digest,
+    )
+    archive_size, archive_sha256 = _save_external_image_archive(
+        child_reference,
+        archive,
+    )
+    _validate_external_image_archive(archive, config_digest)
+    identity = {
+        "archive_sha256": archive_sha256,
+        "archive_size_bytes": archive_size,
+        "config_digest": config_digest,
+        "platform": "linux/amd64",
+        "requested_digest": requested_digest,
+        "requested_reference": reference,
+        "selected_manifest_digest": selected_digest,
+    }
+    stable_identity = {
+        key: value
+        for key, value in identity.items()
+        if key not in {"archive_sha256", "archive_size_bytes"}
+    }
+    identity["policy_digest"] = _bind_image_identity(stable_identity)[
+        "policy_digest"
+    ]
+    return identity
+
+
+def _inspect_local_image(reference: str) -> Mapping[str, object]:
+    payload = run_bounded_capture(
+        ["docker", "image", "inspect", reference],
+        label="local image inspection",
+        maximum=MAX_DOCKER_INSPECT_BYTES,
+        timeout=60,
+    )
+    try:
+        document = strict_json_loads(payload.decode("utf-8", "strict"))
+    except (UnicodeError, ValueError, RecursionError):
+        raise ScanError("local image inspection metadata is invalid") from None
+    if not isinstance(document, list) or len(document) != 1 or not isinstance(document[0], dict):
+        raise ScanError("local image inspection metadata is invalid")
+    image = document[0]
+    if image.get("Os") != "linux" or image.get("Architecture") != "amd64":
+        raise ScanError("local image runtime platform is not linux/amd64")
+    _descriptor_digest(image.get("Id"), "local image")
+    return image
+
+
+def _image_labels(raw: object, label: str) -> Dict[str, str]:
+    if not isinstance(raw, dict):
+        raise ScanError(label + " config metadata is invalid")
+    labels = raw.get("Labels")
+    if not isinstance(labels, dict) or not all(
+        isinstance(key, str)
+        and key
+        and len(key) <= 300
+        and isinstance(value, str)
+        and len(value) <= 4000
+        and not any(ord(character) < 32 or ord(character) == 127 for character in value)
+        for key, value in labels.items()
+    ):
+        raise ScanError(label + " provenance labels are invalid")
+    return dict(labels)
+
+
+def prepare_local_image_archive(
+    reference: str,
+    identifier: str,
+    archive: Path,
+    expected_recipe: Optional[str],
+) -> Dict[str, object]:
+    if identifier not in LOCAL_IMAGE_IDS:
+        raise ScanError("local image identifier is invalid")
+    inspected = _inspect_local_image(reference)
+    image_id = _descriptor_digest(inspected.get("Id"), "local image")
+    descriptor_digest = None
+    descriptor = inspected.get("Descriptor")
+    if descriptor is not None:
+        if not isinstance(descriptor, dict):
+            raise ScanError("local image runtime descriptor is invalid")
+        descriptor_digest = _descriptor_digest(
+            descriptor.get("digest"),
+            "local image runtime descriptor",
+        )
+    inspected_labels = _image_labels(inspected.get("Config"), "local image")
+
+    # The tag is used exactly once for inspection. Export by the resulting
+    # immutable image ID, so a later retag cannot change the scanned bytes.
+    archive_size, archive_sha256 = _save_external_image_archive(image_id, archive)
+    config_digest, archived_config = _read_docker_archive_config(archive)
+    archived_labels = _image_labels(
+        archived_config.get("config") if isinstance(archived_config, dict) else None,
+        "local image archive",
+    )
+    if archived_labels != inspected_labels:
+        raise ScanError("local image archive labels did not match inspection")
+    if image_id not in {config_digest, descriptor_digest}:
+        raise ScanError("local image runtime digest did not match its archive")
+    if descriptor_digest is None and image_id != config_digest:
+        raise ScanError("local image runtime descriptor is unavailable")
+
+    revision = archived_labels.get("org.opencontainers.image.revision", "")
+    if (
+        not revision
+        or len(revision) > 200
+        or any(ord(character) < 32 or ord(character) == 127 for character in revision)
+    ):
+        raise ScanError("local image OCI revision is invalid")
+    labels_payload = json.dumps(
+        archived_labels,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    # The policy key binds the archived config (which itself binds the rootfs
+    # diff IDs) and the complete provenance-label set. Runtime descriptor and
+    # tag metadata remain evidence, but are intentionally excluded so the same
+    # image config has the same disposition key across Docker image stores.
+    stable_identity: Dict[str, object] = {
+        "config_digest": config_digest,
+        "labels_sha256": "sha256:" + hashlib.sha256(labels_payload).hexdigest(),
+        "oci_revision": revision,
+        "platform": "linux/amd64",
+    }
+    if identifier == "minio":
+        if not isinstance(expected_recipe, str) or DIGEST.fullmatch(expected_recipe) is None:
+            raise ScanError("MinIO composite recipe identity is unavailable")
+        recipe = archived_labels.get("io.hbcb.recipe-id")
+        if recipe != expected_recipe:
+            raise ScanError("MinIO image recipe identity did not match")
+        if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+            raise ScanError("MinIO image OCI revision is invalid")
+        stable_identity.update(
+            {
+                "recipe_id": recipe,
+            }
+        )
+    elif expected_recipe is not None:
+        raise ScanError("non-MinIO image received a recipe identity")
+    identity = _bind_image_identity(stable_identity)
+    identity.update(
+        {
+            "archive_sha256": archive_sha256,
+            "archive_size_bytes": archive_size,
+            "build_reference": reference,
+            "descriptor_digest": descriptor_digest,
+            "image_id": image_id,
+        }
+    )
+    return identity
 
 
 def scanner_asset() -> tuple:
@@ -201,32 +1771,59 @@ def file_sha256(path: Path) -> str:
 
 def verify_scanner(scanner: Path) -> None:
     try:
-        completed = subprocess.run(
+        output = run_bounded_capture(
             [str(scanner), "--version"],
-            cwd=str(ROOT),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-            env=dict(os.environ, LC_ALL="C"),
+            label="OSV-Scanner version check",
+            maximum=4096,
             timeout=30,
         )
-    except (OSError, subprocess.TimeoutExpired) as failure:
+    except ScanError as failure:
         raise ScanError("OSV-Scanner version check failed") from failure
-    output = (completed.stdout + completed.stderr)[:4096].decode("utf-8", "replace")
-    if completed.returncode != 0 or re.search(r"(?<![0-9])v?" + re.escape(SCANNER_VERSION) + r"(?![0-9])", output) is None:
+    rendered = output.decode("utf-8", "replace")
+    if re.search(r"(?<![0-9])v?" + re.escape(SCANNER_VERSION) + r"(?![0-9])", rendered) is None:
         raise ScanError("OSV-Scanner version did not match the reviewed release")
 
 
-def git_blob_id(path: Path) -> str:
-    payload = path.read_bytes()
-    header = b"blob " + str(len(payload)).encode("ascii") + b"\0"
-    return hashlib.sha1(header + payload).hexdigest()
+def minio_recipe_id() -> str:
+    try:
+        payload = run_bounded_capture(
+            [
+                sys.executable,
+                "scripts/minio-recipe-id",
+                "--root",
+                str(ROOT),
+            ],
+            label="MinIO composite recipe identity",
+            maximum=80,
+            timeout=30,
+        )
+    except ScanError as failure:
+        raise ScanError("MinIO composite recipe identity failed") from failure
+    try:
+        rendered = payload.decode("ascii", "strict").strip()
+    except UnicodeDecodeError:
+        raise ScanError("MinIO composite recipe identity was invalid") from None
+    if (
+        len(payload) > 80
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", rendered) is None
+    ):
+        raise ScanError("MinIO composite recipe identity was invalid")
+    return rendered
 
 
-def build_images(records: List[Dict[str, object]]) -> bool:
-    builder = LOCAL_IMAGES[0][1]
-    recipe = git_blob_id(ROOT / "docker" / "minio.Dockerfile")
+def build_images(
+    records: List[Dict[str, object]],
+    local_images: Sequence[Tuple[str, str]],
+    recipe: str,
+    built_identifiers: List[str],
+) -> bool:
+    images = validate_local_image_references(local_images)
+    if not isinstance(recipe, str) or DIGEST.fullmatch(recipe) is None:
+        raise ScanError("MinIO composite recipe identity is invalid")
+    if built_identifiers:
+        raise ScanError("local image build accounting is not empty")
+    references = dict(images)
+    builder = references["builder"]
     commands = (
         (
             "builder",
@@ -258,7 +1855,7 @@ def build_images(records: List[Dict[str, object]]) -> bool:
                 "--build-arg",
                 "HBCB_MINIO_RECIPE_ID=" + recipe,
                 "--tag",
-                LOCAL_IMAGES[1][1],
+                references["minio"],
                 "--platform",
                 "linux/amd64",
                 ".",
@@ -277,7 +1874,7 @@ def build_images(records: List[Dict[str, object]]) -> bool:
                 "--build-arg",
                 "HBCB_BUILDER_IMAGE=" + builder,
                 "--tag",
-                LOCAL_IMAGES[2][1],
+                references["api"],
                 "--platform",
                 "linux/amd64",
                 ".",
@@ -296,7 +1893,7 @@ def build_images(records: List[Dict[str, object]]) -> bool:
                 "--build-arg",
                 "HBCB_BUILDER_IMAGE=" + builder,
                 "--tag",
-                LOCAL_IMAGES[3][1],
+                references["worker"],
                 "--platform",
                 "linux/amd64",
                 ".",
@@ -305,6 +1902,10 @@ def build_images(records: List[Dict[str, object]]) -> bool:
     )
     complete = True
     for name, timeout, command in commands:
+        # Account for the exact private tag before starting Docker so timeout
+        # or operator-interrupt cleanup also covers a tag published just before
+        # the build process was stopped.
+        built_identifiers.append(name)
         code = run(command, timeout=timeout)
         status = "pass" if code == 0 else "incomplete"
         records.append({"exit_code": code, "id": "build-" + name, "status": status, "type": "image-build"})
@@ -312,6 +1913,29 @@ def build_images(records: List[Dict[str, object]]) -> bool:
             complete = False
             break
     return complete
+
+
+def cleanup_local_image_tags(
+    local_images: Sequence[Tuple[str, str]],
+    built_identifiers: Sequence[str],
+) -> List[str]:
+    images = dict(validate_local_image_references(local_images))
+    if (
+        not isinstance(built_identifiers, (list, tuple))
+        or len(built_identifiers) != len(set(built_identifiers))
+        or any(identifier not in LOCAL_IMAGE_IDS for identifier in built_identifiers)
+    ):
+        raise ScanError("local image cleanup inventory is invalid")
+    failures = []
+    for identifier in reversed(tuple(built_identifiers)):
+        code = run(
+            ["docker", "image", "rm", images[identifier]],
+            quiet=True,
+            timeout=120,
+        )
+        if code != 0:
+            failures.append("local image %s tag cleanup failed" % identifier)
+    return failures
 
 
 def scanner_status(code: int) -> str:
@@ -342,10 +1966,8 @@ def validate_scan_report(path: Path, code: int) -> tuple:
         if path.stat().st_size <= 0 or path.stat().st_size > MAX_OSV_REPORT_BYTES:
             path.unlink()
             return 127, None
-        document = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(document, dict) or not isinstance(document.get("results"), list):
-            path.unlink()
-            return 127, None
+        document = strict_json_loads(path.read_text(encoding="utf-8"))
+        normalize_vulnerability_report(document, "osv-source")
         payload = json.dumps(sanitize_report_value(document), indent=2, sort_keys=True) + "\n"
         payload_bytes = len(payload.encode("utf-8"))
         if (
@@ -356,7 +1978,7 @@ def validate_scan_report(path: Path, code: int) -> tuple:
             path.unlink()
             return 127, None
         path.write_text(payload, encoding="utf-8")
-    except (OSError, UnicodeError, ValueError, RecursionError):
+    except (OSError, UnicodeError, ValueError, RecursionError, ScanError):
         try:
             if path.exists() or path.is_symlink():
                 path.unlink()
@@ -366,8 +1988,39 @@ def validate_scan_report(path: Path, code: int) -> tuple:
     return code, path.name
 
 
-def scan_source(scanner: Path, output: Path, records: List[Dict[str, object]]) -> None:
+def assess_retained_scan(
+    report: Optional[Path],
+    code: int,
+    target: str,
+    policy: Optional[Mapping[str, object]],
+    image_identity: Optional[str] = None,
+) -> Tuple[str, Optional[Mapping[str, object]]]:
+    if report is None or code not in (0, 1) or policy is None:
+        return "incomplete", None
+    try:
+        document = strict_json_loads(report.read_text(encoding="utf-8"))
+        assessment = evaluate_vulnerability_report(
+            document,
+            target,
+            policy,
+            image_identity,
+        )
+    except (OSError, UnicodeError, ValueError, RecursionError, ScanError):
+        return "incomplete", None
+    has_findings = assessment.get("families", 0) != 0
+    if (code == 0 and has_findings) or (code == 1 and not has_findings):
+        return "incomplete", None
+    return str(assessment["status"]), assessment
+
+
+def scan_source(
+    scanner: Path,
+    output: Path,
+    records: List[Dict[str, object]],
+    policy: Optional[Mapping[str, object]],
+) -> None:
     result = output / "osv-source.json"
+    target = "osv-source"
     command = [
         str(scanner),
         "scan",
@@ -380,40 +2033,149 @@ def scan_source(scanner: Path, output: Path, records: List[Dict[str, object]]) -
     ]
     code = run(command, timeout=300)
     code, report_name = validate_scan_report(result, code)
-    records.append(
-        {
-            "exit_code": code,
-            "id": "osv-source",
-            "report": report_name,
-            "status": scanner_status(code),
-            "type": "vulnerability-scan",
-        }
+    status, assessment = assess_retained_scan(
+        result if report_name is not None else None,
+        code,
+        target,
+        policy,
+        None,
     )
+    record: Dict[str, object] = {
+        "exit_code": code,
+        "id": target,
+        "report": report_name,
+        "status": status,
+        "type": "vulnerability-scan",
+    }
+    if assessment is not None:
+        record["vulnerabilities"] = assessment
+    records.append(record)
 
 
-def scan_image(scanner: Path, output: Path, identifier: str, reference: str, records: List[Dict[str, object]]) -> None:
+def scan_image(
+    scanner: Path,
+    output: Path,
+    identifier: str,
+    archive: Path,
+    records: List[Dict[str, object]],
+    policy: Optional[Mapping[str, object]],
+    *,
+    image_identity: Optional[Mapping[str, object]] = None,
+) -> None:
+    if (
+        not isinstance(archive, Path)
+        or archive.is_symlink()
+        or not archive.is_file()
+        or archive.stat().st_size <= 0
+        or archive.stat().st_size > MAX_DOCKER_ARCHIVE_BYTES
+    ):
+        raise ScanError("image vulnerability scan archive is invalid")
     result = output / ("osv-image-" + identifier + ".json")
-    code = run(
-        [
-            str(scanner),
-            "scan",
-            "image",
-            "--format=json",
-            "--output-file=" + str(result),
-            reference,
-        ],
-        timeout=300,
+    target = "osv-image-" + identifier
+    command = [
+        str(scanner),
+        "scan",
+        "image",
+        "--format=json",
+        "--output-file=" + str(result),
+    ]
+    command.extend(["--archive", str(archive)])
+    policy_digest = (
+        image_identity.get("policy_digest")
+        if isinstance(image_identity, Mapping)
+        else None
     )
+    if not isinstance(policy_digest, str) or DIGEST.fullmatch(policy_digest) is None:
+        raise ScanError("image vulnerability scan identity is unavailable")
+    code = run(command, timeout=300)
     code, report_name = validate_scan_report(result, code)
-    records.append(
-        {
-            "exit_code": code,
-            "id": "osv-image-" + identifier,
-            "report": report_name,
-            "status": scanner_status(code),
-            "type": "vulnerability-scan",
-        }
+    status, assessment = assess_retained_scan(
+        result if report_name is not None else None,
+        code,
+        target,
+        policy,
+        policy_digest,
     )
+    record: Dict[str, object] = {
+        "exit_code": code,
+        "id": target,
+        "report": report_name,
+        "status": status,
+        "type": "vulnerability-scan",
+    }
+    if assessment is not None:
+        record["vulnerabilities"] = assessment
+    if image_identity is not None:
+        record["image_identity"] = dict(image_identity)
+    records.append(record)
+
+
+def scan_external_image(
+    scanner: Path,
+    output: Path,
+    temporary: Path,
+    identifier: str,
+    reference: str,
+    records: List[Dict[str, object]],
+    policy: Optional[Mapping[str, object]],
+) -> None:
+    archive = temporary / ("external-image-" + identifier + ".tar")
+    try:
+        identity = prepare_external_image_archive(reference, archive)
+        scan_image(
+            scanner,
+            output,
+            identifier,
+            archive,
+            records,
+            policy,
+            image_identity=identity,
+        )
+    finally:
+        try:
+            archive.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as failure:
+            raise ScanError("external image archive cleanup failed") from failure
+
+
+def scan_local_image(
+    scanner: Path,
+    output: Path,
+    temporary: Path,
+    identifier: str,
+    reference: str,
+    records: List[Dict[str, object]],
+    policy: Optional[Mapping[str, object]],
+    expected_recipe: str,
+) -> None:
+    if identifier not in LOCAL_IMAGE_IDS:
+        raise ScanError("local image identifier is invalid")
+    archive = temporary / ("local-image-" + identifier + ".tar")
+    try:
+        identity = prepare_local_image_archive(
+            reference,
+            identifier,
+            archive,
+            expected_recipe if identifier == "minio" else None,
+        )
+        scan_image(
+            scanner,
+            output,
+            identifier,
+            archive,
+            records,
+            policy,
+            image_identity=identity,
+        )
+    finally:
+        try:
+            archive.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as failure:
+            raise ScanError("local image archive cleanup failed") from failure
 
 
 def record_unrun_scans(
@@ -423,7 +2185,7 @@ def record_unrun_scans(
 ) -> None:
     expected = {"osv-source"}
     if include_images:
-        expected.update("osv-image-" + item[0] for item in LOCAL_IMAGES)
+        expected.update("osv-image-" + identifier for identifier in LOCAL_IMAGE_IDS)
         expected.update("osv-image-" + identifier for identifier in external_ids)
     recorded = {str(item.get("id")) for item in records}
     for identifier in sorted(expected - recorded):
@@ -434,6 +2196,56 @@ def record_unrun_scans(
                 "report": None,
                 "status": "incomplete",
                 "type": "vulnerability-scan",
+            }
+        )
+
+
+def reconcile_policy_dispositions(
+    records: List[Dict[str, object]],
+    policy: Optional[Mapping[str, object]],
+    policy_summary: Dict[str, object],
+) -> None:
+    if policy is None:
+        return
+    evaluated_targets = set()
+    matched = 0
+    for record in records:
+        vulnerabilities = record.get("vulnerabilities")
+        if not isinstance(vulnerabilities, dict):
+            continue
+        target = record.get("id")
+        dispositioned = vulnerabilities.get("dispositioned")
+        if (
+            isinstance(target, str)
+            and isinstance(dispositioned, int)
+            and not isinstance(dispositioned, bool)
+            and dispositioned >= 0
+        ):
+            evaluated_targets.add(target)
+            matched += dispositioned
+    dispositions = policy.get("dispositions")
+    if not isinstance(dispositions, list):
+        raise ScanError("vulnerability policy was not validated")
+    applicable = sum(
+        1
+        for disposition in dispositions
+        if isinstance(disposition, dict)
+        and disposition.get("target") in evaluated_targets
+    )
+    if matched > applicable:
+        raise ScanError("vulnerability policy match accounting is invalid")
+    unused = applicable - matched
+    policy_summary.update(
+        {"applicable": applicable, "matched": matched, "unused": unused}
+    )
+    if unused:
+        policy_summary["status"] = "findings"
+        records.append(
+            {
+                "exit_code": 1,
+                "id": "vulnerability-policy-dispositions",
+                "status": "findings",
+                "type": "vulnerability-policy",
             }
         )
 
@@ -453,19 +2265,40 @@ def render_summary(summary: Mapping[str, object]) -> str:
         "",
         "Status: **%s**" % summary.get("status", "incomplete"),
         "",
-        "| Target | Type | Result | Exit |",
-        "|---|---|---|---:|",
+        "| Target | Type | Result | Vulnerabilities | Exit |",
+        "|---|---|---|---|---:|",
     ]
     targets = summary.get("targets", [])
     if isinstance(targets, list):
         for item in targets:
             if isinstance(item, dict):
+                finding_summary = "-"
+                vulnerabilities = item.get("vulnerabilities")
+                if isinstance(vulnerabilities, dict):
+                    severity = vulnerabilities.get("severity", {})
+                    if isinstance(severity, dict):
+                        finding_summary = (
+                            "families=%s; unrated=%s; none=%s; low=%s; moderate=%s; "
+                            "high=%s; critical=%s; reviewed=%s; blocking=%s"
+                            % (
+                                vulnerabilities.get("families", "?"),
+                                severity.get("UNRATED", "?"),
+                                severity.get("NONE", "?"),
+                                severity.get("LOW", "?"),
+                                severity.get("MODERATE", "?"),
+                                severity.get("HIGH", "?"),
+                                severity.get("CRITICAL", "?"),
+                                vulnerabilities.get("dispositioned", "?"),
+                                vulnerabilities.get("blocking", "?"),
+                            )
+                        )
                 lines.append(
-                    "| `%s` | %s | %s | %s |"
+                    "| `%s` | %s | %s | %s | %s |"
                     % (
                         item.get("id", "unknown"),
                         item.get("type", "unknown"),
                         item.get("status", "incomplete"),
+                        finding_summary,
                         "-" if item.get("exit_code") is None else item.get("exit_code"),
                     )
                 )
@@ -476,7 +2309,7 @@ def render_summary(summary: Mapping[str, object]) -> str:
     lines.extend(
         [
             "",
-            "Detailed JSON reports are retained as workflow artifacts. Exit `1` means vulnerability or policy findings; other nonzero scanner exits mean the audit was incomplete.",
+            "Detailed OSV JSON reports are retained as workflow artifacts. Undispositioned HIGH/CRITICAL advisory families and dependency-policy findings return `1`; incomplete scans or invalid/expired vulnerability policy return `2`. Lower and unrated families remain visible above without independently blocking.",
             "",
         ]
     )
@@ -489,6 +2322,27 @@ def execute(output: Path, include_images: bool, scanner_override: Optional[Path]
     output.mkdir(parents=True, mode=0o700)
     records: List[Dict[str, object]] = []
     errors: List[str] = []
+    vulnerability_policy: Optional[Mapping[str, object]] = None
+    vulnerability_policy_summary: Dict[str, object] = {
+        "default_action": "deny",
+        "dispositions": 0,
+        "format": VULNERABILITY_POLICY_FORMAT,
+        "path": str(VULNERABILITY_POLICY_PATH),
+        "sha256": None,
+        "status": "incomplete",
+    }
+    try:
+        vulnerability_policy = load_vulnerability_policy()
+        policy_path = ROOT / VULNERABILITY_POLICY_PATH
+        vulnerability_policy_summary.update(
+            {
+                "dispositions": len(vulnerability_policy["dispositions"]),
+                "sha256": hashlib.sha256(policy_path.read_bytes()).hexdigest(),
+                "status": "pass",
+            }
+        )
+    except (OSError, ScanError) as failure:
+        errors.append(bounded(failure))
     dependency_report = output / "dependency-audit.json"
     dependency_markdown = output / "dependency-audit.md"
     audit_code = run(
@@ -557,6 +2411,8 @@ def execute(output: Path, include_images: bool, scanner_override: Optional[Path]
     else:
         errors.append("dependency audit did not produce its JSON report")
 
+    local_images: Tuple[Tuple[str, str], ...] = ()
+    built_identifiers: List[str] = []
     with tempfile.TemporaryDirectory(prefix="hbcb-dependency-scan-") as temporary:
         scanner = scanner_override.resolve() if scanner_override is not None else Path(temporary) / "osv-scanner"
         scanner_sha256 = "operator-supplied"
@@ -572,19 +2428,78 @@ def execute(output: Path, include_images: bool, scanner_override: Optional[Path]
                 if scanner_sha256 not in reviewed_hashes:
                     raise ScanError("the supplied OSV-Scanner checksum is not a reviewed release asset")
             verify_scanner(scanner)
-            scan_source(scanner, output, records)
+            scan_source(scanner, output, records, vulnerability_policy)
             if include_images:
                 if shutil.which("docker") is None:
                     raise ScanError("Docker is required for image vulnerability scans")
-                if build_images(records):
-                    for identifier, reference in LOCAL_IMAGES:
-                        scan_image(scanner, output, identifier, reference, records)
+                recipe = minio_recipe_id()
+                local_images = local_image_references()
+                with _TerminationGuard() as local_image_ownership:
+                    try:
+                        if build_images(
+                            records,
+                            local_images,
+                            recipe,
+                            built_identifiers,
+                        ):
+                            for identifier, reference in local_images:
+                                try:
+                                    scan_local_image(
+                                        scanner,
+                                        output,
+                                        Path(temporary),
+                                        identifier,
+                                        reference,
+                                        records,
+                                        vulnerability_policy,
+                                        recipe,
+                                    )
+                                except (OSError, ScanError) as failure:
+                                    errors.append(
+                                        "local image %s: %s"
+                                        % (identifier, bounded(failure))
+                                    )
+                    finally:
+                        # Once teardown starts, subsequent TERM/HUP/INT is
+                        # recorded by this outer guard rather than aborting a
+                        # tag-removal child or skipping the remaining tags.
+                        local_image_ownership.defer_nested_signals_until_exit()
+                        try:
+                            errors.extend(
+                                cleanup_local_image_tags(
+                                    local_images,
+                                    built_identifiers,
+                                )
+                            )
+                        except (OSError, ScanError) as failure:
+                            errors.append(
+                                "local image tag cleanup: " + bounded(failure)
+                            )
                 for image in external_images:
-                    scan_image(scanner, output, image["id"], image["reference"], records)
+                    try:
+                        scan_external_image(
+                            scanner,
+                            output,
+                            Path(temporary),
+                            image["id"],
+                            image["reference"],
+                            records,
+                            vulnerability_policy,
+                        )
+                    except (OSError, ScanError) as failure:
+                        errors.append(
+                            "external image %s: %s"
+                            % (image["id"], bounded(failure))
+                        )
         except (OSError, ScanError) as failure:
             errors.append(bounded(failure))
 
     record_unrun_scans(records, include_images, expected_external_ids)
+    reconcile_policy_dispositions(
+        records,
+        vulnerability_policy,
+        vulnerability_policy_summary,
+    )
 
     summary: Dict[str, object] = {
         "errors": errors[:20],
@@ -593,11 +2508,19 @@ def execute(output: Path, include_images: bool, scanner_override: Optional[Path]
         "scanner": {"name": "OSV-Scanner", "sha256": scanner_sha256, "version": SCANNER_VERSION},
         "status": final_status(records, errors),
         "targets": sorted(records, key=lambda item: str(item.get("id", ""))),
+        "vulnerability_policy": vulnerability_policy_summary,
     }
-    write_json(output / "scan-summary.json", summary)
-    (output / "scan-summary.md").write_text(render_summary(summary), encoding="utf-8")
-    if directory_bytes(output) > MAX_OUTPUT_BYTES:
+    summary_json = json.dumps(summary, indent=2, sort_keys=True) + "\n"
+    summary_markdown = render_summary(summary)
+    if (
+        directory_bytes(output)
+        + len(summary_json.encode("utf-8"))
+        + len(summary_markdown.encode("utf-8"))
+        > MAX_OUTPUT_BYTES
+    ):
         raise ScanError("dependency scan output exceeded the aggregate size limit")
+    (output / "scan-summary.json").write_text(summary_json, encoding="utf-8")
+    (output / "scan-summary.md").write_text(summary_markdown, encoding="utf-8")
     if summary["status"] == "pass":
         return 0
     if summary["status"] == "findings":

@@ -70,7 +70,11 @@ class MaintenanceStoragePolicyTests(unittest.TestCase):
         self.assertEqual(len(list_statements), 1)
         self.assertEqual(
             list_statements[0]["Condition"],
-            {"StringLike": {"s3:prefix": ["local/v1/builds/*"]}},
+            {
+                "StringLike": {
+                    "s3:prefix": ["local/v1/builds/", "local/v1/builds/*"]
+                }
+            },
         )
 
     def test_local_initializer_wires_a_distinct_maintenance_identity(self) -> None:
@@ -87,6 +91,11 @@ class MaintenanceStoragePolicyTests(unittest.TestCase):
         self.assertIn("hbcb_maintenance|hbcb_maintenance_*", script)
         self.assertIn("storage identities must be distinct", script)
         self.assertIn("storage secrets must be distinct", script)
+        self.assertIn("mc alias set hbcb-maintenance-ready", script)
+        self.assertIn("mc ls --versions --recursive", script)
+        self.assertIn("$HBCB_DEPLOYMENT_NAMESPACE/v1/builds/", script)
+        self.assertIn('mc version info "$identity_alias/$HBCB_STORAGE_BUCKET"', script)
+        self.assertIn('identity_attempt" -lt 30', script)
 
 
 if __name__ == "__main__":

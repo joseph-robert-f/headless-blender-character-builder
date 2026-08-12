@@ -128,4 +128,53 @@ mc admin user info hbcb "$HBCB_STORAGE_API_ACCESS_KEY" >/dev/null
 mc admin user info hbcb "$HBCB_STORAGE_WORKER_ACCESS_KEY" >/dev/null
 mc admin user info hbcb "$HBCB_STORAGE_MAINTENANCE_ACCESS_KEY" >/dev/null
 
+# MinIO may acknowledge an administrative user update just before the data
+# plane accepts that access key.  Do not release dependent services until each
+# runtime identity can authenticate and inspect the versioning state allowed by
+# its policy.  Keep the retry window bounded and never print credentials.
+wait_for_identity() {
+  identity_alias=$1
+  identity_access_key=$2
+  identity_secret_key=$3
+  mc alias set "$identity_alias" http://minio:9000 \
+    "$identity_access_key" "$identity_secret_key" >/dev/null
+  identity_attempt=0
+  while [ "$identity_attempt" -lt 30 ]; do
+    if mc version info "$identity_alias/$HBCB_STORAGE_BUCKET" >/dev/null 2>&1; then
+      return 0
+    fi
+    identity_attempt=$((identity_attempt + 1))
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_identity hbcb-api-ready \
+  "$HBCB_STORAGE_API_ACCESS_KEY" "$HBCB_STORAGE_API_SECRET_KEY" || {
+  printf '%s\n' 'MINIO_INIT: API storage identity did not become ready' >&2
+  exit 6
+}
+wait_for_identity hbcb-worker-ready \
+  "$HBCB_STORAGE_WORKER_ACCESS_KEY" "$HBCB_STORAGE_WORKER_SECRET_KEY" || {
+  printf '%s\n' 'MINIO_INIT: worker storage identity did not become ready' >&2
+  exit 6
+}
+mc alias set hbcb-maintenance-ready http://minio:9000 \
+  "$HBCB_STORAGE_MAINTENANCE_ACCESS_KEY" \
+  "$HBCB_STORAGE_MAINTENANCE_SECRET_KEY" >/dev/null
+maintenance_attempt=0
+while [ "$maintenance_attempt" -lt 30 ]; do
+  if mc ls --versions --recursive \
+    "hbcb-maintenance-ready/$HBCB_STORAGE_BUCKET/$HBCB_DEPLOYMENT_NAMESPACE/v1/builds/" \
+    >/dev/null 2>&1; then
+    break
+  fi
+  maintenance_attempt=$((maintenance_attempt + 1))
+  sleep 1
+done
+if [ "$maintenance_attempt" -ge 30 ]; then
+  printf '%s\n' 'MINIO_INIT: maintenance storage identity did not become ready' >&2
+  exit 6
+fi
+
 printf '%s\n' '{"bucket":"hbcb-artifacts","event":"minio_initialized","namespace":"local","versioning":"Enabled"}'

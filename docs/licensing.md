@@ -33,6 +33,17 @@ must satisfy the notices and corresponding-source duties for their own
 distribution method; the project's source link does not transfer that
 responsibility to the maintainers.
 
+`make release-check` packages the byte- and SHA-256-pinned Blender 4.5.12 source
+archive beside the exact project source, dependency inventories, SBOMs, and
+notices. Its machine-readable inventory deliberately marks that material as
+`project-and-blender-source-only` and `public_oci_ready: false`. It is useful
+release evidence, but it is not a complete corresponding-source determination
+for every native, base-image, or copyleft component in the final containers.
+Public OCI publication remains blocked until an independent review starts from
+actual final-image SBOMs, identifies every applicable source/delivery duty
+(including LGPL/native and operating-system components), and adds the required
+checksum-bound material and retention plan. This guide is not legal advice.
+
 Blender's GPL does not automatically apply to normal artwork created with
 Blender. See [`OUTPUT_POLICY.md`](../OUTPUT_POLICY.md) for the project's output
 and no-warranty boundary.

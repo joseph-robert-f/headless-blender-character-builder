@@ -23,6 +23,7 @@
       "Condition": {
         "StringLike": {
           "s3:prefix": [
+            "local/v1/builds/",
             "local/v1/builds/*"
           ]
         }

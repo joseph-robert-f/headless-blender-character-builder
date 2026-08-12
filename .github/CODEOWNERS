@@ -20,6 +20,8 @@
 
 # Security, release, licensing, and governance policy
 /.github/ @joseph-robert-f
+/scripts/dco-check @joseph-robert-f
+/tests/release/test_dco_check.py @joseph-robert-f
 /LICENSE @joseph-robert-f
 /ASSET_LICENSE.md @joseph-robert-f
 /OUTPUT_POLICY.md @joseph-robert-f

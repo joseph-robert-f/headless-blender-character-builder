@@ -13,11 +13,37 @@ usage() {
   exit 2
 }
 
+valid_release_version() {
+  candidate=$1
+  base=$candidate
+  case "$candidate" in
+    *-*)
+      base=${candidate%%-*}
+      suffix=${candidate#*-}
+      case "$suffix" in ''|*[!0-9A-Za-z.-]*) return 1 ;; esac
+      ;;
+  esac
+  major=${base%%.*}
+  remainder=${base#*.}
+  [ "$remainder" != "$base" ] || return 1
+  minor=${remainder%%.*}
+  patch=${remainder#*.}
+  [ "$patch" != "$remainder" ] || return 1
+  case "$patch" in *.*) return 1 ;; esac
+  for component in "$major" "$minor" "$patch"; do
+    case "$component" in ''|*[!0-9]*) return 1 ;; esac
+  done
+}
+
 mode=full
 if [ "$#" -eq 1 ] && [ "$1" = --static ]; then
   mode=static
 elif [ "$#" -ne 0 ]; then
   usage
+fi
+
+if [ "$mode" = full ] && [ -z "${HBCB_RELEASE_RUN_ID:-}" ]; then
+  fail 'HBCB_RELEASE_RUN_ID is required for a full release check; choose a unique safe value'
 fi
 
 python_bin=${PYTHON:-python3}
@@ -33,29 +59,19 @@ repo=$(git rev-parse --show-toplevel 2>/dev/null) || fail 'run from a Git worktr
 repo=$(cd "$repo" && pwd -P)
 cd "$repo"
 
-if ! git diff --quiet --; then
-  fail 'unstaged tracked changes are not allowed; stage the intended release index'
-fi
-untracked=$(git ls-files --others --exclude-standard)
-if [ -n "$untracked" ]; then
-  fail 'untracked publication files are not allowed; stage or ignore them intentionally'
-fi
-git diff --check
-git diff --cached --check
-
 version=$(sed -n '1p' VERSION)
 case "$version" in
   ''|*[!0-9A-Za-z.-]*) fail 'VERSION is invalid' ;;
 esac
 rc_version=${HBCB_RELEASE_VERSION:-$version-rc.1}
-case "$rc_version" in
-  ''|*[!0-9A-Za-z.-]*) fail 'HBCB_RELEASE_VERSION is invalid' ;;
-esac
+if ! valid_release_version "$rc_version"; then
+  fail 'HBCB_RELEASE_VERSION must be a safe semantic version'
+fi
 
 run_id=
 compose_project=
 if [ "$mode" = full ]; then
-  run_id=${HBCB_RELEASE_RUN_ID:-g9-final}
+  run_id=$HBCB_RELEASE_RUN_ID
   compose_project=hbcb-release-$run_id
   # Keep release evidence, image tags, and the derived Compose project within
   # the same bounded identifier policy before any export, build, or daemon use.
@@ -69,13 +85,42 @@ fi
 
 temporary_parent=${TMPDIR:-/tmp}
 temporary_parent=${temporary_parent%/}
+
+if ! PYTHONDONTWRITEBYTECODE=1 "$python_bin" -c \
+  'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
+  >/dev/null 2>&1; then
+  fail 'Python 3.11 or newer is required; select it with PYTHON=python3.11'
+fi
+
 scratch=$(mktemp -d "$temporary_parent/hbcb-release-check.XXXXXXXX")
 chmod 0700 "$scratch"
+
+if ! git diff --quiet --; then
+  rm -rf -- "$scratch"
+  fail 'unstaged tracked changes are not allowed; stage the intended release index'
+fi
+untracked=$(git ls-files --others --exclude-standard)
+if [ -n "$untracked" ]; then
+  rm -rf -- "$scratch"
+  fail 'untracked publication files are not allowed; stage or ignore them intentionally'
+fi
+git diff --check
+git diff --cached --check
+
 audit_source=$scratch/audited-source
 work_source=$scratch/work-source
 audit_report=$scratch/source-audit.json
-builder_container=
-service_attempted=0
+builder_container_name=
+builder_container_attempted=0
+release_owner=
+release_claim_name=hbcb-release-check-claim
+release_claim_attempted=0
+service_ownership=$scratch/service-owned
+cleanup_return=0
+cleanup_signal_status=0
+summary_stage=
+summary_target=
+summary_promoted=0
 
 compose() {
   if [ -n "${HBCB_COMPOSE_BIN:-}" ]; then
@@ -85,37 +130,207 @@ compose() {
   fi
 }
 
-cleanup() {
-  status=$?
-  trap - 0 1 2 15
-  if [ "$service_attempted" -eq 1 ] && [ -n "$compose_project" ] && [ -f "$work_source/.env" ]; then
-    (
-      cd "$work_source"
-      export COMPOSE_PROJECT_NAME=$compose_project
-      DOCKER=$docker_bin \
-        PYTHON=$python_bin \
-        BUILDER_IMAGE=${builder_work_image:-headless-blender-character-builder:unavailable} \
-        ./scripts/service-compose down >/dev/null 2>&1 || true
-      . ./scripts/service-common
-      hbcb_service_settings >/dev/null 2>&1 || true
-      recipe_id=$(git hash-object docker/minio.Dockerfile 2>/dev/null || true)
-      export HBCB_BUILDER_IMAGE=headless-blender-character-builder:unavailable
-      export HBCB_BUILDER_IMAGE_REFERENCE=headless-blender-character-builder:unavailable
-      export HBCB_BUILDER_IMAGE_ID=sha256:0000000000000000000000000000000000000000000000000000000000000000
-      export HBCB_MINIO_RECIPE_ID=$recipe_id
-      compose --project-name "$compose_project" --env-file .env \
-        down --volumes --remove-orphans >/dev/null 2>&1 || true
-    )
+project_resources_by_label() {
+  resource_label=$1
+  resource_value=$2
+  resource_containers=$("$docker_bin" ps --all --quiet \
+    --filter "label=$resource_label=$resource_value") || return 1
+  resource_volumes=$("$docker_bin" volume ls --quiet \
+    --filter "label=$resource_label=$resource_value") || return 1
+  resource_networks=$("$docker_bin" network ls --quiet \
+    --filter "label=$resource_label=$resource_value") || return 1
+  resource_containers=$(printf '%s\n' "$resource_containers" | sed '/^$/d' | LC_ALL=C sort)
+  resource_volumes=$(printf '%s\n' "$resource_volumes" | sed '/^$/d' | LC_ALL=C sort)
+  resource_networks=$(printf '%s\n' "$resource_networks" | sed '/^$/d' | LC_ALL=C sort)
+  printf '%s\n%s\n%s\n' \
+    "$resource_containers" "$resource_volumes" "$resource_networks"
+}
+
+project_resources() {
+  project_resources_by_label com.docker.compose.project "$compose_project"
+}
+
+owned_service_resources() {
+  project_resources_by_label io.hbcb.release-service-owner "$release_owner"
+}
+
+verify_project_resources_owned() {
+  all_project_resources=$(project_resources) || return 1
+  own_project_resources=$(owned_service_resources) || return 1
+  [ "$all_project_resources" = "$own_project_resources" ]
+}
+
+owned_builder_containers() {
+  "$docker_bin" ps --all --no-trunc --quiet \
+    --filter "name=^/$builder_container_name$" \
+    --filter "label=io.hbcb.release-builder-owner=$release_owner"
+}
+
+owned_release_claim_volumes() {
+  "$docker_bin" volume ls --quiet \
+    --filter "label=io.hbcb.release-claim-owner=$release_owner"
+}
+
+record_cleanup_signal() {
+  if [ "$cleanup_signal_status" -eq 0 ]; then
+    cleanup_signal_status=$1
   fi
-  if [ -n "$builder_container" ]; then
-    "$docker_bin" rm --force "$builder_container" >/dev/null 2>&1 || true
+}
+
+cancel_summary_publish() {
+  signal_status=$1
+  # Once cleanup has completed, a termination signal must invalidate either
+  # form of this run's success summary before preserving its signal status.
+  trap '' 1 2 15
+  remove_summary_target=0
+  if [ "$summary_promoted" -eq 1 ]; then
+    remove_summary_target=1
+  elif [ -n "$summary_stage" ] && [ -n "$summary_target" ] && \
+       [ -f "$summary_stage" ] && [ ! -L "$summary_stage" ] && \
+       [ -f "$summary_target" ] && [ ! -L "$summary_target" ] && \
+       [ "$summary_stage" -ef "$summary_target" ]; then
+    # A signal can arrive after ln(1) atomically creates the target but before
+    # the following shell assignment records promotion.
+    remove_summary_target=1
+  fi
+  if [ "$remove_summary_target" -eq 1 ] && [ -f "$summary_target" ] && \
+     [ ! -L "$summary_target" ]; then
+    rm -f -- "$summary_target" || :
+  fi
+  if [ -n "$summary_stage" ] && [ -f "$summary_stage" ] && \
+     [ ! -L "$summary_stage" ]; then
+    rm -f -- "$summary_stage" || :
+  fi
+  exit "$signal_status"
+}
+
+cleanup() {
+  # Disable recursive EXIT cleanup. Record only the first termination signal so
+  # cleanup can finish, while repeated or different signals cannot replace it.
+  trap 'record_cleanup_signal 129' 1
+  trap 'record_cleanup_signal 130' 2
+  trap 'record_cleanup_signal 143' 15
+  trap - 0
+  status=$1
+  cleanup_status=0
+  case "$status" in
+    129|130|143) record_cleanup_signal "$status" ;;
+  esac
+  if [ -f "$service_ownership" ]; then
+    if [ -n "$compose_project" ] && [ -f "$work_source/.env" ]; then
+      if ! verify_project_resources_owned; then
+        cleanup_status=1
+      else
+        (
+          inner_cleanup_status=0
+          cd "$work_source"
+          export COMPOSE_PROJECT_NAME=$compose_project
+          if ! DOCKER=$docker_bin \
+            PYTHON=$python_bin \
+            BUILDER_IMAGE=${builder_work_image:-headless-blender-character-builder:unavailable} \
+            ./scripts/service-compose down >/dev/null 2>&1; then
+            inner_cleanup_status=1
+          fi
+          if . ./scripts/service-common && \
+            hbcb_service_settings >/dev/null 2>&1 && \
+            recipe_id=$("$python_bin" ./scripts/minio-recipe-id --root . 2>/dev/null); then
+            export HBCB_BUILDER_IMAGE=headless-blender-character-builder:unavailable
+            export HBCB_BUILDER_IMAGE_REFERENCE=headless-blender-character-builder:unavailable
+            export HBCB_BUILDER_IMAGE_ID=sha256:0000000000000000000000000000000000000000000000000000000000000000
+            export HBCB_MINIO_RECIPE_ID=$recipe_id
+            if ! compose --project-name "$compose_project" --env-file .env \
+              down --volumes --remove-orphans >/dev/null 2>&1; then
+              inner_cleanup_status=1
+            fi
+          else
+            inner_cleanup_status=1
+          fi
+          exit "$inner_cleanup_status"
+        ) || cleanup_status=1
+      fi
+    else
+      cleanup_status=1
+    fi
+    remaining_resources=
+    remaining_resources=$(project_resources 2>/dev/null) || cleanup_status=1
+    if [ -n "$remaining_resources" ]; then
+      cleanup_status=1
+    fi
+  fi
+  if [ "$builder_container_attempted" -eq 1 ] && \
+     [ -n "$builder_container_name" ] && [ -n "$release_owner" ]; then
+    remaining_builder=
+    remaining_builder=$(owned_builder_containers 2>/dev/null) || cleanup_status=1
+    for builder_id in $remaining_builder; do
+      "$docker_bin" rm --force "$builder_id" >/dev/null 2>&1 || cleanup_status=1
+    done
+    remaining_builder=$(owned_builder_containers 2>/dev/null) || cleanup_status=1
+    if [ -n "$remaining_builder" ]; then
+      cleanup_status=1
+    fi
+  fi
+  if [ "$release_claim_attempted" -eq 1 ] && [ -n "$release_owner" ]; then
+    remaining_claim=
+    remaining_claim=$(owned_release_claim_volumes 2>/dev/null) || cleanup_status=1
+    if [ "$remaining_claim" = "$release_claim_name" ]; then
+      claim_identity=$("$docker_bin" volume inspect --format \
+        '{{.Name}}|{{ index .Labels "io.hbcb.release-claim-owner" }}' \
+        "$release_claim_name" 2>/dev/null) || cleanup_status=1
+      if [ "$claim_identity" = "$release_claim_name|$release_owner" ]; then
+        "$docker_bin" volume rm "$release_claim_name" >/dev/null 2>&1 || cleanup_status=1
+      else
+        cleanup_status=1
+      fi
+    elif [ -n "$remaining_claim" ]; then
+      cleanup_status=1
+    fi
+    remaining_claim=$(owned_release_claim_volumes 2>/dev/null) || cleanup_status=1
+    if [ -n "$remaining_claim" ]; then
+      cleanup_status=1
+    fi
   fi
   case "$scratch" in
-    "$temporary_parent"/hbcb-release-check.*) rm -rf -- "$scratch" ;;
+    "$temporary_parent"/hbcb-release-check.*) rm -rf -- "$scratch" || cleanup_status=1 ;;
   esac
+  if [ "$status" -ne 0 ] || [ "$cleanup_status" -ne 0 ] || \
+     [ "$cleanup_signal_status" -ne 0 ]; then
+    if [ -n "$summary_stage" ]; then
+      if [ -f "$summary_stage" ] && [ ! -L "$summary_stage" ]; then
+        rm -f -- "$summary_stage" || cleanup_status=1
+      fi
+    fi
+  fi
+  if [ "$cleanup_status" -ne 0 ]; then
+    printf '%s\n' 'RELEASE_CHECK: isolated resource cleanup failed' >&2
+  fi
+  # From this point onward cleanup is complete. Install the invalidating
+  # handlers before inspecting the recorded signal, closing the check/swap gap.
+  trap 'cancel_summary_publish 129' 1
+  trap 'cancel_summary_publish 130' 2
+  trap 'cancel_summary_publish 143' 15
+  if [ "$status" -eq 0 ]; then
+    if [ "$cleanup_signal_status" -ne 0 ]; then
+      status=$cleanup_signal_status
+    elif [ "$cleanup_status" -ne 0 ]; then
+      status=1
+    fi
+  fi
+  if [ "$cleanup_return" -eq 1 ]; then
+    return "$status"
+  fi
   exit "$status"
 }
-trap cleanup 0 1 2 15
+
+finalize_cleanup() {
+  cleanup_return=1
+  cleanup_result=0
+  cleanup 0 || cleanup_result=$?
+  return "$cleanup_result"
+}
+trap 'cleanup $?' 0
+trap 'exit 129' 1
+trap 'exit 130' 2
+trap 'exit 143' 15
 
 mkdir "$audit_source"
 (
@@ -147,8 +362,68 @@ if [ "$mode" = static ]; then
   exit 0
 fi
 
+if ! git diff --cached --quiet --; then
+  fail 'a full release requires the audited index to equal the signed-off HEAD commit'
+fi
+source_revision=$("$python_bin" -c \
+  'import json,sys; value=json.load(open(sys.argv[1],encoding="utf-8"))["git_head"]; print(value if isinstance(value,str) else "")' \
+  "$audit_report") || fail 'audited source revision is unavailable'
+case "$source_revision" in
+  ????????????????????????????????????????) ;;
+  ????????????????????????????????????????????????????????????????) ;;
+  *) fail 'audited source revision is invalid' ;;
+esac
+case "$source_revision" in
+  *[!0-9a-f]*) fail 'audited source revision is invalid' ;;
+esac
+
 command -v "$docker_bin" >/dev/null 2>&1 || fail 'Docker is unavailable'
 "$docker_bin" info >/dev/null 2>&1 || fail 'Docker daemon is unavailable'
+release_owner=$(PYTHONDONTWRITEBYTECODE=1 "$python_bin" -c \
+  'import secrets; print(secrets.token_hex(16))') || \
+  fail 'release ownership identity could not be generated'
+case "$release_owner" in
+  ????????????????????????????????) ;;
+  *) fail 'release ownership identity is invalid' ;;
+esac
+case "$release_owner" in *[!0-9a-f]*) fail 'release ownership identity is invalid' ;; esac
+release_claim_attempted=1
+if ! release_claim_id=$("$docker_bin" volume create \
+  --label "io.hbcb.release-claim-owner=$release_owner" \
+  "$release_claim_name"); then
+  fail 'another full release check owns this Docker daemon or its claim is stale'
+fi
+[ "$release_claim_id" = "$release_claim_name" ] || fail 'release claim identity is invalid'
+release_claim_identity=$("$docker_bin" volume inspect --format \
+  '{{.Name}}|{{ index .Labels "io.hbcb.release-claim-owner" }}' \
+  "$release_claim_name") || fail 'release claim ownership could not be inspected'
+if [ "$release_claim_identity" != "$release_claim_name|$release_owner" ]; then
+  fail 'another full release check owns this Docker daemon or its claim is stale'
+fi
+initial_resources=$(project_resources) || \
+  fail 'release Compose project resources could not be inspected'
+if [ -n "$initial_resources" ]; then
+  fail 'release Compose project already exists; choose a unique HBCB_RELEASE_RUN_ID'
+fi
+builder_container_name=hbcb-release-$run_id-sbom
+initial_builder=$("$docker_bin" ps --all --no-trunc --quiet \
+  --filter "name=^/$builder_container_name$") || \
+  fail 'temporary release container could not be inspected'
+if [ -n "$initial_builder" ]; then
+  fail 'temporary release container already exists; choose a unique HBCB_RELEASE_RUN_ID'
+fi
+
+corresponding_source=$scratch/corresponding-source
+if [ -n "${HBCB_BLENDER_SOURCE_ARCHIVE:-}" ]; then
+  "$python_bin" "$audit_source/scripts/fetch-corresponding-source" \
+    --policy "$audit_source/release/corresponding-source-policy.json" \
+    --archive "$HBCB_BLENDER_SOURCE_ARCHIVE" \
+    --output-dir "$corresponding_source"
+else
+  "$python_bin" "$audit_source/scripts/fetch-corresponding-source" \
+    --policy "$audit_source/release/corresponding-source-policy.json" \
+    --output-dir "$corresponding_source"
+fi
 
 evidence_parent=$repo/build/release-check
 evidence=$evidence_parent/$run_id
@@ -159,6 +434,8 @@ mkdir -p "$evidence_parent"
 chmod 0700 "$evidence_parent"
 mkdir "$evidence"
 chmod 0700 "$evidence"
+summary_stage=$evidence/release-check-summary.pending
+summary_target=$evidence/release-check-summary.json
 
 mkdir "$work_source"
 (
@@ -171,19 +448,21 @@ builder_work_image=headless-blender-character-builder:release-check-$run_id
 builder_release_image=headless-blender-character-builder:$rc_version
 api_release_image=headless-blender-character-builder-api:$rc_version
 worker_release_image=headless-blender-character-builder-worker:$rc_version
-api_work_image=$compose_project-api:dev
-worker_work_image=$compose_project-worker:dev
 
-service_attempted=1
 (
   cd "$work_source"
   export HBCB_INDEX_AUDITED=1
   export COMPOSE_PROJECT_NAME=$compose_project
+  export HBCB_RELEASE_OWNER=$release_owner
+  HBCB_DISTRIBUTION_VERSION="$rc_version" \
+  HBCB_SOURCE_REVISION="$source_revision" \
   make check \
     PYTHON="$python_bin" \
     DOCKER="$docker_bin" \
     BUILDER_IMAGE="$builder_work_image" \
     TEST_IMAGE="$builder_work_image-test"
+  HBCB_DISTRIBUTION_VERSION="$rc_version" \
+  HBCB_SOURCE_REVISION="$source_revision" \
   make demo \
     DOCKER="$docker_bin" \
     BUILDER_IMAGE="$builder_work_image"
@@ -191,14 +470,32 @@ service_attempted=1
     DOCKER="$docker_bin" \
     BUILDER_IMAGE="$builder_work_image"
   make init-env
+  pre_service_resources=$(project_resources) || \
+    fail 'release Compose project resources could not be inspected before startup'
+  if [ -n "$pre_service_resources" ]; then
+    fail 'release Compose project appeared before startup; choose a unique HBCB_RELEASE_RUN_ID'
+  fi
+  : > "$service_ownership"
+  chmod 0600 "$service_ownership"
   make service-up \
     PYTHON="$python_bin" \
     DOCKER="$docker_bin" \
     BUILDER_IMAGE="$builder_work_image"
+  verify_project_resources_owned || \
+    fail 'release Compose project contains a resource not owned by this run'
+  . ./scripts/service-common
+  hbcb_service_settings
+  make minio-security-check \
+    PYTHON="$python_bin" \
+    DOCKER="$docker_bin" \
+    MINIO_IMAGE="$HBCB_MINIO_IMAGE"
   make service-smoke \
     PYTHON="$python_bin" \
     DOCKER="$docker_bin" \
     BUILDER_IMAGE="$builder_work_image"
+  make orphan-minio-check \
+    PYTHON="$python_bin" \
+    DOCKER="$docker_bin"
   make g8-static \
     PYTHON="$python_bin" \
     DOCKER="$docker_bin" \
@@ -215,8 +512,27 @@ service_attempted=1
 )
 
 "$docker_bin" tag "$builder_work_image" "$builder_release_image"
-"$docker_bin" tag "$api_work_image" "$api_release_image"
-"$docker_bin" tag "$worker_work_image" "$worker_release_image"
+(
+  cd "$work_source"
+  "$docker_bin" build \
+    --file docker/service.Dockerfile \
+    --target api \
+    --build-arg "HBCB_BUILDER_IMAGE=$builder_release_image" \
+    --build-arg "HBCB_DISTRIBUTION_VERSION=$rc_version" \
+    --build-arg "HBCB_SOURCE_REVISION=$source_revision" \
+    --tag "$api_release_image" \
+    --platform linux/amd64 \
+    .
+  "$docker_bin" build \
+    --file docker/service.Dockerfile \
+    --target worker \
+    --build-arg "HBCB_BUILDER_IMAGE=$builder_release_image" \
+    --build-arg "HBCB_DISTRIBUTION_VERSION=$rc_version" \
+    --build-arg "HBCB_SOURCE_REVISION=$source_revision" \
+    --tag "$worker_release_image" \
+    --platform linux/amd64 \
+    .
+)
 
 image_dir=$scratch/images
 mkdir "$image_dir"
@@ -227,12 +543,27 @@ mkdir "$image_dir"
 "$docker_bin" image inspect "$api_release_image" > "$image_dir/api.json"
 "$docker_bin" image inspect "$worker_release_image" > "$image_dir/worker.json"
 
-builder_container=$("$docker_bin" create --platform linux/amd64 "$builder_release_image")
+builder_container_attempted=1
+builder_container_id=$("$docker_bin" create \
+  --name "$builder_container_name" \
+  --label "io.hbcb.release-builder-owner=$release_owner" \
+  --platform linux/amd64 \
+  "$builder_release_image")
+case "$builder_container_id" in
+  ????????????????????????????????????????????????????????????????) ;;
+  *) fail 'temporary release container identity is invalid' ;;
+esac
+case "$builder_container_id" in
+  *[!0-9a-f]*) fail 'temporary release container identity is invalid' ;;
+esac
 "$docker_bin" cp \
-  "$builder_container:/opt/builder/provenance/sbom.spdx.json" \
+  "$builder_container_id:/opt/builder/provenance/sbom.spdx.json" \
   "$scratch/builder-sbom.spdx.json"
-"$docker_bin" rm "$builder_container" >/dev/null
-builder_container=
+"$docker_bin" rm "$builder_container_id" >/dev/null
+remaining_builder=$(owned_builder_containers) || \
+  fail 'temporary release container removal could not be verified'
+[ -z "$remaining_builder" ] || fail 'temporary release container removal failed'
+builder_container_attempted=0
 
 supplements=$scratch/supplements
 "$python_bin" "$audit_source/scripts/service-sbom" \
@@ -244,6 +575,7 @@ supplements=$scratch/supplements
   --source "$audit_source" \
   --audit-report "$audit_report" \
   --supplements-dir "$supplements" \
+  --corresponding-source-dir "$corresponding_source" \
   --demo-artifacts "$work_source/build/demo" \
   --image-inspect "builder=$image_dir/builder.json" \
   --image-inspect "api=$image_dir/api.json" \
@@ -269,7 +601,7 @@ chmod 0600 "$gate_dir/service-smoke-summary.json" "$gate_dir/g8-recovery-summary
 HBCB_RELEASE_METADATA=$evidence/release/release-metadata.json \
 HBCB_SERVICE_SUMMARY=$gate_dir/service-smoke-summary.json \
 HBCB_RECOVERY_SUMMARY=$gate_dir/g8-recovery-summary.json \
-HBCB_RELEASE_SUMMARY=$evidence/release-check-summary.json \
+HBCB_RELEASE_SUMMARY=$summary_stage \
 "$python_bin" - <<'PY'
 import hashlib
 import json
@@ -291,20 +623,24 @@ if recovery.get("result") != "PASS":
 if service.get("result") != "PASS":
     raise SystemExit("service summary is not PASS")
 summary = {
-    "format": "hbcb-release-check/v1",
+    "format": "hbcb-release-check/v2",
     "gates": [
         "indexed-source-audit",
         "unit-contract-security",
         "real-blender",
         "keyless-demo-and-fresh-verify",
         "asynchronous-service",
+        "minio-fixture-security",
         "iam-and-redis",
+        "real-orphan-object-lifecycle",
         "vps-static-and-caddy",
         "backup-restore-retention",
         "sbom-notices-and-packaging",
+        "oci-identity-and-project-blender-source",
     ],
     "git_index_sha256": release["git_index_sha256"],
     "image_ids": release["image_ids"],
+    "corresponding_source_inventory_sha256": release["corresponding_source_inventory_sha256"],
     "recovery_summary_sha256": recovery_sha,
     "release_metadata_sha256": release_sha,
     "result": "PASS",
@@ -317,4 +653,17 @@ output.write_text(json.dumps(summary, sort_keys=True, separators=(",", ":")) + "
 output.chmod(0o600)
 PY
 
+finalize_cleanup
+[ ! -e "$summary_target" ] && [ ! -L "$summary_target" ] || \
+  cancel_summary_publish 1
+# A same-directory hard link provides atomic no-clobber publication. Until the
+# stage is unlinked, the signal handler can prove that it owns the target.
+ln "$summary_stage" "$summary_target" || cancel_summary_publish 1
+summary_promoted=1
+rm -f -- "$summary_stage" || cancel_summary_publish 1
+chmod 0600 "$summary_target" || cancel_summary_publish 1
+# The durable, permissioned summary is the success commit point. Ignore late
+# termination signals before printing PASS so stdout and the authoritative
+# artifact cannot contradict one another in the terminal builtin/exit window.
+trap '' 1 2 15
 printf 'RELEASE_CHECK: PASS evidence=%s\n' "$evidence"

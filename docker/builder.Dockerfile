@@ -35,12 +35,15 @@ RUN set -eux; \
 FROM --platform=linux/amd64 debian:bookworm-20260803-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241 AS builder-base
 
 ARG DEBIAN_SNAPSHOT=20260804T000000Z
+ARG HBCB_DISTRIBUTION_VERSION=0.1.0-local
+ARG HBCB_SOURCE_REVISION=uncommitted
 
 LABEL org.opencontainers.image.title="Headless Blender Character Builder" \
       org.opencontainers.image.description="Deterministic, headless Blender 4.5 LTS character builder" \
       org.opencontainers.image.source="https://github.com/joseph-robert-f/headless-blender-character-builder" \
       org.opencontainers.image.licenses="GPL-3.0-or-later" \
-      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.version="${HBCB_DISTRIBUTION_VERSION}" \
+      org.opencontainers.image.revision="${HBCB_SOURCE_REVISION}" \
       org.opencontainers.image.base.name="debian:bookworm-20260803-slim" \
       org.opencontainers.image.base.digest="sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241" \
       org.blender.version="4.5.12 LTS" \
@@ -187,5 +190,46 @@ ENTRYPOINT ["/opt/blender/4.5/python/bin/python3.11"]
 
 # Keep the production image as both the named `builder` target and Docker's
 # default final target. This makes the documented plain `docker build` safe:
-# test-only dependencies never enter the resulting runtime image.
+# test-only dependencies never enter the resulting runtime image. Blender's
+# upstream archive includes packaging, formatting, and HTTP-client modules for
+# interactive add-on development. The bounded headless runtime does not use
+# them, so remove that dormant network/install surface from the published
+# builder and worker parent while retaining it in the earlier test-only stage.
 FROM builder-base AS builder
+
+USER 0:0
+RUN set -eux; \
+    site=/opt/blender/4.5/python/lib/python3.11/site-packages; \
+    rm -rf \
+      /opt/blender/4.5/python/lib/python3.11/ensurepip \
+      "$site"/_distutils_hack \
+      "$site"/autopep8.py \
+      "$site"/autopep8-*.dist-info \
+      "$site"/certifi \
+      "$site"/certifi-*.dist-info \
+      "$site"/charset_normalizer \
+      "$site"/charset_normalizer-*.dist-info \
+      "$site"/Cython \
+      "$site"/Cython-*.egg-info \
+      "$site"/cython.py \
+      "$site"/distutils-precedence.pth \
+      "$site"/idna \
+      "$site"/idna-*.dist-info \
+      "$site"/pip \
+      "$site"/pip-*.dist-info \
+      "$site"/pkg_resources \
+      "$site"/pycodestyle.py \
+      "$site"/pycodestyle-*.dist-info \
+      "$site"/pyximport \
+      "$site"/requests \
+      "$site"/requests-*.dist-info \
+      "$site"/setuptools \
+      "$site"/setuptools-*.dist-info \
+      "$site"/urllib3 \
+      "$site"/urllib3-*.dist-info; \
+    test ! -e "$site/pip"; \
+    test ! -e "$site/setuptools"; \
+    test ! -e "$site/requests"; \
+    /opt/blender/4.5/python/bin/python3.11 -c 'import MaterialX, numpy, zstandard'
+
+USER 65532:65532

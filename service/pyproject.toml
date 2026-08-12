@@ -9,16 +9,16 @@ description = "Durable service adapters for Headless Blender Character Builder."
 requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
 dependencies = [
-  "async-timeout==4.0.3",
-  "fastapi==0.139.2",
+  "async-timeout==5.0.1",
+  "fastapi==0.141.1",
   "minio==7.2.20",
   "psycopg[binary]==3.3.4",
-  "redis==8.0.1",
-  "uvicorn==0.51.0",
+  "redis==8.1.0",
+  "uvicorn==0.52.1",
 ]
 
 [project.optional-dependencies]
-test = ["httpx2==2.7.0"]
+test = ["httpx2==2.10.0"]
 
 [project.scripts]
 hbcb-api = "hbcb_service.api_main:main"

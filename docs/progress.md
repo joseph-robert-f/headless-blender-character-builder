@@ -544,9 +544,10 @@ Conditions and scope:
 - GitHub license/security UI, registry pushes and immutable registry digests,
   image signing, a signed Git tag, GitHub Release creation, and an independent
   clean-room quickstart remain explicit operator actions;
-- public OCI pushes remain blocked until the exact image corresponding-source
-  inventory, delivery method, checksums, and retention policy pass independent
-  review; source publication is a separate gate;
+- public OCI pushes remain blocked; the current image-bound inventory covers
+  project and Blender source only and declares `public_oci_ready: false` until
+  actual-image review covers every applicable native, base-image, and copyleft
+  source/delivery duty; source publication is a separate gate;
 - live DNS, ACME/TLS, firewall, external provider IAM/egress, off-host backup,
   and public operator smoke remain conditional on owner-supplied infrastructure
   and authorization;

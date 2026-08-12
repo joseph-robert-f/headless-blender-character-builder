@@ -7,10 +7,13 @@ import hashlib
 import io
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -309,6 +312,7 @@ class VpsOperatorTests(unittest.TestCase):
         lock = Path("/etc/hbcb/release.lock.env")
         with (
             mock.patch.object(VPS.os, "geteuid", return_value=VPS.ROOT_OPERATOR_UID),
+            mock.patch.object(VPS.sys, "version_info", (3, 11, 0)),
             mock.patch.object(
                 VPS,
                 "preflight",
@@ -334,6 +338,17 @@ class VpsOperatorTests(unittest.TestCase):
             offline=True,
             root_trust=True,
         )
+
+    def test_vps_runtime_rejects_old_python_before_parsing_or_preflight(self) -> None:
+        with (
+            mock.patch.object(VPS.sys, "version_info", (3, 10, 14)),
+            mock.patch.object(VPS, "_parse_args") as parse,
+            mock.patch.object(VPS, "preflight") as preflight,
+            self.assertRaisesRegex(VPS.OperatorError, "Python 3.11 or newer"),
+        ):
+            VPS.main(["preflight"])
+        parse.assert_not_called()
+        preflight.assert_not_called()
 
     def test_root_compose_executable_and_environment_are_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -395,14 +410,14 @@ class VpsOperatorTests(unittest.TestCase):
                 stderr=b"",
             )
             with self.subTest(rendered=rendered), mock.patch.object(
-                VPS.subprocess, "run", return_value=completed
+                VPS, "_run_bounded", return_value=completed
             ) as run:
                 VPS._validate_compose_version(["/usr/bin/docker", "compose"], environment)
                 self.assertEqual(
                     run.call_args.args[0],
                     ["/usr/bin/docker", "compose", "version", "--short"],
                 )
-                self.assertEqual(run.call_args.kwargs["timeout"], 30)
+                self.assertEqual(run.call_args.kwargs["timeout_seconds"], 30)
 
         for rendered in ("1.29.2", "2.24.3", "2.24", "Docker Compose 2.24.4", ""):
             completed = subprocess.CompletedProcess(
@@ -412,7 +427,7 @@ class VpsOperatorTests(unittest.TestCase):
                 stderr=b"",
             )
             with self.subTest(rendered=rendered), mock.patch.object(
-                VPS.subprocess, "run", return_value=completed
+                VPS, "_run_bounded", return_value=completed
             ):
                 with self.assertRaisesRegex(VPS.OperatorError, "2.24.4 or newer"):
                     VPS._validate_compose_version(["compose"], environment)
@@ -420,10 +435,416 @@ class VpsOperatorTests(unittest.TestCase):
         failed = subprocess.CompletedProcess(
             args=[], returncode=1, stdout=b"", stderr=b"private"
         )
-        with mock.patch.object(VPS.subprocess, "run", return_value=failed):
+        with mock.patch.object(VPS, "_run_bounded", return_value=failed):
             with self.assertRaisesRegex(VPS.OperatorError, "2.24.4 or newer") as raised:
                 VPS._validate_compose_version(["compose"], environment)
         self.assertNotIn("private", str(raised.exception))
+
+    def test_bounded_runner_kills_hangs_and_rejects_oversized_output(self) -> None:
+        secret = "do-not-echo-this-secret"
+        with tempfile.TemporaryDirectory() as temporary:
+            started_child = Path(temporary) / "descendant-started"
+            survived = Path(temporary) / "descendant-survived"
+            descendant = (
+                "import pathlib,signal,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"pathlib.Path({str(started_child)!r}).write_text('started'); "
+                "time.sleep(1.0); "
+                f"pathlib.Path({str(survived)!r}).write_text('unsafe')"
+            )
+            hanging = [
+                sys.executable,
+                "-c",
+                "import signal,subprocess,sys,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); "
+                "time.sleep(60)",
+            ]
+            started = time.monotonic()
+            with mock.patch.object(VPS, "TERMINATION_GRACE_SECONDS", 0.05):
+                with self.assertRaisesRegex(VPS.OperatorError, "wall-clock deadline") as raised:
+                    VPS._run_bounded(
+                        hanging,
+                        label="bounded hang probe",
+                        environment=os.environ,
+                        timeout_seconds=0.4,
+                    )
+            self.assertLess(time.monotonic() - started, 3)
+            self.assertNotIn(secret, str(raised.exception))
+            self.assertTrue(started_child.exists())
+            time.sleep(1.1)
+            self.assertFalse(survived.exists())
+
+        oversized = [
+            sys.executable,
+            "-c",
+            f"import sys,time; sys.stdout.write({secret!r} * 4096); "
+            "sys.stdout.flush(); time.sleep(60)",
+        ]
+        started = time.monotonic()
+        with mock.patch.object(VPS, "TERMINATION_GRACE_SECONDS", 0.05):
+            with self.assertRaisesRegex(VPS.OperatorError, "bounded output limit") as raised:
+                VPS._run_bounded(
+                    oversized,
+                    label="bounded output probe",
+                    environment=os.environ,
+                    timeout_seconds=2,
+                    stdout_limit_bytes=1024,
+                )
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertNotIn(secret, str(raised.exception))
+
+        sink = io.BytesIO()
+        streamed = VPS._run_bounded(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.buffer.write(b'x' * 4096)",
+            ],
+            label="streaming output probe",
+            environment=os.environ,
+            timeout_seconds=2,
+            stdout_sink=sink,
+            stdout_limit_bytes=4096,
+        )
+        self.assertEqual(streamed.returncode, 0)
+        self.assertEqual(streamed.stdout, b"")
+        self.assertEqual(sink.getvalue(), b"x" * 4096)
+
+        with self.assertRaisesRegex(VPS.OperatorError, "failed with exit 7") as raised:
+            VPS._run_safe(
+                [
+                    sys.executable,
+                    "-c",
+                    f"import sys; sys.stderr.write({secret!r}); raise SystemExit(7)",
+                ],
+                label="secret-safe failure probe",
+                environment=os.environ,
+                timeout_seconds=2,
+            )
+        self.assertNotIn(secret, str(raised.exception))
+
+    def test_termination_signal_kills_child_tree_before_guard_returns(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            started = Path(temporary) / "started"
+            survived = Path(temporary) / "survived"
+            child = (
+                "import pathlib,signal,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"pathlib.Path({str(started)!r}).write_text('started'); "
+                "time.sleep(1.0); "
+                f"pathlib.Path({str(survived)!r}).write_text('unsafe')"
+            )
+            command = [
+                sys.executable,
+                "-c",
+                "import signal,subprocess,sys,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"subprocess.Popen([sys.executable, '-c', {child!r}]); "
+                "time.sleep(60)",
+            ]
+
+            def interrupt() -> None:
+                deadline = time.monotonic() + 3
+                while not started.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                os.kill(os.getpid(), signal.SIGTERM)
+
+            sender = threading.Thread(target=interrupt, daemon=True)
+            sender.start()
+            with mock.patch.object(VPS, "TERMINATION_GRACE_SECONDS", 0.05):
+                with self.assertRaisesRegex(
+                    VPS.OperatorInterrupted, "signal interruption probe was interrupted"
+                ):
+                    with VPS._termination_signal_guard():
+                        VPS._run_bounded(
+                            command,
+                            label="signal interruption probe",
+                            environment=os.environ,
+                            timeout_seconds=5,
+                        )
+            sender.join(timeout=1)
+            self.assertFalse(sender.is_alive())
+            self.assertIsNone(VPS._ACTIVE_CHILD)
+            time.sleep(1.1)
+            self.assertFalse(survived.exists())
+
+    def test_termination_during_spawn_is_deferred_until_child_is_published(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            survived = Path(temporary) / "spawn-race-survived"
+            command = [
+                sys.executable,
+                "-c",
+                "import pathlib,signal,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "time.sleep(1.0); "
+                f"pathlib.Path({str(survived)!r}).write_text('unsafe')",
+            ]
+            original_popen = subprocess.Popen
+
+            def signal_before_return(*args, **kwargs):
+                process = original_popen(*args, **kwargs)
+                os.kill(os.getpid(), signal.SIGTERM)
+                return process
+
+            with (
+                mock.patch.object(VPS, "TERMINATION_GRACE_SECONDS", 0.05),
+                mock.patch.object(VPS.subprocess, "Popen", side_effect=signal_before_return),
+            ):
+                with self.assertRaisesRegex(
+                    VPS.OperatorInterrupted, "spawn interruption probe was interrupted"
+                ):
+                    with VPS._termination_signal_guard():
+                        VPS._run_bounded(
+                            command,
+                            label="spawn interruption probe",
+                            environment=os.environ,
+                            timeout_seconds=5,
+                        )
+            self.assertIsNone(VPS._ACTIVE_CHILD)
+            time.sleep(1.1)
+            self.assertFalse(survived.exists())
+
+    def test_selector_setup_failure_terminates_and_reaps_child_group(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            started = Path(temporary) / "selector-child-started"
+            survived = Path(temporary) / "selector-child-survived"
+            descendant = (
+                "import pathlib,signal,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"pathlib.Path({str(started)!r}).write_text('started'); "
+                "time.sleep(1.0); "
+                f"pathlib.Path({str(survived)!r}).write_text('unsafe')"
+            )
+            command = [
+                sys.executable,
+                "-c",
+                "import signal,subprocess,sys,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); "
+                "time.sleep(60)",
+            ]
+            original_popen = subprocess.Popen
+            spawned: list[subprocess.Popen[bytes]] = []
+
+            def wait_until_child_is_term_resistant(*args, **kwargs):
+                process = original_popen(*args, **kwargs)
+                spawned.append(process)
+                deadline = time.monotonic() + 3
+                while not started.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                if not started.exists():
+                    VPS._terminate_process_group(process)
+                    self.fail("TERM-resistant child group did not become ready")
+                return process
+
+            with (
+                mock.patch.object(VPS, "TERMINATION_GRACE_SECONDS", 0.05),
+                mock.patch.object(
+                    VPS.subprocess,
+                    "Popen",
+                    side_effect=wait_until_child_is_term_resistant,
+                ),
+                mock.patch.object(
+                    VPS.selectors,
+                    "DefaultSelector",
+                    side_effect=RuntimeError("selector construction failed"),
+                ),
+                self.assertRaisesRegex(RuntimeError, "selector construction failed"),
+            ):
+                VPS._run_bounded(
+                    command,
+                    label="selector construction probe",
+                    environment=os.environ,
+                    timeout_seconds=5,
+                )
+
+            self.assertEqual(len(spawned), 1)
+            process = spawned[0]
+            self.assertIsNone(VPS._ACTIVE_CHILD)
+            self.assertIsNotNone(process.poll())
+            deadline = time.monotonic() + 1
+            while VPS._process_group_exists(process.pid) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertFalse(VPS._process_group_exists(process.pid))
+            time.sleep(1.1)
+            self.assertFalse(survived.exists())
+
+    def test_signal_mask_restore_failure_terminates_and_reaps_child_group(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            started = Path(temporary) / "mask-restore-child-started"
+            survived = Path(temporary) / "mask-restore-child-survived"
+            descendant = (
+                "import pathlib,signal,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"pathlib.Path({str(started)!r}).write_text('started'); "
+                "time.sleep(1.0); "
+                f"pathlib.Path({str(survived)!r}).write_text('unsafe')"
+            )
+            command = [
+                sys.executable,
+                "-c",
+                "import signal,subprocess,sys,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); "
+                "time.sleep(60)",
+            ]
+            original_popen = subprocess.Popen
+            original_pthread_sigmask = signal.pthread_sigmask
+            spawned: list[subprocess.Popen[bytes]] = []
+
+            def wait_until_child_is_term_resistant(*args, **kwargs):
+                process = original_popen(*args, **kwargs)
+                spawned.append(process)
+                deadline = time.monotonic() + 3
+                while not started.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                if not started.exists():
+                    VPS._terminate_process_group(process)
+                    self.fail("TERM-resistant child group did not become ready")
+                return process
+
+            def restore_then_report_failure(how, mask):
+                previous = original_pthread_sigmask(how, mask)
+                if how == signal.SIG_SETMASK:
+                    raise OSError("signal mask restoration failed")
+                return previous
+
+            with (
+                mock.patch.object(VPS, "TERMINATION_GRACE_SECONDS", 0.05),
+                mock.patch.object(
+                    VPS.subprocess,
+                    "Popen",
+                    side_effect=wait_until_child_is_term_resistant,
+                ),
+                mock.patch.object(
+                    VPS.signal,
+                    "pthread_sigmask",
+                    side_effect=restore_then_report_failure,
+                ),
+                self.assertRaisesRegex(
+                    VPS.OperatorError,
+                    "cannot establish signal-safe execution",
+                ),
+            ):
+                VPS._run_bounded(
+                    command,
+                    label="signal mask restoration probe",
+                    environment=os.environ,
+                    timeout_seconds=5,
+                )
+
+            self.assertEqual(len(spawned), 1)
+            process = spawned[0]
+            self.assertIsNone(VPS._ACTIVE_CHILD)
+            self.assertIsNotNone(process.poll())
+            deadline = time.monotonic() + 1
+            while VPS._process_group_exists(process.pid) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertFalse(VPS._process_group_exists(process.pid))
+            time.sleep(1.1)
+            self.assertFalse(survived.exists())
+
+    def test_termination_after_output_closes_interrupts_final_wait_promptly(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            started = Path(temporary) / "closed-pipes-started"
+            survived = Path(temporary) / "closed-pipes-survived"
+            command = [
+                sys.executable,
+                "-c",
+                "import os,pathlib,signal,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "os.close(1); os.close(2); "
+                f"pathlib.Path({str(started)!r}).write_text('started'); "
+                "time.sleep(1.0); "
+                f"pathlib.Path({str(survived)!r}).write_text('unsafe')",
+            ]
+
+            def interrupt() -> None:
+                deadline = time.monotonic() + 3
+                while not started.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                os.kill(os.getpid(), signal.SIGTERM)
+
+            sender = threading.Thread(target=interrupt, daemon=True)
+            sender.start()
+            started_at = time.monotonic()
+            with mock.patch.object(VPS, "TERMINATION_GRACE_SECONDS", 0.05):
+                with self.assertRaisesRegex(
+                    VPS.OperatorInterrupted, "closed-pipe interruption probe was interrupted"
+                ):
+                    with VPS._termination_signal_guard():
+                        VPS._run_bounded(
+                            command,
+                            label="closed-pipe interruption probe",
+                            environment=os.environ,
+                            timeout_seconds=5,
+                        )
+            sender.join(timeout=1)
+            self.assertFalse(sender.is_alive())
+            self.assertLess(time.monotonic() - started_at, 1.0)
+            self.assertIsNone(VPS._ACTIVE_CHILD)
+            time.sleep(1.1)
+            self.assertFalse(survived.exists())
+
+    def test_sigint_during_spawn_uses_the_same_child_tree_teardown(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            survived = Path(temporary) / "sigint-spawn-race-survived"
+            command = [
+                sys.executable,
+                "-c",
+                "import pathlib,signal,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "time.sleep(1.0); "
+                f"pathlib.Path({str(survived)!r}).write_text('unsafe')",
+            ]
+            original_popen = subprocess.Popen
+
+            def signal_before_return(*args, **kwargs):
+                process = original_popen(*args, **kwargs)
+                os.kill(os.getpid(), signal.SIGINT)
+                return process
+
+            with (
+                mock.patch.object(VPS, "TERMINATION_GRACE_SECONDS", 0.05),
+                mock.patch.object(VPS.subprocess, "Popen", side_effect=signal_before_return),
+            ):
+                with self.assertRaisesRegex(
+                    VPS.OperatorInterrupted, "SIGINT spawn interruption probe was interrupted"
+                ):
+                    with VPS._termination_signal_guard():
+                        VPS._run_bounded(
+                            command,
+                            label="SIGINT spawn interruption probe",
+                            environment=os.environ,
+                            timeout_seconds=5,
+                        )
+            self.assertIsNone(VPS._ACTIVE_CHILD)
+            time.sleep(1.1)
+            self.assertFalse(survived.exists())
+
+    def test_quiescence_probe_uses_only_the_remaining_drain_deadline(self) -> None:
+        with (
+            mock.patch.object(
+                VPS.time,
+                "monotonic",
+                side_effect=(100.0, 101.0, 120.0, 130.0),
+            ),
+            mock.patch.object(VPS.time, "sleep"),
+            mock.patch.object(
+                VPS,
+                "_maintenance_probe",
+                return_value=(False, "backup_not_quiescent"),
+            ) as probe,
+        ):
+            with self.assertRaisesRegex(VPS.OperatorError, "worker drain timed out"):
+                VPS._wait_for_quiescence(
+                    ["compose"],
+                    os.environ,
+                    timeout_seconds=30,
+                )
+        self.assertEqual(probe.call_count, 1)
+        self.assertEqual(probe.call_args.kwargs["timeout_seconds"], 29.0)
 
     def test_operator_lock_is_private_persistent_and_excludes_another_process(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -527,6 +948,37 @@ class VpsOperatorTests(unittest.TestCase):
         self.assertNotIn("worker", substrate_command)
         self.assertNotIn("caddy", substrate_command)
 
+    def test_failed_writer_stop_still_attempts_every_service_and_database_reseal(self) -> None:
+        attempted: list[str] = []
+
+        def stop(command, **_kwargs):
+            attempted.append(command[-1])
+            if command[-1] == "caddy":
+                raise VPS.OperatorError("deadline")
+
+        with mock.patch.object(VPS, "_run_safe", side_effect=stop):
+            with self.assertRaisesRegex(VPS.OperatorError, "did not converge"):
+                VPS._stop_writers(["compose"], os.environ, include_worker=True)
+        self.assertEqual(attempted, ["caddy", "api", "worker"])
+
+        with (
+            mock.patch.object(
+                VPS,
+                "_stop_writers",
+                side_effect=VPS.OperatorError("stop deadline"),
+            ),
+            mock.patch.object(VPS, "_set_database_read_only") as reseal,
+        ):
+            with self.assertRaisesRegex(VPS.OperatorError, "preserved safely"):
+                VPS._reseal_after_upgrade_failure(
+                    ["compose"],
+                    os.environ,
+                    failure_message=(
+                        "upgrade failed and its handoff could not be preserved safely"
+                    ),
+                )
+        reseal.assert_called_once_with(["compose"], os.environ, enabled=True)
+
     def test_upgrade_handoff_is_atomic_bound_read_only_and_consumable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -619,6 +1071,21 @@ class VpsOperatorTests(unittest.TestCase):
             upgrade_args = VPS._parse_args(
                 ["upgrade", "--backup", str(bundle), "--confirm"]
             )
+
+            def hanging_upgrade(*_args, **_kwargs):
+                VPS._run_safe(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import signal,time; "
+                        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                        "time.sleep(60)",
+                    ],
+                    label="upgrade image pull",
+                    environment=os.environ,
+                    timeout_seconds=0.15,
+                )
+
             with (
                 portable_root_ownership(),
                 mock.patch.object(VPS, "_stop_writers"),
@@ -626,17 +1093,18 @@ class VpsOperatorTests(unittest.TestCase):
                 mock.patch.object(
                     VPS,
                     "_upgrade_from_verified_backup",
-                    side_effect=VPS.OperatorError("startup failed after migration"),
+                    side_effect=hanging_upgrade,
                 ),
-                mock.patch.object(VPS, "_set_database_read_only"),
+                mock.patch.object(VPS, "_set_database_read_only") as set_read_only,
                 mock.patch.object(
                     VPS,
                     "_database_handoff_identity",
                     return_value=("123456789", 16384, True),
                 ),
                 mock.patch.object(VPS, "_assert_single_namespace"),
+                mock.patch.object(VPS, "TERMINATION_GRACE_SECONDS", 0.05),
             ):
-                with self.assertRaisesRegex(VPS.OperatorError, "after migration"):
+                with self.assertRaisesRegex(VPS.OperatorError, "wall-clock deadline"):
                     VPS._execute_operator_action(
                         upgrade_args,
                         vps,
@@ -645,6 +1113,9 @@ class VpsOperatorTests(unittest.TestCase):
                         config_path,
                         target_lock,
                     )
+                self.assertTrue(
+                    any(call.kwargs.get("enabled") is True for call in set_read_only.call_args_list)
+                )
 
                 upgrading = VPS._load_upgrade_handoff(state)
                 assert upgrading is not None
@@ -815,6 +1286,61 @@ class VpsOperatorTests(unittest.TestCase):
             restart.assert_called_once()
             self.assertEqual(list(backup_root.iterdir()), [])
 
+    def test_hanging_backup_releases_lock_cleans_stage_and_restarts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            backup_root = root / "backups"
+            backup_root.mkdir(mode=0o700)
+            state = root / "state"
+            state.mkdir(mode=0o700)
+            vps = valid_vps_environment(root)
+            lock = valid_lock()
+            config_path = root / "vps.env"
+            lock_path = root / "lock.env"
+            write_env(config_path, vps)
+            write_env(lock_path, lock)
+
+            def hanging_stop(_prefix, _environment, *, include_worker):
+                del include_worker
+                VPS._run_safe(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import signal,time; "
+                        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                        "time.sleep(60)",
+                    ],
+                    label="public ingress stop",
+                    environment=os.environ,
+                    timeout_seconds=0.15,
+                )
+
+            with (
+                portable_root_ownership(),
+                mock.patch.object(VPS, "_require_root_operator"),
+                mock.patch.object(VPS, "_stop_writers", side_effect=hanging_stop),
+                mock.patch.object(VPS, "_restart_live_application") as restart,
+                mock.patch.object(VPS, "TERMINATION_GRACE_SECONDS", 0.05),
+            ):
+                with self.assertRaisesRegex(VPS.OperatorError, "wall-clock deadline"):
+                    with VPS._exclusive_operator_lock(state):
+                        VPS._backup_bundle(
+                            vps,
+                            lock,
+                            config_path,
+                            lock_path,
+                            ["compose"],
+                            os.environ,
+                            drain_timeout_seconds=30,
+                        )
+                with VPS._exclusive_operator_lock(state):
+                    pass
+
+            restart.assert_called_once()
+            self.assertFalse(
+                any(path.name.startswith(".partial-") for path in backup_root.iterdir())
+            )
+
     def test_backup_partial_stop_failure_still_converges_live_application(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -875,8 +1401,9 @@ class VpsOperatorTests(unittest.TestCase):
                 expected_keys,
                 host_backup,
                 read_only=False,
+                transfer=False,
             ):
-                del label, environment, expected_keys, read_only
+                del label, environment, expected_keys, read_only, transfer
                 exported = host_backup / VPS.BACKUP_OBJECTS
                 exported.mkdir(mode=0o700)
                 (exported / "objects").mkdir(mode=0o700)
@@ -993,9 +1520,171 @@ class VpsOperatorTests(unittest.TestCase):
         self.assertFalse(parsed.confirm)
         self.assertFalse(parsed.confirm_empty_target)
         self.assertEqual(parsed.action, "restore")
+        configured = VPS._parse_args(
+            [
+                "preflight",
+                "--command-timeout-seconds",
+                "1200",
+                "--transfer-timeout-seconds",
+                "18000",
+            ]
+        )
+        limits = VPS._execution_limits_from_args(configured)
+        self.assertEqual(limits.command_timeout_seconds, 1200)
+        self.assertEqual(limits.transfer_timeout_seconds, 18000)
+        for option, value in (
+            ("--command-timeout-seconds", "29"),
+            ("--transfer-timeout-seconds", "86401"),
+        ):
+            with self.subTest(option=option, value=value):
+                invalid = VPS._parse_args(["preflight", option, value])
+                with self.assertRaisesRegex(VPS.OperatorError, "outside policy"):
+                    VPS._execution_limits_from_args(invalid)
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
                 VPS._parse_args(["image-only-rollback"])
+
+    def test_orphan_discovery_wrapper_binds_apply_to_preview_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = root / "state"
+            state.mkdir(mode=0o700)
+            vps = valid_vps_environment(root)
+            config_path = root / "vps.env"
+            lock_path = root / "release.lock.env"
+            write_env(config_path, vps)
+            write_env(lock_path, valid_lock())
+            preview = VPS._parse_args(
+                [
+                    "orphan-discovery-preview",
+                    "--limit",
+                    "25",
+                    "--scan-limit",
+                    "500",
+                ]
+            )
+            result = {
+                "candidates": 3,
+                "dry_run": True,
+                "queued": 0,
+                "scanned": 400,
+            }
+            with (
+                portable_root_ownership(),
+                mock.patch.object(
+                    VPS,
+                    "_maintenance_result",
+                    return_value=result,
+                ) as maintenance,
+                contextlib.redirect_stdout(io.StringIO()) as output,
+            ):
+                self.assertEqual(
+                    VPS._execute_operator_action(
+                        preview,
+                        vps,
+                        os.environ,
+                        ["compose"],
+                        config_path,
+                        lock_path,
+                    ),
+                    0,
+                )
+            token = VPS._orphan_discovery_confirmation_token(25, 500)
+            self.assertIn(f"confirmation_token={token}", output.getvalue())
+            self.assertEqual(
+                maintenance.call_args.args[1],
+                [
+                    "discover-orphans",
+                    "--limit",
+                    "25",
+                    "--scan-limit",
+                    "500",
+                ],
+            )
+
+            for supplied in (None, "discover-orphans:25:499"):
+                arguments = [
+                    "orphan-discovery-apply",
+                    "--limit",
+                    "25",
+                    "--scan-limit",
+                    "500",
+                    "--confirm",
+                ]
+                if supplied is not None:
+                    arguments.extend(["--confirmation-token", supplied])
+                apply_args = VPS._parse_args(arguments)
+                with (
+                    portable_root_ownership(),
+                    mock.patch.object(VPS, "_maintenance_result") as uncalled,
+                ):
+                    with self.assertRaisesRegex(
+                        VPS.OperatorError,
+                        "scope-bound --confirmation-token",
+                    ):
+                        VPS._execute_operator_action(
+                            apply_args,
+                            vps,
+                            os.environ,
+                            ["compose"],
+                            config_path,
+                            lock_path,
+                        )
+                uncalled.assert_not_called()
+
+            apply_args = VPS._parse_args(
+                [
+                    "orphan-discovery-apply",
+                    "--limit",
+                    "25",
+                    "--scan-limit",
+                    "500",
+                    "--confirm",
+                    "--confirmation-token",
+                    token,
+                ]
+            )
+            applied = dict(result, dry_run=False, queued=3)
+            with (
+                portable_root_ownership(),
+                mock.patch.object(
+                    VPS,
+                    "_maintenance_result",
+                    return_value=applied,
+                ) as maintenance,
+                contextlib.redirect_stdout(io.StringIO()) as output,
+            ):
+                self.assertEqual(
+                    VPS._execute_operator_action(
+                        apply_args,
+                        vps,
+                        os.environ,
+                        ["compose"],
+                        config_path,
+                        lock_path,
+                    ),
+                    0,
+                )
+            self.assertIn("queued=3", output.getvalue())
+            self.assertEqual(maintenance.call_args.args[1][-1], "--apply")
+
+    def test_orphan_discovery_result_and_cli_limits_fail_closed(self) -> None:
+        with self.assertRaisesRegex(VPS.OperatorError, "invalid evidence"):
+            VPS._validated_orphan_discovery_result(
+                {
+                    "candidates": 2,
+                    "dry_run": False,
+                    "queued": 1,
+                    "scanned": 5,
+                },
+                apply=True,
+                limit=10,
+                scan_limit=10,
+            )
+        for option, value in (("--limit", "1001"), ("--scan-limit", "100001")):
+            with self.subTest(option=option), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    VPS._parse_args(["orphan-discovery-preview", option, value])
 
     def test_script_is_executable_and_not_group_world_writable(self) -> None:
         mode = stat.S_IMODE((ROOT / "scripts" / "vps").stat().st_mode)
@@ -1006,15 +1695,15 @@ class VpsOperatorTests(unittest.TestCase):
 
     def test_live_storage_network_must_be_docker_internal(self) -> None:
         with mock.patch.object(
-            VPS.subprocess,
-            "run",
-            return_value=SimpleNamespace(returncode=0, stdout="true\n", stderr=""),
+            VPS,
+            "_run_bounded",
+            return_value=SimpleNamespace(returncode=0, stdout=b"true\n", stderr=b""),
         ):
             VPS._validate_private_storage_network("hbcb-storage-private", os.environ)
         with mock.patch.object(
-            VPS.subprocess,
-            "run",
-            return_value=SimpleNamespace(returncode=0, stdout="false\n", stderr=""),
+            VPS,
+            "_run_bounded",
+            return_value=SimpleNamespace(returncode=0, stdout=b"false\n", stderr=b""),
         ):
             with self.assertRaises(VPS.OperatorError):
                 VPS._validate_private_storage_network("hbcb-storage-private", os.environ)

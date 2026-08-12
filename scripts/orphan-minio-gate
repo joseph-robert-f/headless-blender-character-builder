@@ -1,0 +1,269 @@
+#!/bin/sh
+set -eu
+
+umask 077
+
+fail() {
+  printf 'ORPHAN_MINIO_GATE: %s\n' "$1" >&2
+  exit "${2:-1}"
+}
+
+if [ "$#" -ne 0 ]; then
+  fail 'usage: scripts/orphan-minio-gate' 2
+fi
+
+script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
+repo=$(CDPATH= cd "$script_dir/.." && pwd -P)
+cd "$repo"
+compose_file=$repo/tests/service_integration/g8_orphan_minio_compose.yaml
+test -f "$compose_file" || fail 'run from a complete repository checkout' 2
+
+docker_bin=${DOCKER:-docker}
+python_bin=${PYTHON:-python3}
+valid_tool_selector() {
+  [ "${#1}" -le 4096 ] || return 1
+  case "$1" in ''|-*|*[![:graph:]]*) return 1 ;; esac
+}
+valid_tool_selector "$docker_bin" || fail 'DOCKER must name one safe executable' 3
+valid_tool_selector "$python_bin" || fail 'PYTHON must name one safe executable' 3
+command -v "$docker_bin" >/dev/null 2>&1 || fail 'Docker is unavailable' 3
+command -v "$python_bin" >/dev/null 2>&1 || fail 'Python is unavailable' 3
+"$docker_bin" info >/dev/null 2>&1 || fail 'Docker daemon is unavailable' 3
+
+# Resolve the same image tags used by the local service without sourcing the
+# credential file.  Callers may select different already-built images through
+# the two gate-specific environment variables.
+# shellcheck source=service-common
+. "$script_dir/service-common"
+hbcb_service_settings >/dev/null || fail 'local service settings are invalid' 3
+service_reference=${HBCB_ORPHAN_SERVICE_IMAGE:-$HBCB_SERVICE_TEST_IMAGE}
+minio_reference=${HBCB_ORPHAN_MINIO_IMAGE:-$HBCB_MINIO_IMAGE}
+
+image_id() {
+  selected_reference=$1
+  selected_label=$2
+  case "$selected_reference" in
+    ''|-*|*[![:graph:]]*) fail "$selected_label image reference is invalid" 4 ;;
+  esac
+  [ "${#selected_reference}" -le 512 ] || fail "$selected_label image reference is invalid" 4
+  selected_metadata=$("$docker_bin" image inspect \
+    --format '{{.Os}}/{{.Architecture}}|{{.Id}}' "$selected_reference" 2>/dev/null) || \
+    fail "$selected_label image is unavailable; run make service-smoke after make service-up" 4
+  selected_platform=${selected_metadata%%|*}
+  selected_id=${selected_metadata#*|}
+  [ "$selected_platform" = linux/amd64 ] || fail "$selected_label image must be linux/amd64" 4
+  case "$selected_id" in
+    sha256:????????????????????????????????????????????????????????????????) ;;
+    *) fail "$selected_label image ID is invalid" 4 ;;
+  esac
+  printf '%s\n' "$selected_id"
+}
+
+HBCB_ORPHAN_SERVICE_IMAGE_ID=$(image_id "$service_reference" service-test)
+HBCB_ORPHAN_MINIO_IMAGE_ID=$(image_id "$minio_reference" MinIO)
+export HBCB_ORPHAN_SERVICE_IMAGE_ID HBCB_ORPHAN_MINIO_IMAGE_ID
+
+random_hex() {
+  "$python_bin" -c \
+    'import secrets,sys; print(secrets.token_hex(int(sys.argv[1])))' "$1"
+}
+project=hbcb-orphan-$(random_hex 6)
+case "$project" in
+  hbcb-orphan-????????????) ;;
+  *) fail 'disposable project identity could not be generated' 5 ;;
+esac
+
+HBCB_ORPHAN_DATABASE_ADMIN_PASSWORD=$(random_hex 32)
+HBCB_ORPHAN_DATABASE_API_PASSWORD=$(random_hex 32)
+HBCB_ORPHAN_DATABASE_WORKER_PASSWORD=$(random_hex 32)
+HBCB_ORPHAN_DATABASE_MAINTENANCE_PASSWORD=$(random_hex 32)
+HBCB_ORPHAN_DATABASE_MIGRATOR_PASSWORD=$(random_hex 32)
+HBCB_ORPHAN_MINIO_ROOT_PASSWORD=$(random_hex 32)
+HBCB_ORPHAN_STORAGE_API_SECRET=$(random_hex 32)
+HBCB_ORPHAN_STORAGE_WORKER_SECRET=$(random_hex 32)
+HBCB_ORPHAN_STORAGE_MAINTENANCE_SECRET=$(random_hex 32)
+HBCB_ORPHAN_STORAGE_MAINTENANCE_SECRET_SHA256=$(printf '%s' \
+  "$HBCB_ORPHAN_STORAGE_MAINTENANCE_SECRET" | "$python_bin" -c \
+  'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')
+export HBCB_ORPHAN_DATABASE_ADMIN_PASSWORD
+export HBCB_ORPHAN_DATABASE_API_PASSWORD HBCB_ORPHAN_DATABASE_WORKER_PASSWORD
+export HBCB_ORPHAN_DATABASE_MAINTENANCE_PASSWORD HBCB_ORPHAN_DATABASE_MIGRATOR_PASSWORD
+export HBCB_ORPHAN_MINIO_ROOT_PASSWORD HBCB_ORPHAN_STORAGE_API_SECRET
+export HBCB_ORPHAN_STORAGE_WORKER_SECRET HBCB_ORPHAN_STORAGE_MAINTENANCE_SECRET
+export HBCB_ORPHAN_STORAGE_MAINTENANCE_SECRET_SHA256
+
+compose() {
+  if [ -n "${HBCB_COMPOSE_BIN:-}" ]; then
+    "$HBCB_COMPOSE_BIN" \
+      --project-name "$project" \
+      --project-directory "$repo" \
+      --file "$compose_file" \
+      "$@"
+  else
+    "$docker_bin" compose \
+      --project-name "$project" \
+      --project-directory "$repo" \
+      --file "$compose_file" \
+      "$@"
+  fi
+}
+
+compose_model=$repo/.orphan-minio-gate.invalid
+compose_source=1
+
+compose_down() {
+  if [ "$compose_source" -eq 1 ]; then
+    if [ -n "${HBCB_COMPOSE_BIN:-}" ]; then
+      "$HBCB_COMPOSE_BIN" \
+        --project-name "$project" \
+        --project-directory "$repo" \
+        --file "$compose_file" \
+        down --volumes --remove-orphans --timeout 30
+    else
+      "$docker_bin" compose \
+        --project-name "$project" \
+        --project-directory "$repo" \
+        --file "$compose_file" \
+        down --volumes --remove-orphans --timeout 30
+    fi
+  else
+    compose down --volumes --remove-orphans --timeout 30
+  fi
+}
+
+project_resources() {
+  resource_containers=$("$docker_bin" ps --all --quiet \
+    --filter "label=com.docker.compose.project=$project") || return 1
+  resource_volumes=$("$docker_bin" volume ls --quiet \
+    --filter "label=com.docker.compose.project=$project") || return 1
+  resource_networks=$("$docker_bin" network ls --quiet \
+    --filter "label=com.docker.compose.project=$project") || return 1
+  printf '%s\n%s\n%s\n' \
+    "$resource_containers" "$resource_volumes" "$resource_networks"
+}
+
+initial_resources=$(project_resources) || \
+  fail 'disposable project resources could not be inspected' 5
+if [ -n "$initial_resources" ]; then
+  fail 'generated disposable project unexpectedly already exists' 5
+fi
+
+touched=0
+pending_signal=0
+cleanup_return=0
+cleanup_complete=0
+record_signal() {
+  if [ "$pending_signal" -eq 0 ]; then
+    pending_signal=$1
+  fi
+  if [ "$cleanup_complete" -eq 1 ]; then
+    exit $((128 + pending_signal))
+  fi
+}
+cleanup() {
+  status=$?
+  cleanup_status=0
+  # Disable only the EXIT trap. INT/HUP/TERM keep recording the first signal
+  # while the exact random project is torn down and its absence is verified.
+  trap - 0
+  if [ "$touched" -eq 1 ]; then
+    compose_down >/dev/null 2>&1 || cleanup_status=1
+    remaining_resources=
+    remaining_resources=$(project_resources 2>/dev/null) || cleanup_status=1
+    if [ -n "$remaining_resources" ]; then
+      cleanup_status=1
+    fi
+  fi
+  case "$compose_model" in
+    "$repo"/build/orphan-minio-gate.*.yaml)
+      rm -f -- "$compose_model" || cleanup_status=1
+      ;;
+  esac
+  if [ "$cleanup_status" -ne 0 ]; then
+    printf 'ORPHAN_MINIO_GATE: disposable project cleanup failed (%s)\n' "$project" >&2
+    if [ "$status" -eq 0 ]; then status=1; fi
+  fi
+  if [ "$pending_signal" -ne 0 ]; then
+    status=$((128 + pending_signal))
+  fi
+  if [ "$cleanup_return" -eq 1 ]; then
+    return "$status"
+  fi
+  exit "$status"
+}
+trap cleanup 0
+trap 'record_signal 1' 1
+trap 'record_signal 2' 2
+trap 'record_signal 15' 15
+
+mkdir -p "$repo/build"
+compose_model=$repo/build/orphan-minio-gate.$project.yaml
+[ ! -e "$compose_model" ] && [ ! -L "$compose_model" ] || \
+  fail 'disposable Compose model target already exists' 5
+compose config --format yaml > "$compose_model"
+chmod 0600 "$compose_model"
+compose() {
+  if [ -n "${HBCB_COMPOSE_BIN:-}" ]; then
+    "$HBCB_COMPOSE_BIN" \
+      --project-name "$project" \
+      --project-directory "$repo" \
+      --file "$compose_model" \
+      "$@"
+  else
+    "$docker_bin" compose \
+      --project-name "$project" \
+      --project-directory "$repo" \
+      --file "$compose_model" \
+      "$@"
+  fi
+}
+compose_source=0
+touched=1
+compose up --detach --wait --wait-timeout 300 \
+  postgres minio minio-init database-init
+# The private rendered model contains no Compose interpolation grammar and
+# `--no-deps` prevents the one-shot initializer from being restarted while the
+# scoped identities are in use.
+gate_output=$(compose run --rm --no-deps gate)
+HBCB_ORPHAN_GATE_OUTPUT=$gate_output "$python_bin" -c '
+import json, os
+expected = {
+    "deleted_orphan_versions": 1,
+    "dry_run_candidates": 1,
+    "gate": "G8_ORPHAN_MINIO_GATE",
+    "queued_exact_versions": 1,
+    "referenced_versions_survived": 1,
+    "result": "PASS",
+}
+try:
+    actual = json.loads(os.environ["HBCB_ORPHAN_GATE_OUTPUT"])
+except (KeyError, json.JSONDecodeError):
+    raise SystemExit(1)
+raise SystemExit(0 if actual == expected else 1)
+' || fail 'live gate returned invalid evidence'
+
+# Publish evidence only after exact cleanup and absence verification complete.
+# Signal handlers remain record-only during cleanup so repeated/different
+# signals cannot replace the first one or interrupt resource verification.
+cleanup_return=1
+if cleanup; then
+  cleanup_status=0
+else
+  cleanup_status=$?
+fi
+cleanup_return=0
+if [ "$cleanup_status" -ne 0 ]; then
+  exit "$cleanup_status"
+fi
+if [ "$pending_signal" -ne 0 ]; then
+  exit $((128 + pending_signal))
+fi
+cleanup_complete=1
+# A signal delivered during the one-way state transition above either records
+# under cleanup mode and is caught here, or observes cleanup_complete=1 and
+# exits from the unchanged handler before evidence can be published.
+if [ "$pending_signal" -ne 0 ]; then
+  exit $((128 + pending_signal))
+fi
+printf '%s\n' "$gate_output"
+printf 'ORPHAN_MINIO_GATE: PASS project=%s scope=disposable\n' "$project"

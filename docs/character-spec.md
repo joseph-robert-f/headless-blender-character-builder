@@ -1,11 +1,10 @@
 # Character request guide and v0.1 contracts
 
-Use a bounded JSON recipe to choose a reviewed geometric character generator,
-its proportions and accessories, and fixed output/quality profiles. This is a
-declarative character format—not a way to submit Python, Blender operations,
-paths, URLs, add-ons, environment variables, or renderer flags.
-
-The one-shot builder and later HTTP service accept the same complete `BuildRequest`. Callers choose a reviewed generator and bounded profiles; they do not submit Python, Blender operations, paths, URLs, add-ons, environment variables, or renderer flags.
+The one-shot builder and local HTTP service accept the same complete
+`BuildRequest`: a bounded JSON recipe that chooses one reviewed geometric
+generator, its proportions and accessories, and fixed output/quality profiles.
+This is a declarative character format—not a way to submit Python, Blender
+operations, paths, URLs, add-ons, environment variables, or renderer flags.
 
 ## Validate a request
 
@@ -16,16 +15,21 @@ Blender:
 make validate REQUEST="$PWD/examples/requests/facet-bot.json"
 ```
 
-`BUILDER_VALIDATE: PASS` means the request satisfies the structural and runtime
-input contract. It does **not** mean the generated geometry will pass
-publication QA. Only a successful `make build` followed by `make verify` proves
+`make validate` rebuilds the builder from the current checkout (normally using
+Docker's cache), so it cannot silently apply a stale schema after a source
+update. `BUILDER_VALIDATE: PASS` means the request satisfies that checkout's
+structural and runtime input contract. It does **not** mean the generated
+geometry will pass publication QA. Only a successful `make build` followed by
+`make verify` proves
 that for a particular request and source revision.
 
 Contributors who are changing the contract can run its focused host tests with
 Python 3.11 or newer:
 
 ```sh
-python3.11 -m venv .venv
+export PYTHON=${PYTHON:-python3}
+"$PYTHON" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'
+"$PYTHON" -m venv .venv
 .venv/bin/python -m pip install -e '.[test]'
 .venv/bin/python -m unittest \
   tests.unit.test_request_contract \
@@ -96,6 +100,26 @@ round-ears    short-horns  stub-tail     swept-tail
 `stub-tail` and `swept-tail` are mutually exclusive. Component order is
 normalized before hashing.
 
+### What the visible choices change
+
+| Control | Visible effect |
+|---|---|
+| `style` | `geometric` uses a rounded-box head and rounded body; `low_poly` uses faceted icosphere-derived head/body volumes; `chibi` uses smoother volumes with the largest head-to-body ratio |
+| `pose` | `standing` keeps both arms lowered; `wave` raises and bends the character's right arm; `heroic` bends both arms toward the hips |
+| `eye_preset` | `round` makes two rounded eyes, `visor` makes one wide bar, and `sleepy` makes two narrow tilted eyes; all use fixed charcoal rather than a palette swatch |
+| `material_preset` | Changes surface roughness only: `matte` is least reflective, `satin` is intermediate, and `glossy` is most reflective |
+| `proportions` | `head_scale`, `body_scale`, and `limb_scale` independently change those reviewed regions within the listed bounds; extreme valid values can still fail layout or geometry QA |
+| `base.preset` | Selects no display base or a round, square, or hexagonal base with the requested dimensions |
+| `components` | Adds only the named reviewed accessory geometry; paired names add symmetric features, while tail choices are exclusive |
+
+Palette order is meaningful. The first swatch is the primary body/base/limb
+color; the second is used for the head, feet, hands, badge, and accent tips;
+the third is used by the optional backpack. When fewer colors are supplied,
+those assignments wrap through the available swatches. All 1–8 supplied
+swatches are retained as native materials in the `.blend` file for stable
+provenance, but the current composition does not necessarily assign swatches
+four through eight to visible geometry.
+
 A base object always supplies `preset`, `width_mm`, `depth_mm`, and
 `height_mm`. For `round`, `square`, or `hexagonal`, width and depth are 20–160
 mm and height is 2–25 mm. For `none`, all three dimensions must be `0`.
@@ -124,7 +148,7 @@ The G2 gate starts four fresh Blender 4.5 processes: both bundled examples twice
 Native contributors can run the gate with an empty caller-owned evidence directory outside the repository:
 
 ```sh
-python3 tests/blender_integration/g2_gate.py \
+"$PYTHON" tests/blender_integration/g2_gate.py \
   --blender /absolute/path/to/blender \
   --evidence-dir /absolute/path/to/new-temporary-directory
 ```
@@ -148,7 +172,7 @@ The output parent must already exist and the output itself must not. The runner 
 The explicit G3 review gate builds Facet Bot twice and exercises invalid input, `needs_review`, and corrupted-artifact paths:
 
 ```sh
-python3 tests/blender_integration/g3_gate.py \
+"$PYTHON" tests/blender_integration/g3_gate.py \
   --blender /absolute/path/to/blender \
   --work-dir /absolute/path/to/dedicated-temporary-directory
 ```

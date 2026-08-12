@@ -275,7 +275,8 @@ esac
             self.assertIn("image inspect", docker_calls)
             self.assertIn("hbcb-test-builder:dev", docker_calls)
             compose_calls = compose_log.read_text(encoding="utf-8")
-            self.assertEqual(compose_calls.count("--project-name hbcb-test-project"), 2)
+            self.assertEqual(compose_calls.count("--project-name hbcb-test-project"), 3)
+            self.assertIn("tests/service_integration/g8_lifecycle_gate.py", compose_calls)
 
     def test_explicit_custom_builder_reference_is_preserved(self) -> None:
         with tempfile.TemporaryDirectory(prefix="hbcb-service-smoke-builder-") as raw:
@@ -400,7 +401,7 @@ esac
                 compose_log.read_text(encoding="utf-8").count(
                     "--project-name hbcb-release-fixture"
                 ),
-                2,
+                3,
             )
 
 

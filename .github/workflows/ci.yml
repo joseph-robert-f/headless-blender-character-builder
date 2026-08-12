@@ -11,6 +11,27 @@
     "cancel-in-progress": true
   },
   "jobs": {
+    "dco": {
+      "if": "${{ github.event_name == 'pull_request' }}",
+      "name": "DCO sign-off",
+      "permissions": {"contents": "read"},
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 5,
+      "steps": [
+        {
+          "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+          "with": {"fetch-depth": 0, "persist-credentials": false}
+        },
+        {
+          "env": {
+            "HBCB_DCO_BASE_SHA": "${{ github.event.pull_request.base.sha }}",
+            "HBCB_DCO_HEAD_SHA": "${{ github.event.pull_request.head.sha }}"
+          },
+          "name": "Verify every pull request commit",
+          "run": "./scripts/dco-check \"$HBCB_DCO_BASE_SHA\" \"$HBCB_DCO_HEAD_SHA\""
+        }
+      ]
+    },
     "source": {
       "runs-on": "ubuntu-24.04",
       "timeout-minutes": 15,
@@ -43,7 +64,7 @@
         },
         {
           "name": "Asynchronous service gate",
-          "run": "trap 'make service-down' EXIT\nmake init-env\nmake service-up\nmake service-smoke"
+          "run": "trap 'make service-down' EXIT\nmake init-env\nmake service-up\nmake service-smoke\nmake orphan-minio-check"
         }
       ]
     }

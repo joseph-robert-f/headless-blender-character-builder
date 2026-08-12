@@ -131,7 +131,11 @@ class ServiceComposeTests(unittest.TestCase):
             python,
             "#!/bin/sh\n"
             "set -eu\n"
-            "[ \"${1:-}\" = -c ] || exit 64\n"
+            "case \"${1:-}\" in\n"
+            "  */minio-recipe-id) printf '%s\\n' 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; exit 0 ;;\n"
+            "  -c) ;;\n"
+            "  *) exit 64 ;;\n"
+            "esac\n"
             "if [ \"$#\" -eq 2 ]; then exit 0; fi\n"
             "exit \"${FAKE_PORT_STATUS:-0}\"\n",
         )
@@ -240,6 +244,28 @@ class ServiceComposeTests(unittest.TestCase):
         self.assertIn(
             "HBCB_STORAGE_PUBLIC_ENDPOINT:-localhost:9000", compose
         )
+        for maintained_server in (
+            "postgres:16.14-bookworm@sha256:"
+            "64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8",
+            "redis:8.2.8-bookworm@sha256:"
+            "2f7462b9e93e0a7ae2edf3a0a0babc8a4d29f8bfc50849b906b7caaef925edc1",
+        ):
+            self.assertIn(maintained_server, compose)
+        for redis_policy in (
+            "appendonly yes",
+            "appendfsync everysec",
+            "auto-aof-rewrite-percentage 100",
+            "auto-aof-rewrite-min-size 64mb",
+            "maxmemory 384mb",
+            "maxmemory-policy noeviction",
+        ):
+            self.assertIn(redis_policy, compose)
+        self.assertEqual(
+            compose.count(
+                "io.hbcb.release-service-owner: ${HBCB_RELEASE_OWNER:-local}"
+            ),
+            8,
+        )
 
     def test_init_env_persists_distinct_stable_checkout_identities(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -335,7 +361,7 @@ class ServiceComposeTests(unittest.TestCase):
                 "8080",
                 "9000",
                 "localhost:9000",
-                "hbcb-minio-local:RELEASE.2025-10-15T17-29-55Z",
+                "hbcb-minio-local:final-community-20260212-hbcb.1",
                 "hbcb-service-api:dev",
                 "hbcb-service-worker:dev",
                 "hbcb-service-test:dev",
@@ -357,7 +383,7 @@ class ServiceComposeTests(unittest.TestCase):
                 "18080",
                 "19000",
                 "localhost:19000",
-                "hbcb-external-minio:RELEASE.2025-10-15T17-29-55Z",
+                "hbcb-external-minio:final-community-20260212-hbcb.1",
                 "hbcb-external-api:dev",
                 "hbcb-external-worker:dev",
                 "hbcb-external-test:dev",

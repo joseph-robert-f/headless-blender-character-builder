@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import hashlib
+import io
 import json
+import os
+import signal
+import subprocess
+import sys
+import tarfile
 import tempfile
+import time
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest import mock
 
@@ -10,9 +19,225 @@ from tests.release.support import load_script
 
 
 scan_tool = load_script("dependency_scan_security_under_test", "dependency-scan")
+IMAGE_IDENTITY = "sha256:" + "9" * 64
+
+
+def advisory_report(score: str = "8.1") -> dict[str, object]:
+    return {
+        "results": [
+            {
+                "packages": [
+                    {
+                        "groups": [
+                            {
+                                "aliases": [
+                                    "CVE-2026-1234",
+                                    "GHSA-AAAA-BBBB-CCCC",
+                                    "GO-2026-1234",
+                                ],
+                                "ids": ["GO-2026-1234", "GHSA-aaaa-bbbb-cccc"],
+                                "max_severity": score,
+                            }
+                        ],
+                        "package": {
+                            "commit": "abc123",
+                            "ecosystem": "Go",
+                            "name": "example.invalid/module",
+                            "version": "1.2.3",
+                        },
+                        "vulnerabilities": [
+                            {
+                                "affected": [
+                                    {
+                                        "package": {
+                                            "ecosystem": "Go",
+                                            "name": "example.invalid/module",
+                                        },
+                                        "ranges": [
+                                            {
+                                                "events": [
+                                                    {"introduced": "0"},
+                                                    {"fixed": "1.2.4"},
+                                                ],
+                                                "type": "SEMVER",
+                                            }
+                                        ],
+                                    },
+                                    {
+                                        "package": {
+                                            "ecosystem": "Go:other",
+                                            "name": "example.invalid/module",
+                                        },
+                                        "ranges": [
+                                            {
+                                                "events": [{"fixed": "99.0.0"}],
+                                                "type": "SEMVER",
+                                            }
+                                        ],
+                                    },
+                                ],
+                                "aliases": ["GHSA-aaaa-bbbb-cccc"],
+                                "database_specific": {"review_status": "REVIEWED"},
+                                "id": "GO-2026-1234",
+                                "related": ["CGA-MUST-NOT-JOIN-FAMILY"],
+                                "upstream": ["CVE-2026-1234"],
+                            },
+                            {
+                                "aliases": ["CVE-2026-1234", "GO-2026-1234"],
+                                "database_specific": {"severity": "HIGH"},
+                                "id": "GHSA-aaaa-bbbb-cccc",
+                                "severity": [
+                                    {
+                                        "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+                                        "type": "CVSS_V3",
+                                    }
+                                ],
+                            },
+                        ],
+                    }
+                ],
+                "source": {"path": "image"},
+            }
+        ]
+    }
+
+
+def exact_disposition(evidence_sha256: str) -> dict[str, object]:
+    return {
+        "advisory_family": [
+            "CVE-2026-1234",
+            "GHSA-AAAA-BBBB-CCCC",
+            "GO-2026-1234",
+        ],
+        "disposition": "mitigated",
+        "evidence": [{"path": "docs/review.md", "sha256": evidence_sha256}],
+        "expires_on": "2026-09-10",
+        "fixed_versions": ["1.2.4"],
+        "image_identity": IMAGE_IDENTITY,
+        "package": {
+            "ecosystem": "Go",
+            "name": "example.invalid/module",
+            "source_revision": "abc123",
+            "version": "1.2.3",
+        },
+        "rationale": "Static deployment evidence demonstrates the reviewed mitigation.",
+        "reviewed_on": "2026-08-12",
+        "score": "8.1",
+        "severity": "HIGH",
+        "target": "osv-image-minio",
+    }
+
+
+def write_policy(root: Path, dispositions: list[dict[str, object]]) -> None:
+    path = root / "release" / "vulnerability-policy.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "default_action": "deny",
+                "dispositions": dispositions,
+                "format": scan_tool.VULNERABILITY_POLICY_FORMAT,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 class DependencyScanSecurityTests(unittest.TestCase):
+    def _wait_for_path(self, path: Path, timeout: float = 5.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if path.is_file() and path.stat().st_size > 0:
+                return
+            time.sleep(0.02)
+        self.fail("subprocess readiness marker was not created")
+
+    def _wait_for_group_exit(self, process_group: int, timeout: float = 3.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not scan_tool._process_group_exists(process_group):
+                return True
+            time.sleep(0.02)
+        return not scan_tool._process_group_exists(process_group)
+
+    @staticmethod
+    def _docker_archive(
+        path: Path,
+        *,
+        architecture: str = "amd64",
+        image_os: str = "linux",
+        labels=None,
+    ) -> str:
+        config_document = {"architecture": architecture, "os": image_os}
+        if labels is not None:
+            config_document["config"] = {"Labels": dict(labels)}
+        config = json.dumps(
+            config_document,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        config_digest = "sha256:" + hashlib.sha256(config).hexdigest()
+        config_name = config_digest.removeprefix("sha256:") + ".json"
+        manifest = json.dumps(
+            [{"Config": config_name, "Layers": [], "RepoTags": None}],
+            separators=(",", ":"),
+        ).encode("utf-8")
+        with tarfile.open(path, "w") as archive:
+            for name, payload in ((config_name, config), ("manifest.json", manifest)):
+                member = tarfile.TarInfo(name)
+                member.mode = 0o600
+                member.size = len(payload)
+                archive.addfile(member, io.BytesIO(payload))
+        return config_digest
+
+    def test_lock_recipe_uses_only_the_pip_enabled_test_image(self) -> None:
+        documentation = (
+            scan_tool.ROOT / "docs" / "dependency-maintenance.md"
+        ).read_text(encoding="utf-8")
+        recipe = documentation.split("download_wheels()", 1)[1].split("```", 1)[0]
+        self.assertIn("make test-image", documentation)
+        self.assertIn("headless-blender-character-builder:dev-test", recipe)
+        self.assertNotIn("make image\n", documentation)
+        self.assertNotIn("headless-blender-character-builder:dev \\", recipe)
+
+    def test_checked_in_vulnerability_policy_is_valid(self) -> None:
+        policy = scan_tool.load_vulnerability_policy()
+        self.assertEqual(policy["format"], "hbcb-vulnerability-policy/v1")
+        self.assertEqual(policy["default_action"], "deny")
+        self.assertEqual(policy["dispositions"], [])
+
+    def test_vulnerability_policy_rejects_symlink_oversize_and_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            release = root / "release"
+            release.mkdir()
+            target = root / "outside-policy.json"
+            target.write_text(
+                '{"dispositions":[],"format":"hbcb-vulnerability-policy/v1"}',
+                encoding="utf-8",
+            )
+            policy_path = release / "vulnerability-policy.json"
+            policy_path.symlink_to(target)
+            with self.assertRaises(scan_tool.ScanError):
+                scan_tool.load_vulnerability_policy(root)
+            policy_path.unlink()
+            write_policy(root, [])
+            with mock.patch.object(scan_tool, "MAX_POLICY_BYTES", 1):
+                with self.assertRaises(scan_tool.ScanError):
+                    scan_tool.load_vulnerability_policy(root)
+
+            evidence = root / "docs" / "review.md"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("Reviewed runtime mitigation evidence.\n", encoding="utf-8")
+            disposition = exact_disposition(
+                hashlib.sha256(evidence.read_bytes()).hexdigest()
+            )
+            write_policy(root, [disposition, disposition])
+            with self.assertRaisesRegex(scan_tool.ScanError, "duplicated"):
+                scan_tool.load_vulnerability_policy(
+                    root,
+                    today=date(2026, 8, 12),
+                )
+
     def test_policy_image_identifiers_are_safe_unique_and_complete(self) -> None:
         expected = scan_tool.expected_external_image_ids()
         self.assertEqual(
@@ -40,6 +265,790 @@ class DependencyScanSecurityTests(unittest.TestCase):
         for inventory in invalid_inventories:
             with self.subTest(inventory=inventory), self.assertRaises(ValueError):
                 scan_tool.validate_external_images(inventory, expected)
+
+    def test_external_resolution_selects_one_linux_amd64_child_and_pulls_pinned_index(self) -> None:
+        config_payload = b'{"architecture":"amd64","os":"linux"}'
+        config_digest = "sha256:" + hashlib.sha256(config_payload).hexdigest()
+        child_payload = json.dumps(
+            {
+                "config": {
+                    "digest": config_digest,
+                    "mediaType": "application/vnd.oci.image.config.v1+json",
+                    "size": len(config_payload),
+                },
+                "layers": [],
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "schemaVersion": 2,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        child_digest = "sha256:" + hashlib.sha256(child_payload).hexdigest()
+        index_payload = json.dumps(
+            {
+                "manifests": [
+                    {
+                        "digest": child_digest,
+                        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                        "platform": {"architecture": "amd64", "os": "linux"},
+                        "size": len(child_payload),
+                    },
+                    {
+                        "digest": "sha256:" + "a" * 64,
+                        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                        "platform": {"architecture": "arm64", "os": "linux"},
+                        "size": 100,
+                    },
+                ],
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "schemaVersion": 2,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        requested_digest = "sha256:" + hashlib.sha256(index_payload).hexdigest()
+        reference = "example.invalid/release:1@" + requested_digest
+        child_reference = "example.invalid/release:1@" + child_digest
+        observed: list[list[str]] = []
+
+        def capture(command, **_kwargs):
+            rendered = list(command)
+            observed.append(rendered)
+            if rendered[1:5] == ["buildx", "imagetools", "inspect", "--raw"]:
+                return index_payload if rendered[-1] == reference else child_payload
+            if rendered[1:3] == ["image", "inspect"]:
+                return json.dumps(
+                    [
+                        {
+                            "Architecture": "amd64",
+                            "Id": config_digest,
+                            "Os": "linux",
+                            "RepoDigests": ["example.invalid/release@" + requested_digest],
+                        }
+                    ]
+                ).encode("utf-8")
+            if rendered[1] == "pull":
+                return b"pulled\n"
+            self.fail("unexpected command: " + repr(rendered))
+
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(
+            scan_tool,
+            "run_bounded_capture",
+            side_effect=capture,
+        ), mock.patch.object(
+            scan_tool,
+            "_save_external_image_archive",
+            return_value=(1234, "b" * 64),
+        ), mock.patch.object(
+            scan_tool,
+            "_validate_external_image_archive",
+        ):
+            identity = scan_tool.prepare_external_image_archive(
+                reference,
+                Path(temporary) / "image.tar",
+            )
+        self.assertEqual(identity["requested_reference"], reference)
+        self.assertEqual(identity["requested_digest"], requested_digest)
+        self.assertEqual(identity["selected_manifest_digest"], child_digest)
+        self.assertEqual(identity["config_digest"], config_digest)
+        pulls = [command for command in observed if command[1] == "pull"]
+        self.assertEqual(
+            pulls,
+            [
+                [
+                    "docker",
+                    "pull",
+                    "--quiet",
+                    "--platform",
+                    "linux/amd64",
+                    child_reference,
+                ]
+            ],
+        )
+
+    def test_external_scan_uses_private_archive_not_direct_multiarch_reference(self) -> None:
+        digest = "sha256:" + "a" * 64
+        reference = "example.invalid/release:1@" + digest
+        identity = {
+            "archive_sha256": "b" * 64,
+            "archive_size_bytes": 1024,
+            "config_digest": "sha256:" + "c" * 64,
+            "platform": "linux/amd64",
+            "policy_digest": IMAGE_IDENTITY,
+            "requested_digest": digest,
+            "requested_reference": reference,
+            "selected_manifest_digest": "sha256:" + "d" * 64,
+        }
+        commands: list[list[str]] = []
+
+        def prepare(_reference, archive):
+            archive.write_bytes(b"private archive")
+            return identity
+
+        def scan(command, **_kwargs):
+            commands.append(list(command))
+            output_argument = next(item for item in command if item.startswith("--output-file="))
+            Path(output_argument.split("=", 1)[1]).write_text(
+                json.dumps({"results": []}),
+                encoding="utf-8",
+            )
+            return 0
+
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(
+            scan_tool,
+            "prepare_external_image_archive",
+            side_effect=prepare,
+        ), mock.patch.object(scan_tool, "run", side_effect=scan):
+            root = Path(temporary)
+            records: list[dict[str, object]] = []
+            scan_tool.scan_external_image(
+                Path("/scanner"),
+                root,
+                root,
+                "postgres",
+                reference,
+                records,
+                {
+                    "default_action": "deny",
+                    "dispositions": [],
+                    "format": scan_tool.VULNERABILITY_POLICY_FORMAT,
+                },
+            )
+            self.assertFalse((root / "external-image-postgres.tar").exists())
+        self.assertEqual(len(commands), 1)
+        self.assertIn("--archive", commands[0])
+        self.assertNotIn(reference, commands[0])
+        self.assertEqual(records[0]["image_identity"], identity)
+        with tempfile.TemporaryDirectory() as temporary, self.assertRaisesRegex(
+            scan_tool.ScanError,
+            "archive is invalid",
+        ):
+            scan_tool.scan_image(
+                Path("/scanner"),
+                Path(temporary),
+                "postgres",
+                reference,
+                [],
+                None,
+                image_identity={"policy_digest": IMAGE_IDENTITY},
+            )
+
+    def test_external_archive_rejects_wrong_architecture_and_config_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            wrong_arch = root / "wrong-arch.tar"
+            wrong_arch_digest = self._docker_archive(
+                wrong_arch,
+                architecture="arm64",
+            )
+            with self.assertRaisesRegex(scan_tool.ScanError, "not linux/amd64"):
+                scan_tool._validate_external_image_archive(
+                    wrong_arch,
+                    wrong_arch_digest,
+                )
+
+            valid = root / "valid.tar"
+            config_digest = self._docker_archive(valid)
+            scan_tool._validate_external_image_archive(valid, config_digest)
+            with self.assertRaisesRegex(scan_tool.ScanError, "config identity"):
+                scan_tool._validate_external_image_archive(
+                    valid,
+                    "sha256:" + "f" * 64,
+                )
+
+    def test_external_index_ambiguity_and_wrong_runtime_architecture_fail_closed(self) -> None:
+        descriptor = {
+            "digest": "sha256:" + "a" * 64,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "platform": {"architecture": "amd64", "os": "linux"},
+            "size": 100,
+        }
+        payload = json.dumps(
+            {
+                "manifests": [descriptor, dict(descriptor, digest="sha256:" + "b" * 64)],
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "schemaVersion": 2,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+        with self.assertRaisesRegex(scan_tool.ScanError, "exactly one"):
+            scan_tool._select_linux_amd64_manifest(payload, digest)
+
+        inspected = json.dumps(
+            [
+                {
+                    "Architecture": "arm64",
+                    "Id": "sha256:" + "c" * 64,
+                    "Os": "linux",
+                    "RepoDigests": ["example.invalid/release@" + digest],
+                }
+            ]
+        ).encode("utf-8")
+        with mock.patch.object(
+            scan_tool,
+            "run_bounded_capture",
+            return_value=inspected,
+        ), self.assertRaisesRegex(scan_tool.ScanError, "not linux/amd64"):
+            scan_tool._inspect_external_image(
+                "example.invalid/release:1@" + digest,
+                digest,
+                "sha256:" + "d" * 64,
+                "sha256:" + "c" * 64,
+            )
+
+    def test_external_archive_export_is_no_clobber_and_output_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "image.tar"
+            archive.write_bytes(b"operator-owned")
+            with self.assertRaises(FileExistsError), mock.patch.object(
+                scan_tool,
+                "_run_bounded_process",
+            ) as runner:
+                scan_tool._save_external_image_archive(
+                    "example.invalid/release@sha256:" + "a" * 64,
+                    archive,
+                )
+            runner.assert_not_called()
+            self.assertEqual(archive.read_bytes(), b"operator-owned")
+
+        with mock.patch.object(
+            scan_tool.subprocess,
+            "Popen",
+            side_effect=OSError,
+        ), self.assertRaisesRegex(scan_tool.ScanError, "could not start"):
+            scan_tool.run_bounded_capture(
+                ["docker", "pull", "image"],
+                label="bounded command",
+                maximum=1,
+                timeout=1,
+            )
+
+        with self.assertRaisesRegex(scan_tool.ScanError, "size limit"):
+            scan_tool.run_bounded_capture(
+                [sys.executable, "-c", "import sys;sys.stdout.write('x'*1024)"],
+                label="bounded command",
+                maximum=8,
+                timeout=5,
+            )
+
+    def test_scanner_version_check_uses_the_bounded_group_runner(self) -> None:
+        scanner = Path("/reviewed/osv-scanner")
+        with mock.patch.object(
+            scan_tool,
+            "run_bounded_capture",
+            return_value=("osv-scanner version " + scan_tool.SCANNER_VERSION).encode(
+                "ascii"
+            ),
+        ) as bounded_runner:
+            scan_tool.verify_scanner(scanner)
+        bounded_runner.assert_called_once_with(
+            [str(scanner), "--version"],
+            label="OSV-Scanner version check",
+            maximum=4096,
+            timeout=30,
+        )
+        with mock.patch.object(
+            scan_tool,
+            "run_bounded_capture",
+            side_effect=scan_tool.ScanError("secret child failure"),
+        ), self.assertRaisesRegex(
+            scan_tool.ScanError,
+            "version check failed",
+        ) as raised:
+            scan_tool.verify_scanner(scanner)
+        self.assertNotIn("secret", str(raised.exception))
+
+    @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
+    def test_selector_construction_failure_terminates_owned_child(self) -> None:
+        real_teardown = scan_tool._terminate_process
+        terminated_groups = []
+
+        def teardown(process):
+            terminated_groups.append(process.pid)
+            return real_teardown(process)
+
+        with mock.patch.object(
+            scan_tool.selectors,
+            "DefaultSelector",
+            side_effect=OSError("file descriptor exhaustion"),
+        ), mock.patch.object(
+            scan_tool,
+            "_terminate_process",
+            side_effect=teardown,
+        ), self.assertRaisesRegex(OSError, "descriptor exhaustion"):
+            scan_tool.run_bounded_capture(
+                [sys.executable, "-c", "import time;time.sleep(30)"],
+                label="selector construction",
+                maximum=1024,
+                timeout=5,
+            )
+        self.assertEqual(len(terminated_groups), 1)
+        self.assertTrue(self._wait_for_group_exit(terminated_groups[0]))
+
+    @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
+    def test_run_timeout_kills_sigterm_resistant_descendant_and_reaps_leader(self) -> None:
+        descendant = (
+            "import os,signal,sys,time;"
+            "from pathlib import Path;"
+            "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+            "Path(sys.argv[1]).write_text("
+            "str(os.getpid())+' '+str(os.getpgrp()),encoding='ascii');"
+            "time.sleep(30)"
+        )
+        leader = (
+            "import subprocess,sys,time;"
+            "subprocess.Popen([sys.executable,'-c',%r,sys.argv[1]]);"
+            "time.sleep(30)"
+        ) % descendant
+        process_group = None
+        with tempfile.TemporaryDirectory() as temporary:
+            marker = Path(temporary) / "descendant.pid"
+            try:
+                with mock.patch.object(
+                    scan_tool,
+                    "PROCESS_TERM_GRACE_SECONDS",
+                    0.2,
+                ), mock.patch.object(
+                    scan_tool,
+                    "PROCESS_KILL_GRACE_SECONDS",
+                    0.5,
+                ):
+                    code = scan_tool.run(
+                        [sys.executable, "-c", leader, str(marker)],
+                        timeout=1,
+                    )
+                self.assertEqual(code, 124)
+                self._wait_for_path(marker)
+                _descendant_pid, rendered_group = marker.read_text(
+                    encoding="ascii"
+                ).split()
+                process_group = int(rendered_group)
+                self.assertGreater(process_group, 1)
+                self.assertNotEqual(process_group, os.getpgrp())
+                self.assertTrue(self._wait_for_group_exit(process_group))
+            finally:
+                if (
+                    process_group is not None
+                    and process_group != os.getpgrp()
+                    and scan_tool._process_group_exists(process_group)
+                ):
+                    os.killpg(process_group, signal.SIGKILL)
+
+    @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
+    def test_sigint_during_popen_publication_cleans_both_runner_shapes(self) -> None:
+        child = (
+            "import signal,time;"
+            "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+            "time.sleep(30)"
+        )
+        real_popen = subprocess.Popen
+        for shape in ("run", "bounded"):
+            with self.subTest(shape=shape):
+                process_groups: list[int] = []
+
+                def inject_sigint(command, *args, **kwargs):
+                    process = real_popen(command, *args, **kwargs)
+                    process_groups.append(process.pid)
+                    os.kill(os.getpid(), signal.SIGINT)
+                    return process
+
+                try:
+                    with mock.patch.object(
+                        scan_tool.subprocess,
+                        "Popen",
+                        side_effect=inject_sigint,
+                    ), mock.patch.object(
+                        scan_tool,
+                        "PROCESS_TERM_GRACE_SECONDS",
+                        0.1,
+                    ), mock.patch.object(
+                        scan_tool,
+                        "PROCESS_KILL_GRACE_SECONDS",
+                        0.5,
+                    ), self.assertRaises(KeyboardInterrupt):
+                        if shape == "run":
+                            scan_tool.run(
+                                [sys.executable, "-c", child],
+                                timeout=30,
+                            )
+                        else:
+                            scan_tool.run_bounded_capture(
+                                [sys.executable, "-c", child],
+                                label="publication race",
+                                maximum=1024,
+                                timeout=30,
+                            )
+                    self.assertEqual(len(process_groups), 1)
+                    self.assertTrue(
+                        self._wait_for_group_exit(process_groups[0])
+                    )
+                    self.assertEqual(
+                        signal.getsignal(signal.SIGINT),
+                        signal.default_int_handler,
+                    )
+                finally:
+                    for process_group in process_groups:
+                        if (
+                            process_group != os.getpgrp()
+                            and scan_tool._process_group_exists(process_group)
+                        ):
+                            os.killpg(process_group, signal.SIGKILL)
+
+    @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
+    def test_live_sigint_tears_down_child_before_keyboard_interrupt_exits(self) -> None:
+        child = (
+            "import os,signal,sys,time;"
+            "from pathlib import Path;"
+            "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+            "Path(sys.argv[1]).write_text("
+            "str(os.getpid())+' '+str(os.getpgrp()),encoding='ascii');"
+            "time.sleep(30)"
+        )
+        controller = None
+        child_group = None
+        with tempfile.TemporaryDirectory() as temporary:
+            marker = Path(temporary) / "child.pid"
+            controller_code = (
+                "import sys;"
+                "from tests.release.support import load_script;"
+                "m=load_script('dependency_scan_sigint_controller','dependency-scan');"
+                "m.PROCESS_TERM_GRACE_SECONDS=0.2;"
+                "m.PROCESS_KILL_GRACE_SECONDS=0.5;"
+                "m.run([sys.executable,'-c',%r,%r],timeout=30)"
+            ) % (child, str(marker))
+            try:
+                controller = subprocess.Popen(
+                    [sys.executable, "-c", controller_code],
+                    cwd=str(scan_tool.ROOT),
+                    env=dict(
+                        os.environ,
+                        LC_ALL="C",
+                        PYTHONDONTWRITEBYTECODE="1",
+                    ),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                self._wait_for_path(marker)
+                _child_pid, rendered_group = marker.read_text(
+                    encoding="ascii"
+                ).split()
+                child_group = int(rendered_group)
+                self.assertNotEqual(child_group, os.getpgrp())
+                controller.send_signal(signal.SIGINT)
+                controller.wait(timeout=5)
+                self.assertNotEqual(controller.returncode, 0)
+                self.assertTrue(self._wait_for_group_exit(child_group))
+            finally:
+                if controller is not None and controller.poll() is None:
+                    os.killpg(controller.pid, signal.SIGKILL)
+                    controller.wait(timeout=2)
+                if (
+                    child_group is not None
+                    and child_group != os.getpgrp()
+                    and scan_tool._process_group_exists(child_group)
+                ):
+                    os.killpg(child_group, signal.SIGKILL)
+
+    @unittest.skipUnless(
+        hasattr(os, "killpg") and hasattr(signal, "SIGHUP"),
+        "requires POSIX process groups and SIGHUP",
+    )
+    def test_live_term_and_hup_exit_only_after_child_group_cleanup(self) -> None:
+        child = (
+            "import os,signal,sys,time;"
+            "from pathlib import Path;"
+            "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+            "signal.signal(signal.SIGHUP,signal.SIG_IGN);"
+            "Path(sys.argv[1]).write_text("
+            "str(os.getpid())+' '+str(os.getpgrp()),encoding='ascii');"
+            "time.sleep(30)"
+        )
+        for selected_signal in (signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(signal=selected_signal), tempfile.TemporaryDirectory() as temporary:
+                controller = None
+                child_group = None
+                marker = Path(temporary) / "child.pid"
+                controller_code = (
+                    "import sys;"
+                    "from tests.release.support import load_script;"
+                    "m=load_script('dependency_scan_term_controller','dependency-scan');"
+                    "m.PROCESS_TERM_GRACE_SECONDS=0.2;"
+                    "m.PROCESS_KILL_GRACE_SECONDS=0.5;"
+                    "m.run([sys.executable,'-c',%r,%r],timeout=30)"
+                ) % (child, str(marker))
+                try:
+                    controller = subprocess.Popen(
+                        [sys.executable, "-c", controller_code],
+                        cwd=str(scan_tool.ROOT),
+                        env=dict(
+                            os.environ,
+                            LC_ALL="C",
+                            PYTHONDONTWRITEBYTECODE="1",
+                        ),
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True,
+                    )
+                    self._wait_for_path(marker)
+                    _child_pid, rendered_group = marker.read_text(
+                        encoding="ascii"
+                    ).split()
+                    child_group = int(rendered_group)
+                    self.assertNotEqual(child_group, os.getpgrp())
+                    controller.send_signal(selected_signal)
+                    controller.wait(timeout=5)
+                    self.assertEqual(
+                        controller.returncode,
+                        128 + int(selected_signal),
+                    )
+                    self.assertTrue(self._wait_for_group_exit(child_group))
+                finally:
+                    if controller is not None and controller.poll() is None:
+                        os.killpg(controller.pid, signal.SIGKILL)
+                        controller.wait(timeout=2)
+                    if (
+                        child_group is not None
+                        and child_group != os.getpgrp()
+                        and scan_tool._process_group_exists(child_group)
+                    ):
+                        os.killpg(child_group, signal.SIGKILL)
+
+    def test_local_archive_identity_binds_config_labels_revision_and_recipe(self) -> None:
+        recipe = "sha256:" + "b" * 64
+        revision = "c" * 40
+        labels = {
+            "io.hbcb.recipe-id": recipe,
+            "org.opencontainers.image.revision": revision,
+        }
+        image_id = "sha256:" + "a" * 64
+        reference = scan_tool.local_image_references("1" * 24)[1][1]
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "minio.tar"
+            config_digest = self._docker_archive(archive, labels=labels)
+            inspect_payload = json.dumps(
+                [
+                    {
+                        "Architecture": "amd64",
+                        "Config": {"Labels": labels},
+                        "Descriptor": {"digest": image_id},
+                        "Id": image_id,
+                        "Os": "linux",
+                    }
+                ]
+            ).encode("utf-8")
+            with mock.patch.object(
+                scan_tool,
+                "run_bounded_capture",
+                return_value=inspect_payload,
+            ), mock.patch.object(
+                scan_tool,
+                "_save_external_image_archive",
+                return_value=(archive.stat().st_size, "d" * 64),
+            ) as exporter:
+                identity = scan_tool.prepare_local_image_archive(
+                    reference,
+                    "minio",
+                    archive,
+                    recipe,
+                )
+            exporter.assert_called_once_with(image_id, archive)
+        self.assertEqual(identity["build_reference"], reference)
+        self.assertEqual(identity["image_id"], image_id)
+        self.assertEqual(identity["descriptor_digest"], image_id)
+        self.assertEqual(identity["config_digest"], config_digest)
+        self.assertEqual(identity["oci_revision"], revision)
+        self.assertEqual(identity["recipe_id"], recipe)
+        self.assertRegex(identity["policy_digest"], r"^sha256:[0-9a-f]{64}$")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "minio.tar"
+            self._docker_archive(archive, labels=labels)
+            with mock.patch.object(
+                scan_tool,
+                "run_bounded_capture",
+                return_value=inspect_payload,
+            ), mock.patch.object(
+                scan_tool,
+                "_save_external_image_archive",
+                return_value=(archive.stat().st_size, "e" * 64),
+            ), self.assertRaisesRegex(scan_tool.ScanError, "recipe identity did not match"):
+                scan_tool.prepare_local_image_archive(
+                    reference,
+                    "minio",
+                    archive,
+                    "sha256:" + "f" * 64,
+                )
+
+        mutated = dict(labels, **{"io.hbcb.recipe-id": "sha256:" + "e" * 64})
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "minio.tar"
+            self._docker_archive(archive, labels=mutated)
+            with mock.patch.object(
+                scan_tool,
+                "run_bounded_capture",
+                return_value=inspect_payload,
+            ), mock.patch.object(
+                scan_tool,
+                "_save_external_image_archive",
+                return_value=(archive.stat().st_size, "f" * 64),
+            ), self.assertRaisesRegex(scan_tool.ScanError, "labels did not match"):
+                scan_tool.prepare_local_image_archive(
+                    reference,
+                    "minio",
+                    archive,
+                    recipe,
+                )
+
+    def test_all_local_scans_use_private_archives_not_mutable_tags(self) -> None:
+        recipe = "sha256:" + "c" * 64
+        identity = {
+            "config_digest": "sha256:" + "a" * 64,
+            "oci_revision": "b" * 40,
+            "platform": "linux/amd64",
+            "policy_digest": IMAGE_IDENTITY,
+        }
+        commands: list[list[str]] = []
+        prepared = []
+
+        def prepare(reference, identifier, archive, expected_recipe):
+            prepared.append((reference, identifier, expected_recipe))
+            archive.write_bytes(("private " + identifier + " archive").encode("ascii"))
+            return dict(identity, build_reference=reference)
+
+        def scan(command, **_kwargs):
+            commands.append(list(command))
+            output_argument = next(item for item in command if item.startswith("--output-file="))
+            Path(output_argument.split("=", 1)[1]).write_text(
+                json.dumps({"results": []}),
+                encoding="utf-8",
+            )
+            return 0
+
+        local_images = scan_tool.local_image_references("2" * 24)
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(
+            scan_tool,
+            "prepare_local_image_archive",
+            side_effect=prepare,
+        ), mock.patch.object(scan_tool, "run", side_effect=scan):
+            root = Path(temporary)
+            records: list[dict[str, object]] = []
+            for identifier, reference in local_images:
+                scan_tool.scan_local_image(
+                    Path("/scanner"),
+                    root,
+                    root,
+                    identifier,
+                    reference,
+                    records,
+                    {
+                        "default_action": "deny",
+                        "dispositions": [],
+                        "format": scan_tool.VULNERABILITY_POLICY_FORMAT,
+                    },
+                    recipe,
+                )
+                self.assertFalse((root / ("local-image-" + identifier + ".tar")).exists())
+        self.assertEqual(len(commands), len(scan_tool.LOCAL_IMAGE_IDS))
+        for command, (identifier, reference) in zip(commands, local_images):
+            self.assertIn("--archive", command)
+            self.assertNotIn(reference, command)
+            archive_argument = command[command.index("--archive") + 1]
+            self.assertTrue(archive_argument.endswith("local-image-" + identifier + ".tar"))
+        self.assertEqual(
+            prepared,
+            [
+                (reference, identifier, recipe if identifier == "minio" else None)
+                for identifier, reference in local_images
+            ],
+        )
+        self.assertEqual(len(records), len(scan_tool.LOCAL_IMAGE_IDS))
+
+    def test_local_archive_export_uses_inspected_id_after_simulated_retag(self) -> None:
+        labels = {"org.opencontainers.image.revision": "uncommitted"}
+        first_id = "sha256:" + "a" * 64
+        retagged_id = "sha256:" + "b" * 64
+        current_id = [first_id]
+        saved = []
+
+        def inspect(_command, **_kwargs):
+            captured = current_id[0]
+            current_id[0] = retagged_id
+            return json.dumps(
+                [
+                    {
+                        "Architecture": "amd64",
+                        "Config": {"Labels": labels},
+                        "Descriptor": {"digest": captured},
+                        "Id": captured,
+                        "Os": "linux",
+                    }
+                ]
+            ).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "builder.tar"
+            self._docker_archive(archive, labels=labels)
+
+            def export(reference, _archive):
+                saved.append(reference)
+                return archive.stat().st_size, "d" * 64
+
+            with mock.patch.object(
+                scan_tool,
+                "run_bounded_capture",
+                side_effect=inspect,
+            ), mock.patch.object(
+                scan_tool,
+                "_save_external_image_archive",
+                side_effect=export,
+            ):
+                scan_tool.prepare_local_image_archive(
+                    scan_tool.local_image_references("3" * 24)[0][1],
+                    "builder",
+                    archive,
+                    None,
+                )
+        self.assertEqual(current_id[0], retagged_id)
+        self.assertEqual(saved, [first_id])
+
+    def test_local_archive_rejects_wrong_architecture(self) -> None:
+        labels = {"org.opencontainers.image.revision": "uncommitted"}
+        image_id = "sha256:" + "a" * 64
+        inspect_payload = json.dumps(
+            [
+                {
+                    "Architecture": "amd64",
+                    "Config": {"Labels": labels},
+                    "Descriptor": {"digest": image_id},
+                    "Id": image_id,
+                    "Os": "linux",
+                }
+            ]
+        ).encode("utf-8")
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "builder.tar"
+            self._docker_archive(
+                archive,
+                architecture="arm64",
+                labels=labels,
+            )
+            with mock.patch.object(
+                scan_tool,
+                "run_bounded_capture",
+                return_value=inspect_payload,
+            ), mock.patch.object(
+                scan_tool,
+                "_save_external_image_archive",
+                return_value=(archive.stat().st_size, "c" * 64),
+            ), self.assertRaisesRegex(scan_tool.ScanError, "not linux/amd64"):
+                scan_tool.prepare_local_image_archive(
+                    scan_tool.local_image_references("4" * 24)[0][1],
+                    "builder",
+                    archive,
+                    None,
+                )
 
     def test_osv_report_requires_results_and_obeys_aggregate_limit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -73,7 +1082,16 @@ class DependencyScanSecurityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             report = Path(temporary) / "postgres.json"
             report.write_text(
-                json.dumps({"results": [{"detail": "x" * (5 * 1024 * 1024)}]}),
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "packages": [],
+                                "source": {"detail": "x" * (5 * 1024 * 1024)},
+                            }
+                        ]
+                    }
+                ),
                 encoding="utf-8",
             )
             self.assertEqual(
@@ -99,6 +1117,576 @@ class DependencyScanSecurityTests(unittest.TestCase):
         )
         self.assertTrue(all(item["status"] == "incomplete" for item in records))
         self.assertEqual(scan_tool.final_status(records, []), "incomplete")
+
+    def test_advisory_alias_family_is_one_blocking_high_finding(self) -> None:
+        report = advisory_report()
+        normalized = scan_tool.normalize_vulnerability_report(
+            report,
+            "osv-image-minio",
+        )
+        self.assertEqual(len(normalized), 1)
+        self.assertEqual(normalized[0]["severity"], "HIGH")
+        self.assertEqual(
+            normalized[0]["advisory_family"],
+            ["CVE-2026-1234", "GHSA-AAAA-BBBB-CCCC", "GO-2026-1234"],
+        )
+        assessment = scan_tool.evaluate_vulnerability_report(
+            report,
+            "osv-image-minio",
+            {
+                "default_action": "deny",
+                "dispositions": [],
+                "format": scan_tool.VULNERABILITY_POLICY_FORMAT,
+            },
+            IMAGE_IDENTITY,
+        )
+        self.assertEqual(assessment["status"], "findings")
+        self.assertEqual(assessment["blocking"], 1)
+        self.assertEqual(assessment["severity"]["HIGH"], 1)
+
+    def test_debian_urgency_never_downgrades_the_group_cvss_score(self) -> None:
+        report = advisory_report("8.1")
+        affected = report["results"][0]["packages"][0]["vulnerabilities"][0][
+            "affected"
+        ][0]
+        affected["ecosystem_specific"] = {"urgency": "not affected"}
+        normalized = scan_tool.normalize_vulnerability_report(
+            report,
+            "osv-image-docker-base",
+        )
+        self.assertEqual(normalized[0]["score"], "8.1")
+        self.assertEqual(normalized[0]["severity"], "HIGH")
+
+    def test_exact_unexpired_static_evidence_disposition_reviews_high(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            evidence = root / "docs" / "review.md"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("Reviewed runtime mitigation evidence.\n", encoding="utf-8")
+            disposition = exact_disposition(
+                hashlib.sha256(evidence.read_bytes()).hexdigest()
+            )
+            write_policy(root, [disposition])
+            policy = scan_tool.load_vulnerability_policy(
+                root,
+                today=date(2026, 8, 12),
+            )
+            assessment = scan_tool.evaluate_vulnerability_report(
+                advisory_report(),
+                "osv-image-minio",
+                policy,
+                IMAGE_IDENTITY,
+            )
+            self.assertEqual(assessment["status"], "pass")
+            self.assertEqual(assessment["blocking"], 0)
+            self.assertEqual(assessment["dispositioned"], 1)
+
+    def test_disposition_is_exact_across_target_package_version_revision_and_family(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            evidence = root / "docs" / "review.md"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("Reviewed runtime mitigation evidence.\n", encoding="utf-8")
+            digest = hashlib.sha256(evidence.read_bytes()).hexdigest()
+            mutations = (
+                ("target", lambda item: item.update(target="osv-image-worker")),
+                (
+                    "package name",
+                    lambda item: item["package"].update(name="example.invalid/other"),
+                ),
+                (
+                    "package version",
+                    lambda item: item["package"].update(version="1.2.4"),
+                ),
+                (
+                    "source revision",
+                    lambda item: item["package"].update(source_revision="def456"),
+                ),
+                (
+                    "image identity",
+                    lambda item: item.update(image_identity="sha256:" + "8" * 64),
+                ),
+                ("severity", lambda item: item.update(severity="CRITICAL")),
+                ("score", lambda item: item.update(score="8.2")),
+                (
+                    "fixed versions",
+                    lambda item: item["fixed_versions"].append("1.2.5"),
+                ),
+                (
+                    "advisory family",
+                    lambda item: item["advisory_family"].append("OSV-EXTRA-1"),
+                ),
+            )
+            for label, mutate in mutations:
+                with self.subTest(label=label):
+                    disposition = exact_disposition(digest)
+                    mutate(disposition)
+                    if label == "advisory family":
+                        disposition["advisory_family"].sort()
+                    write_policy(root, [disposition])
+                    policy = scan_tool.load_vulnerability_policy(
+                        root,
+                        today=date(2026, 8, 12),
+                    )
+                    assessment = scan_tool.evaluate_vulnerability_report(
+                        advisory_report(),
+                        "osv-image-minio",
+                        policy,
+                        IMAGE_IDENTITY,
+                    )
+                    self.assertEqual(assessment["status"], "findings")
+                    self.assertEqual(assessment["blocking"], 1)
+
+    def test_policy_expiry_digest_schema_and_review_window_mutations_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            evidence = root / "docs" / "review.md"
+            evidence.parent.mkdir(parents=True)
+            evidence.write_text("Reviewed runtime mitigation evidence.\n", encoding="utf-8")
+            digest = hashlib.sha256(evidence.read_bytes()).hexdigest()
+            mutations = (
+                ("expired", lambda item: item.update(expires_on="2026-08-11")),
+                ("expiry boundary", lambda item: item.update(expires_on="2026-08-12")),
+                ("too long", lambda item: item.update(expires_on="2026-12-31")),
+                (
+                    "stale digest",
+                    lambda item: item["evidence"][0].update(sha256="0" * 64),
+                ),
+                ("wildcard target", lambda item: item.update(target="osv-image-*")),
+                ("unknown target", lambda item: item.update(target="osv-image-unknown")),
+                ("typed severity", lambda item: item.update(severity=["HIGH"])),
+                ("missing image identity", lambda item: item.pop("image_identity")),
+                ("mutable image identity", lambda item: item.update(image_identity="latest")),
+                (
+                    "typed evidence path",
+                    lambda item: item["evidence"][0].update(path=["docs/review.md"]),
+                ),
+                ("extra field", lambda item: item.update(unreviewed=True)),
+            )
+            for label, mutate in mutations:
+                with self.subTest(label=label):
+                    disposition = exact_disposition(digest)
+                    mutate(disposition)
+                    write_policy(root, [disposition])
+                    with self.assertRaises(scan_tool.ScanError):
+                        scan_tool.load_vulnerability_policy(
+                            root,
+                            today=date(2026, 8, 12),
+                        )
+
+            policy_path = root / "release" / "vulnerability-policy.json"
+            policy_path.write_text(
+                '{"dispositions":[],"format":"hbcb-vulnerability-policy/v1",'
+                '"format":"hbcb-vulnerability-policy/v1"}',
+                encoding="utf-8",
+            )
+            with self.assertRaises(scan_tool.ScanError):
+                scan_tool.load_vulnerability_policy(root, today=date(2026, 8, 12))
+            policy_path.write_text(
+                '{"dispositions":NaN,"format":"hbcb-vulnerability-policy/v1"}',
+                encoding="utf-8",
+            )
+            with self.assertRaises(scan_tool.ScanError):
+                scan_tool.load_vulnerability_policy(root, today=date(2026, 8, 12))
+
+    def test_lower_and_unrated_findings_remain_visible_without_blocking(self) -> None:
+        report = advisory_report("3.8")
+        package = report["results"][0]["packages"][0]
+        package["groups"].append(
+            {
+                "aliases": ["OSV-UNRATED-1"],
+                "ids": ["OSV-UNRATED-1"],
+                "max_severity": "",
+            }
+        )
+        package["vulnerabilities"].append({"id": "OSV-UNRATED-1"})
+        package["vulnerabilities"][1]["database_specific"]["severity"] = "LOW"
+        policy = {
+            "default_action": "deny",
+            "dispositions": [],
+            "format": scan_tool.VULNERABILITY_POLICY_FORMAT,
+        }
+        assessment = scan_tool.evaluate_vulnerability_report(
+            report,
+            "osv-image-minio",
+            policy,
+            IMAGE_IDENTITY,
+        )
+        self.assertEqual(assessment["status"], "pass")
+        self.assertEqual(assessment["families"], 2)
+        self.assertEqual(assessment["severity"]["LOW"], 1)
+        self.assertEqual(assessment["severity"]["UNRATED"], 1)
+        rendered = scan_tool.render_summary(
+            {
+                "status": "pass",
+                "targets": [
+                    {
+                        "exit_code": 1,
+                        "id": "osv-image-minio",
+                        "status": "pass",
+                        "type": "vulnerability-scan",
+                        "vulnerabilities": assessment,
+                    }
+                ],
+            }
+        )
+        self.assertIn("unrated=1", rendered)
+        self.assertIn("low=1", rendered)
+        self.assertIn("moderate=0", rendered)
+
+    def test_malformed_or_incompletely_grouped_report_fails_closed(self) -> None:
+        mutations = (
+            lambda package: package.update(groups=[]),
+            lambda package: package["groups"][0].update(max_severity="NaN"),
+            lambda package: package["groups"][0].update(ids=["UNKNOWN-1"]),
+            lambda package: package["groups"][0].update(aliases=["GO-2026-1234"]),
+        )
+        for mutate in mutations:
+            with self.subTest(mutation=mutate):
+                report = advisory_report()
+                mutate(report["results"][0]["packages"][0])
+                with self.assertRaises(scan_tool.ScanError):
+                    scan_tool.normalize_vulnerability_report(
+                        report,
+                        "osv-image-minio",
+                    )
+
+        conflicting = advisory_report()
+        duplicate = json.loads(json.dumps(conflicting["results"][0]["packages"][0]))
+        duplicate["groups"][0]["max_severity"] = "9.1"
+        conflicting["results"][0]["packages"].append(duplicate)
+        with self.assertRaisesRegex(scan_tool.ScanError, "snapshot conflicts"):
+            scan_tool.normalize_vulnerability_report(
+                conflicting,
+                "osv-image-minio",
+            )
+
+    def test_scanner_exit_and_report_findings_must_agree_and_raw_report_is_retained(self) -> None:
+        policy = {
+            "default_action": "deny",
+            "dispositions": [],
+            "format": scan_tool.VULNERABILITY_POLICY_FORMAT,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            report = Path(temporary) / "raw.json"
+            report.write_text(json.dumps(advisory_report()), encoding="utf-8")
+            before = report.read_bytes()
+            status, assessment = scan_tool.assess_retained_scan(
+                report,
+                0,
+                "osv-image-minio",
+                policy,
+                IMAGE_IDENTITY,
+            )
+            self.assertEqual((status, assessment), ("incomplete", None))
+            status, assessment = scan_tool.assess_retained_scan(
+                report,
+                1,
+                "osv-image-minio",
+                policy,
+                IMAGE_IDENTITY,
+            )
+            self.assertEqual(status, "findings")
+            self.assertIsNotNone(assessment)
+            self.assertEqual(report.read_bytes(), before)
+
+    def test_image_scan_keeps_raw_exit_one_but_passes_lower_policy_result(self) -> None:
+        policy = {
+            "default_action": "deny",
+            "dispositions": [],
+            "format": scan_tool.VULNERABILITY_POLICY_FORMAT,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            archive = output / "minio.tar"
+            archive.write_bytes(b"validated image archive")
+            report = advisory_report("3.8")
+            report["results"][0]["packages"][0]["vulnerabilities"][1][
+                "database_specific"
+            ]["severity"] = "LOW"
+            (output / "osv-image-minio.json").write_text(
+                json.dumps(report),
+                encoding="utf-8",
+            )
+            records: list[dict[str, object]] = []
+            with mock.patch.object(scan_tool, "run", return_value=1):
+                scan_tool.scan_image(
+                    Path("/scanner"),
+                    output,
+                    "minio",
+                    archive,
+                    records,
+                    policy,
+                    image_identity={"policy_digest": IMAGE_IDENTITY},
+                )
+            self.assertEqual(records[0]["exit_code"], 1)
+            self.assertEqual(records[0]["status"], "pass")
+            self.assertEqual(records[0]["vulnerabilities"]["severity"]["LOW"], 1)
+            self.assertTrue((output / "osv-image-minio.json").is_file())
+
+    def test_unused_disposition_is_a_policy_finding_for_an_evaluated_target(self) -> None:
+        disposition = exact_disposition("0" * 64)
+        policy = {
+            "default_action": "deny",
+            "dispositions": [disposition],
+            "format": scan_tool.VULNERABILITY_POLICY_FORMAT,
+        }
+        records = [
+            {
+                "id": "osv-image-minio",
+                "status": "pass",
+                "vulnerabilities": {"dispositioned": 0},
+            }
+        ]
+        summary = {"status": "pass"}
+        scan_tool.reconcile_policy_dispositions(records, policy, summary)
+        self.assertEqual(summary["unused"], 1)
+        self.assertEqual(summary["status"], "findings")
+        self.assertEqual(records[-1]["id"], "vulnerability-policy-dispositions")
+
+        matched_records = [
+            {
+                "id": "osv-image-minio",
+                "status": "pass",
+                "vulnerabilities": {"dispositioned": 1},
+            }
+        ]
+        matched_summary = {"status": "pass"}
+        scan_tool.reconcile_policy_dispositions(
+            matched_records,
+            policy,
+            matched_summary,
+        )
+        self.assertEqual(matched_summary["unused"], 0)
+        self.assertEqual(matched_summary["status"], "pass")
+        self.assertEqual(len(matched_records), 1)
+
+    def test_parallel_run_tags_are_disjoint_and_builds_stay_within_one_run(self) -> None:
+        commands: list[list[str]] = []
+
+        def capture(command, **_kwargs):
+            commands.append(list(command))
+            return 0
+
+        first = scan_tool.local_image_references("a" * 24)
+        second = scan_tool.local_image_references("b" * 24)
+        self.assertFalse(
+            {reference for _identifier, reference in first}
+            & {reference for _identifier, reference in second}
+        )
+        records: list[dict[str, object]] = []
+        attempted: list[str] = []
+        recipe = "sha256:" + "c" * 64
+        with mock.patch.object(scan_tool, "run", side_effect=capture):
+            self.assertTrue(
+                scan_tool.build_images(records, first, recipe, attempted)
+            )
+        self.assertEqual(len(commands), 4)
+        first_references = dict(first)
+        second_references = {reference for _identifier, reference in second}
+        for identifier, command in zip(scan_tool.LOCAL_IMAGE_IDS, commands):
+            self.assertEqual(command.count("--tag"), 1)
+            tag_index = command.index("--tag")
+            self.assertEqual(command[tag_index + 1], first_references[identifier])
+            self.assertFalse(set(command) & second_references)
+        self.assertEqual(attempted, list(scan_tool.LOCAL_IMAGE_IDS))
+        for command in commands[2:]:
+            self.assertIn("HBCB_BUILDER_IMAGE=" + first_references["builder"], command)
+        minio = next(command for command in commands if "docker/minio.Dockerfile" in command)
+        self.assertIn("HBCB_MINIO_RECIPE_ID=" + recipe, minio)
+
+    def test_parallel_build_references_do_not_change_local_policy_identity(self) -> None:
+        labels = {"org.opencontainers.image.revision": "uncommitted"}
+        first_reference = scan_tool.local_image_references("d" * 24)[0][1]
+        second_reference = scan_tool.local_image_references("e" * 24)[0][1]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first_archive = root / "first.tar"
+            second_archive = root / "second.tar"
+            config_digest = self._docker_archive(first_archive, labels=labels)
+            self._docker_archive(second_archive, labels=labels)
+            inspect_payload = json.dumps(
+                [
+                    {
+                        "Architecture": "amd64",
+                        "Config": {"Labels": labels},
+                        "Id": config_digest,
+                        "Os": "linux",
+                    }
+                ]
+            ).encode("utf-8")
+            with mock.patch.object(
+                scan_tool,
+                "run_bounded_capture",
+                return_value=inspect_payload,
+            ), mock.patch.object(
+                scan_tool,
+                "_save_external_image_archive",
+                side_effect=[
+                    (first_archive.stat().st_size, "1" * 64),
+                    (second_archive.stat().st_size, "2" * 64),
+                ],
+            ):
+                first_identity = scan_tool.prepare_local_image_archive(
+                    first_reference,
+                    "builder",
+                    first_archive,
+                    None,
+                )
+                second_identity = scan_tool.prepare_local_image_archive(
+                    second_reference,
+                    "builder",
+                    second_archive,
+                    None,
+                )
+        self.assertNotEqual(
+            first_identity["build_reference"],
+            second_identity["build_reference"],
+        )
+        self.assertNotEqual(
+            first_identity["archive_sha256"],
+            second_identity["archive_sha256"],
+        )
+        self.assertEqual(
+            first_identity["policy_digest"],
+            second_identity["policy_digest"],
+        )
+
+    def test_local_tag_cleanup_is_exact_and_reverse_build_order(self) -> None:
+        local_images = scan_tool.local_image_references("f" * 24)
+        commands = []
+        with mock.patch.object(
+            scan_tool,
+            "run",
+            side_effect=lambda command, **_kwargs: commands.append(list(command)) or 0,
+        ):
+            self.assertEqual(
+                scan_tool.cleanup_local_image_tags(
+                    local_images,
+                    list(scan_tool.LOCAL_IMAGE_IDS),
+                ),
+                [],
+            )
+        self.assertEqual(
+            commands,
+            [
+                ["docker", "image", "rm", reference]
+                for _identifier, reference in reversed(local_images)
+            ],
+        )
+
+    @unittest.skipUnless(hasattr(signal, "SIGTERM"), "requires SIGTERM")
+    def test_local_tag_cleanup_defers_repeated_signal_until_every_tag(self) -> None:
+        local_images = scan_tool.local_image_references("0" * 24)
+        commands = []
+
+        def capture(command, **_kwargs):
+            commands.append(list(command))
+            if len(commands) == 1:
+                os.kill(os.getpid(), signal.SIGTERM)
+            return 0
+
+        with mock.patch.object(
+            scan_tool,
+            "run",
+            side_effect=capture,
+        ), self.assertRaises(scan_tool.TerminationSignal) as raised:
+            with scan_tool._TerminationGuard() as ownership:
+                # Model a signal received between guarded build/scan children.
+                os.kill(os.getpid(), signal.SIGTERM)
+                ownership.defer_nested_signals_until_exit()
+                scan_tool.cleanup_local_image_tags(
+                    local_images,
+                    list(scan_tool.LOCAL_IMAGE_IDS),
+                )
+        self.assertEqual(raised.exception.code, 128 + signal.SIGTERM)
+        self.assertEqual(
+            commands,
+            [
+                ["docker", "image", "rm", reference]
+                for _identifier, reference in reversed(local_images)
+            ],
+        )
+
+    @unittest.skipUnless(hasattr(signal, "SIGTERM"), "requires SIGTERM")
+    def test_deferred_ownership_guard_finishes_real_cleanup_children(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            marker = Path(temporary) / "second-cleanup-ran"
+            first = "import os,signal;os.kill(os.getppid(),signal.SIGTERM)"
+            second = (
+                "import sys;from pathlib import Path;"
+                "Path(sys.argv[1]).write_text('done',encoding='ascii')"
+            )
+            with self.assertRaises(scan_tool.TerminationSignal) as raised:
+                with scan_tool._TerminationGuard() as ownership:
+                    ownership.defer_nested_signals_until_exit()
+                    self.assertEqual(
+                        scan_tool.run([sys.executable, "-c", first], timeout=5),
+                        0,
+                    )
+                    self.assertEqual(
+                        scan_tool.run(
+                            [sys.executable, "-c", second, str(marker)],
+                            timeout=5,
+                        ),
+                        0,
+                    )
+            self.assertEqual(raised.exception.code, 128 + signal.SIGTERM)
+            self.assertEqual(marker.read_text(encoding="ascii"), "done")
+
+    @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
+    def test_outer_ownership_guard_still_allows_child_signal_teardown(self) -> None:
+        child = (
+            "import os,signal,time;"
+            "os.kill(os.getppid(),signal.SIGTERM);"
+            "time.sleep(30)"
+        )
+        with mock.patch.object(
+            scan_tool,
+            "PROCESS_TERM_GRACE_SECONDS",
+            0.1,
+        ), mock.patch.object(
+            scan_tool,
+            "PROCESS_KILL_GRACE_SECONDS",
+            0.5,
+        ), self.assertRaises(scan_tool.TerminationSignal) as raised:
+            with scan_tool._TerminationGuard():
+                scan_tool.run([sys.executable, "-c", child], timeout=5)
+        self.assertEqual(raised.exception.code, 128 + signal.SIGTERM)
+
+    def test_minio_recipe_helper_output_is_strict_and_failure_is_not_echoed(self) -> None:
+        with mock.patch.object(
+            scan_tool,
+            "run_bounded_capture",
+            return_value=("sha256:" + "c" * 64 + "\n").encode("ascii"),
+        ):
+            self.assertEqual(scan_tool.minio_recipe_id(), "sha256:" + "c" * 64)
+        for payload in (
+            b"not-a-recipe\n",
+            b"sha256:" + b"a" * 65,
+            b"\xff",
+        ):
+            with self.subTest(output=payload), mock.patch.object(
+                scan_tool,
+                "run_bounded_capture",
+                return_value=payload,
+            ):
+                with self.assertRaisesRegex(
+                    scan_tool.ScanError,
+                    "composite recipe identity was invalid",
+                ) as raised:
+                    scan_tool.minio_recipe_id()
+                self.assertNotIn("secret", str(raised.exception))
+        with mock.patch.object(
+            scan_tool,
+            "run_bounded_capture",
+            side_effect=scan_tool.ScanError("secret subprocess detail"),
+        ), self.assertRaisesRegex(
+            scan_tool.ScanError,
+            "composite recipe identity failed",
+        ) as raised:
+            scan_tool.minio_recipe_id()
+        self.assertNotIn("secret", str(raised.exception))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,289 @@
+#!/usr/bin/env python3
+"""Fetch or import the checksum-pinned Blender corresponding-source archive."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import http.client
+import json
+import os
+import re
+import stat
+import sys
+import tempfile
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import BinaryIO, Mapping, Optional, Sequence
+
+
+MAX_POLICY_BYTES = 64 * 1024
+MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
+CHUNK_BYTES = 1024 * 1024
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+MD5 = re.compile(r"^[0-9a-f]{32}$")
+VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+OFFICIAL_SOURCE_PREFIX = "https://download.blender.org/source/"
+
+
+class SourceFailure(RuntimeError):
+    """A bounded, safe-to-display source acquisition failure."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code) is None:
+            code = "invalid_source_failure"
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
+class RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
+
+
+def _regular_bytes(path: Path, maximum: int) -> bytes:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        raise SourceFailure("input_unavailable", "required source input is unavailable") from None
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise SourceFailure("unsafe_input", "required source input must be a regular non-symlink")
+    if metadata.st_size < 1 or metadata.st_size > maximum:
+        raise SourceFailure("input_size_invalid", "required source input is outside the size policy")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(str(path), flags)
+        with os.fdopen(descriptor, "rb") as stream:
+            payload = stream.read(maximum + 1)
+    except OSError:
+        raise SourceFailure("input_unreadable", "required source input cannot be read") from None
+    if len(payload) != metadata.st_size:
+        raise SourceFailure("input_changed", "required source input changed while reading")
+    return payload
+
+
+def load_policy(path: Path) -> Mapping[str, object]:
+    payload = _regular_bytes(path, MAX_POLICY_BYTES)
+    try:
+        document = json.loads(payload.decode("utf-8", "strict"))
+    except (UnicodeDecodeError, ValueError):
+        raise SourceFailure("invalid_policy", "corresponding-source policy is invalid JSON") from None
+    if not isinstance(document, dict) or set(document) != {"blender", "format"}:
+        raise SourceFailure("invalid_policy", "corresponding-source policy has unsupported fields")
+    if document.get("format") != "hbcb-corresponding-source-policy/v1":
+        raise SourceFailure("invalid_policy", "corresponding-source policy format is unsupported")
+    blender = document.get("blender")
+    expected = {
+        "archive",
+        "bytes",
+        "license",
+        "official_md5",
+        "sha256",
+        "source_url",
+        "version",
+    }
+    if not isinstance(blender, dict) or set(blender) != expected:
+        raise SourceFailure("invalid_policy", "Blender source policy has unsupported fields")
+    version = blender.get("version")
+    archive = blender.get("archive")
+    source_url = blender.get("source_url")
+    size = blender.get("bytes")
+    if (
+        not isinstance(version, str)
+        or VERSION.fullmatch(version) is None
+        or archive != "blender-" + version + ".tar.xz"
+        or source_url != OFFICIAL_SOURCE_PREFIX + archive
+        or blender.get("license") != "GPL-3.0-or-later"
+        or not isinstance(size, int)
+        or size < 1
+        or size > MAX_ARCHIVE_BYTES
+        or not isinstance(blender.get("sha256"), str)
+        or SHA256.fullmatch(blender["sha256"]) is None
+        or not isinstance(blender.get("official_md5"), str)
+        or MD5.fullmatch(blender["official_md5"]) is None
+    ):
+        raise SourceFailure("invalid_policy", "Blender source policy values violate release policy")
+    return blender
+
+
+def _network_stream(url: str, expected_size: int) -> BinaryIO:
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        RejectRedirects(),
+    )
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "hbcb-corresponding-source/1"},
+        method="GET",
+    )
+    try:
+        response = opener.open(request, timeout=120)
+    except (OSError, urllib.error.URLError, urllib.error.HTTPError):
+        raise SourceFailure("download_failed", "official Blender source download failed") from None
+    status = getattr(response, "status", None)
+    final_url = response.geturl()
+    content_length = response.headers.get("Content-Length")
+    if status != 200 or final_url != url:
+        response.close()
+        raise SourceFailure("download_identity_invalid", "official Blender source response identity is invalid")
+    if content_length is not None:
+        try:
+            announced = int(content_length)
+        except ValueError:
+            response.close()
+            raise SourceFailure("download_size_invalid", "official Blender source length is invalid") from None
+        if announced != expected_size:
+            response.close()
+            raise SourceFailure("download_size_invalid", "official Blender source length does not match policy")
+    return response
+
+
+def _copy_verified(stream: BinaryIO, destination: Path, expected_size: int, expected_sha256: str) -> None:
+    digest = hashlib.sha256()
+    total = 0
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(str(destination), flags, 0o600)
+        with os.fdopen(descriptor, "wb") as output:
+            while True:
+                chunk = stream.read(CHUNK_BYTES)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > expected_size or total > MAX_ARCHIVE_BYTES:
+                    raise SourceFailure("archive_size_mismatch", "Blender source archive exceeds the pinned size")
+                digest.update(chunk)
+                output.write(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+    except SourceFailure:
+        raise
+    except (OSError, http.client.HTTPException):
+        raise SourceFailure(
+            "archive_io_failed", "Blender source archive transfer could not be staged"
+        ) from None
+    if total != expected_size or digest.hexdigest() != expected_sha256:
+        raise SourceFailure("archive_checksum_mismatch", "Blender source archive does not match pinned bytes and SHA-256")
+    destination.chmod(0o644)
+
+
+def fetch(policy_path: Path, output_dir: Path, archive_path: Optional[Path] = None) -> Path:
+    policy = load_policy(policy_path)
+    archive_name = policy["archive"]
+    expected_size = policy["bytes"]
+    expected_sha256 = policy["sha256"]
+    source_url = policy["source_url"]
+    assert isinstance(archive_name, str)
+    assert isinstance(expected_size, int)
+    assert isinstance(expected_sha256, str)
+    assert isinstance(source_url, str)
+
+    if output_dir.exists() or output_dir.is_symlink():
+        raise SourceFailure("output_exists", "refusing to overwrite corresponding-source output")
+    try:
+        parent = output_dir.parent.resolve(strict=True)
+        parent_metadata = parent.lstat()
+    except OSError:
+        raise SourceFailure("output_parent_unsafe", "corresponding-source output parent is unavailable") from None
+    if parent.is_symlink() or not stat.S_ISDIR(parent_metadata.st_mode):
+        raise SourceFailure("output_parent_unsafe", "corresponding-source output parent is unsafe")
+    destination = parent / output_dir.name
+    if destination.exists() or destination.is_symlink():
+        raise SourceFailure("output_exists", "refusing to overwrite corresponding-source output")
+
+    staging = Path(tempfile.mkdtemp(prefix=".hbcb-source-", dir=str(parent)))
+    staged_archive = staging / archive_name
+    created_output = False
+    try:
+        staging.chmod(0o700)
+        if archive_path is None:
+            stream = _network_stream(source_url, expected_size)
+        else:
+            try:
+                metadata = archive_path.lstat()
+            except OSError:
+                raise SourceFailure("input_unavailable", "supplied Blender source archive is unavailable") from None
+            if archive_path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+                raise SourceFailure("unsafe_input", "supplied Blender source archive must be a regular non-symlink")
+            if metadata.st_size != expected_size:
+                raise SourceFailure("archive_size_mismatch", "supplied Blender source archive does not match pinned bytes")
+            descriptor = -1
+            try:
+                descriptor = os.open(str(archive_path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                opened = os.fstat(descriptor)
+                if not stat.S_ISREG(opened.st_mode) or opened.st_size != expected_size:
+                    os.close(descriptor)
+                    descriptor = -1
+                    raise SourceFailure(
+                        "archive_size_mismatch",
+                        "supplied Blender source archive does not match pinned bytes",
+                    )
+                stream = os.fdopen(descriptor, "rb")
+            except SourceFailure:
+                raise
+            except OSError:
+                if descriptor >= 0:
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass
+                raise SourceFailure("input_unreadable", "supplied Blender source archive cannot be read") from None
+        try:
+            _copy_verified(stream, staged_archive, expected_size, expected_sha256)
+        finally:
+            stream.close()
+        try:
+            os.mkdir(str(destination), 0o700)
+            created_output = True
+        except FileExistsError:
+            raise SourceFailure("output_exists", "refusing to overwrite corresponding-source output") from None
+        except OSError:
+            raise SourceFailure("output_create_failed", "corresponding-source output could not be reserved") from None
+        os.replace(str(staged_archive), str(destination / archive_name))
+        (destination / archive_name).chmod(0o644)
+        destination.chmod(0o755)
+        return destination / archive_name
+    finally:
+        try:
+            staged_archive.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+        try:
+            staging.rmdir()
+        except OSError:
+            pass
+        if created_output and not (destination / archive_name).is_file():
+            try:
+                destination.rmdir()
+            except OSError:
+                pass
+
+
+def _arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--policy", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--archive", type=Path, help="optional already-downloaded archive")
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    try:
+        arguments = _arguments(argv)
+        archive = fetch(arguments.policy, arguments.output_dir, arguments.archive)
+        print("CORRESPONDING_SOURCE: PASS archive=%s" % archive.name)
+        return 0
+    except SourceFailure as failure:
+        print("CORRESPONDING_SOURCE: FAIL[%s]: %s" % (failure.code, failure.detail), file=sys.stderr)
+        return 1
+    except Exception:
+        print("CORRESPONDING_SOURCE: FAIL[internal_error]: unexpected source acquisition failure", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

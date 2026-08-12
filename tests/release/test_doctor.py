@@ -479,7 +479,7 @@ esac
         self.assertIn("Docker reports 8 CPU(s) and 12 GiB RAM", completed.stdout)
         self.assertIn("meets the advisory 8 GiB", completed.stdout)
         self.assertIn("service-smoke path recommends at least 12 GiB", completed.stdout)
-        self.assertIn("20 GiB service baseline", completed.stdout)
+        self.assertIn("advisory service baseline is 20 GiB", completed.stdout)
 
     def test_missing_python_does_not_misreport_supported_compose(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

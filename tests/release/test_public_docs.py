@@ -119,6 +119,29 @@ class PublicDocumentationTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("no project-published PyPI package", installation)
+        self.assertIn("curl's required flags", installation)
+        self.assertIn("Linux `amd64`, Python 3.11+, Compose 2.24.4+", installation)
+        self.assertIn("export PYTHON=python3.11", installation)
+        self.assertIn('"$PYTHON" -m builder_cli build', installation)
+        self.assertIn('"$PYTHON" -m builder_cli verify', installation)
+
+        compatibility = (ROOT / "docs" / "compatibility.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("`--fail-with-body` and `--noproxy`", compatibility)
+
+        test_plan = (ROOT / "TEST_PLAN.md").read_text(encoding="utf-8")
+        self.assertIn("make test-unit", test_plan)
+        self.assertIn("make test-blender", test_plan)
+        self.assertIn("separate dependency environments", test_plan)
+        self.assertIn("historical August 3", test_plan)
+        self.assertIn("`public_oci_ready: false`", test_plan)
+        self.assertNotIn("python3.11 -m unittest discover -s tests -v", test_plan)
+
+        plan = (ROOT / "PLAN.md").read_text(encoding="utf-8")
+        self.assertIn("Post-v0.1 proposals, not implemented capabilities", plan)
+        self.assertIn("A future planner would receive the key", plan)
+        self.assertIn("intentionally proves the later fail-closed `needs_review`", plan)
 
         progress = (ROOT / "docs" / "progress.md").read_text(encoding="utf-8")
         self.assertIn("authenticates the historical G9 index only", progress)
@@ -146,7 +169,19 @@ class PublicDocumentationTests(unittest.TestCase):
         self.assertIn("does **not** publish", deployment.lower())
         self.assertIn("not yet a copy-paste", deployment.lower())
         self.assertIn("placeholder", deployment.lower())
+        self.assertIn("Python 3.11 or newer as `python3`", deployment)
         self.assertNotIn("supported production reference", deployment.lower())
+
+        release_process = (ROOT / "docs" / "release-process.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Python 3.11+", release_process)
+        self.assertIn("at least 12 GiB allocated to", release_process)
+        self.assertIn("30 GB of Docker disk headroom", release_process)
+        self.assertIn(
+            "PYTHON=python3.11 HBCB_RELEASE_RUN_ID=review-1 make release-check",
+            release_process,
+        )
 
     def test_examples_and_contract_guide_do_not_overclaim_qa(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -164,6 +199,8 @@ class PublicDocumentationTests(unittest.TestCase):
         troubleshooting = (ROOT / "docs" / "troubleshooting.md").read_text(
             encoding="utf-8"
         )
+        self.assertIn("manifest baked provenance mismatch", troubleshooting)
+        self.assertIn("manifest Blender binary provenance mismatch", troubleshooting)
         self.assertIn("README quickstart uses `build/facet-bot`", troubleshooting)
         self.assertIn("`make demo` alias uses\n`build/demo`", troubleshooting)
 
@@ -176,6 +213,8 @@ class PublicDocumentationTests(unittest.TestCase):
             "swept-tail",
             "height_mm - base.height_mm >= 18",
             "BUILDER_VALIDATE: PASS",
+            '"$PYTHON" tests/blender_integration/g2_gate.py',
+            '"$PYTHON" tests/blender_integration/g3_gate.py',
         ):
             self.assertIn(value, guide, value)
         self.assertNotIn("unittest discover -s tests", guide)

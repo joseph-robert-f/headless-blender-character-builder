@@ -44,6 +44,7 @@ DEFAULT_FAILURE_RETENTION_DAYS = 7
 DEFAULT_ORPHAN_GRACE_DAYS = 7
 MAX_RETENTION_DAYS = 3650
 MAX_MAINTENANCE_BATCH = 1000
+MAX_ORPHAN_SCAN_VERSIONS = 100_000
 MAX_QUEUE_RECONSTRUCTION_BUILDS = 10_000_000
 MAX_DELETION_ATTEMPTS = 1_000_000
 MAX_INVENTORY_BYTES = 64 * 1024 * 1024
@@ -177,6 +178,32 @@ def _artifact_relative_path(evidence: "ArtifactVersionEvidence") -> str:
     if not hmac.compare_digest(expected, evidence.object_key):
         raise MaintenanceError("noncanonical_object_key", "artifact key is not canonical")
     return relative_path
+
+
+def _artifact_owner_from_key(namespace: str, object_key: str) -> tuple[UUID, UUID, str]:
+    """Parse only a canonical, allowlisted artifact key from this namespace."""
+
+    selected_namespace = validate_namespace(namespace)
+    selected_key = _object_key(object_key)
+    prefix = f"{selected_namespace}/v1/builds/"
+    if not selected_key.startswith(prefix):
+        raise MaintenanceError("noncanonical_object_key", "artifact key is not canonical")
+    remainder = selected_key[len(prefix) :]
+    build_text, separator, remainder = remainder.partition("/attempts/")
+    if not separator:
+        raise MaintenanceError("noncanonical_object_key", "artifact key is not canonical")
+    attempt_text, separator, relative_path = remainder.partition("/complete-v1/")
+    if not separator or relative_path not in ARTIFACT_CONTENT_TYPES:
+        raise MaintenanceError("noncanonical_object_key", "artifact key is not canonical")
+    build_id = _uuid(build_text, "artifact build ID")
+    attempt_id = _uuid(attempt_text, "artifact attempt ID")
+    expected = (
+        f"{selected_namespace}/v1/builds/{build_id}/attempts/{attempt_id}/"
+        f"complete-v1/{relative_path}"
+    )
+    if not hmac.compare_digest(expected, selected_key):
+        raise MaintenanceError("noncanonical_object_key", "artifact key is not canonical")
+    return build_id, attempt_id, relative_path
 
 
 def _backup_object_name(index: int) -> str:
@@ -382,6 +409,64 @@ class ArtifactVersionEvidence:
             self.object_key,
             self.version_id,
         )
+
+
+@dataclass(frozen=True)
+class StoredObjectVersion:
+    """Exact immutable object version observed during a bounded inventory."""
+
+    namespace: str
+    build_id: UUID
+    attempt_id: UUID
+    relative_path: str
+    bucket: str
+    object_key: str
+    version_id: str
+    sha256: str
+    bytes: int
+    last_modified: datetime
+
+    def __post_init__(self) -> None:
+        validate_namespace(self.namespace)
+        if not isinstance(self.build_id, UUID) or not isinstance(self.attempt_id, UUID):
+            raise MaintenanceError("invalid_artifact_owner", "artifact owner is invalid")
+        if self.relative_path not in ARTIFACT_CONTENT_TYPES:
+            raise MaintenanceError("invalid_artifact_path", "artifact path is outside policy")
+        _bucket(self.bucket)
+        _object_key(self.object_key)
+        _version_id(self.version_id)
+        _sha256(self.sha256)
+        bounded_integer(self.bytes, "artifact bytes", minimum=1, maximum=MAX_PUBLISHED_BYTES)
+        _utc(self.last_modified, "object last_modified")
+        parsed = _artifact_owner_from_key(self.namespace, self.object_key)
+        if parsed != (self.build_id, self.attempt_id, self.relative_path):
+            raise MaintenanceError("noncanonical_object_key", "artifact key is not canonical")
+
+    @property
+    def identity(self) -> tuple[str, str, str]:
+        return (self.bucket, self.object_key, self.version_id)
+
+
+@dataclass(frozen=True)
+class OrphanDiscoveryResult:
+    dry_run: bool
+    scanned: int
+    candidates: int
+    queued: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.dry_run, bool):
+            raise MaintenanceError("invalid_orphan_result", "orphan dry-run state is invalid")
+        for label, value in (
+            ("scanned object versions", self.scanned),
+            ("orphan candidates", self.candidates),
+            ("queued orphan versions", self.queued),
+        ):
+            bounded_integer(value, label, minimum=0, maximum=MAX_ORPHAN_SCAN_VERSIONS)
+        if self.candidates > self.scanned or self.queued > self.candidates:
+            raise MaintenanceError("invalid_orphan_result", "orphan counts are invalid")
+        if self.dry_run and self.queued != 0:
+            raise MaintenanceError("invalid_orphan_result", "orphan preview mutated state")
 
 
 @dataclass(frozen=True)
@@ -783,6 +868,15 @@ class MaintenanceStore(Protocol):
         attempted_at: datetime,
     ) -> None: ...
 
+    def reconcile_orphan_versions(
+        self,
+        versions: tuple[StoredObjectVersion, ...],
+        eligible_before: datetime,
+        now: datetime,
+        apply: bool,
+        limit: int,
+    ) -> tuple[StoredObjectVersion, ...]: ...
+
     def iter_queued_build_ids(self, page_size: int) -> Iterable[tuple[UUID, ...]]: ...
 
     def artifact_inventory(self) -> tuple[ArtifactVersionEvidence, ...]: ...
@@ -796,6 +890,14 @@ class QueuePublisher(Protocol):
 
 class VersionedObjectClient(Protocol):
     def delete_version(self, bucket: str, object_key: str, version_id: str) -> None: ...
+
+    def inventory_namespace_versions(
+        self,
+        bucket: str,
+        namespace: str,
+        *,
+        limit: int,
+    ) -> tuple[StoredObjectVersion, ...]: ...
 
     def iter_version(
         self, bucket: str, object_key: str, version_id: str
@@ -1187,6 +1289,78 @@ class MaintenanceService:
                 )
                 deleted += 1
         return DeletionRunResult(False, len(claimed), deleted, failed)
+
+    def discover_orphan_versions(
+        self,
+        *,
+        policy: Optional[RetentionPolicy] = None,
+        apply: bool = False,
+        limit: int = 100,
+        scan_limit: int = MAX_ORPHAN_SCAN_VERSIONS,
+        now: Optional[datetime] = None,
+    ) -> OrphanDiscoveryResult:
+        """Inventory and durably queue old object versions absent from PostgreSQL.
+
+        Object storage is only the source of candidates.  PostgreSQL performs
+        the authoritative comparison while locking every candidate build row,
+        and apply merely inserts exact evidence into the existing deletion
+        queue.  A later ``delete-artifacts --apply`` run rechecks references at
+        claim time before deleting the exact version.
+        """
+
+        policy = RetentionPolicy() if policy is None else policy
+        if not isinstance(policy, RetentionPolicy):
+            raise MaintenanceError("invalid_retention_policy", "retention policy is invalid")
+        self._apply_flag(apply)
+        bounded_integer(limit, "orphan limit", minimum=1, maximum=MAX_MAINTENANCE_BATCH)
+        bounded_integer(
+            scan_limit,
+            "orphan scan limit",
+            minimum=1,
+            maximum=MAX_ORPHAN_SCAN_VERSIONS,
+        )
+        if self.bucket is None or self._objects is None:
+            raise MaintenanceError("storage_not_configured", "versioned object client is required")
+        current = _utc(now or datetime.now(timezone.utc), "orphan discovery time")
+        eligible_before = current - timedelta(days=policy.orphan_grace_days)
+        versions = tuple(
+            self._objects.inventory_namespace_versions(
+                self.bucket,
+                self.namespace,
+                limit=scan_limit,
+            )
+        )
+        if (
+            len(versions) > scan_limit
+            or any(not isinstance(item, StoredObjectVersion) for item in versions)
+            or any(item.namespace != self.namespace or item.bucket != self.bucket for item in versions)
+            or len({item.identity for item in versions}) != len(versions)
+        ):
+            raise MaintenanceError("invalid_object_inventory", "object inventory is invalid")
+        candidates = tuple(
+            self._store.reconcile_orphan_versions(
+                versions,
+                eligible_before,
+                current,
+                apply,
+                limit,
+            )
+        )
+        inventoried_identities = {version.identity for version in versions}
+        if (
+            len(candidates) > limit
+            or any(not isinstance(item, StoredObjectVersion) for item in candidates)
+            or any(item.identity not in inventoried_identities for item in candidates)
+            or any(item.last_modified > eligible_before for item in candidates)
+            or len({item.identity for item in candidates}) != len(candidates)
+        ):
+            raise MaintenanceError("invalid_orphan_result", "PostgreSQL returned invalid orphan candidates")
+        return OrphanDiscoveryResult(
+            dry_run=not apply,
+            scanned=len(versions),
+            candidates=len(candidates),
+            queued=len(candidates) if apply else 0,
+        )
 
     def reconstruct_redis(
         self,
@@ -1632,8 +1806,15 @@ class PostgresMaintenanceStore:
             cursor.execute(
                 """
                 SELECT COUNT(*)
-                FROM hbcb.artifact_deletion_queue
-                WHERE namespace = %s AND build_id = ANY(%s::uuid[])
+                FROM hbcb.artifacts AS artifact
+                JOIN hbcb.builds AS build ON build.id = artifact.build_id
+                JOIN hbcb.artifact_deletion_queue AS queue
+                  ON queue.namespace = build.namespace
+                 AND queue.bucket = artifact.bucket
+                 AND queue.object_key = artifact.object_key
+                 AND queue.version_id = artifact.version_id
+                WHERE build.namespace = %s
+                  AND artifact.build_id = ANY(%s::uuid[])
                 """,
                 (self.namespace, list(locked)),
             )
@@ -1663,14 +1844,31 @@ class PostgresMaintenanceStore:
         with self._transaction() as cursor:
             cursor.execute(
                 """
-                SELECT id, namespace, build_id, bucket, object_key, version_id,
-                       sha256, bytes, status, attempt_count, queued_at, claim_token
-                FROM hbcb.artifact_deletion_queue
-                WHERE namespace = %s AND queued_at <= %s AND (
-                    status IN ('pending', 'failed') OR
-                    (status = 'deleting' AND lease_expires_at <= %s)
-                ) AND attempt_count < 1000000
-                ORDER BY queued_at, id
+                SELECT queue.id, queue.namespace, queue.build_id, queue.bucket,
+                       queue.object_key, queue.version_id, queue.sha256,
+                       queue.bytes, queue.status, queue.attempt_count,
+                       queue.queued_at, queue.claim_token
+                FROM hbcb.artifact_deletion_queue AS queue
+                LEFT JOIN hbcb.builds AS build
+                  ON build.namespace = queue.namespace
+                 AND build.id = queue.build_id
+                WHERE queue.namespace = %s AND queue.queued_at <= %s AND (
+                    queue.status IN ('pending', 'failed') OR
+                    (queue.status = 'deleting' AND queue.lease_expires_at <= %s)
+                ) AND queue.attempt_count < 1000000
+                  AND (
+                      build.id IS NULL OR build.status NOT IN (
+                          'validating','queued','running','geometry_qa','rendering'
+                      )
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM hbcb.artifacts AS artifact
+                      WHERE artifact.bucket = queue.bucket
+                        AND artifact.object_key = queue.object_key
+                        AND artifact.version_id = queue.version_id
+                  )
+                ORDER BY queue.queued_at, queue.id
                 LIMIT %s
                 """,
                 (self.namespace, eligible_before, now, limit),
@@ -1689,14 +1887,29 @@ class PostgresMaintenanceStore:
             cursor.execute(
                 """
                 WITH candidates AS (
-                    SELECT id
-                    FROM hbcb.artifact_deletion_queue
-                    WHERE namespace = %s AND queued_at <= %s AND (
-                        status IN ('pending', 'failed') OR
-                        (status = 'deleting' AND lease_expires_at <= %s)
-                    ) AND attempt_count < 1000000
-                    ORDER BY queued_at, id
-                    FOR UPDATE SKIP LOCKED
+                    SELECT queue.id
+                    FROM hbcb.artifact_deletion_queue AS queue
+                    LEFT JOIN hbcb.builds AS build
+                      ON build.namespace = queue.namespace
+                     AND build.id = queue.build_id
+                    WHERE queue.namespace = %s AND queue.queued_at <= %s AND (
+                        queue.status IN ('pending', 'failed') OR
+                        (queue.status = 'deleting' AND queue.lease_expires_at <= %s)
+                    ) AND queue.attempt_count < 1000000
+                      AND (
+                          build.id IS NULL OR build.status NOT IN (
+                              'validating','queued','running','geometry_qa','rendering'
+                          )
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM hbcb.artifacts AS artifact
+                          WHERE artifact.bucket = queue.bucket
+                            AND artifact.object_key = queue.object_key
+                            AND artifact.version_id = queue.version_id
+                      )
+                    ORDER BY queue.queued_at, queue.id
+                    FOR UPDATE OF queue SKIP LOCKED
                     LIMIT %s
                 )
                 UPDATE hbcb.artifact_deletion_queue AS queue
@@ -1797,6 +2010,130 @@ class PostgresMaintenanceStore:
             )
             if cursor.rowcount != 1:
                 raise MaintenanceError("deletion_claim_lost", "deletion claim update failed")
+
+    def reconcile_orphan_versions(
+        self,
+        versions: tuple[StoredObjectVersion, ...],
+        eligible_before: datetime,
+        now: datetime,
+        apply: bool,
+        limit: int,
+    ) -> tuple[StoredObjectVersion, ...]:
+        """Select absent exact versions under authoritative PostgreSQL locks."""
+
+        self._validate_orphan_reconciliation(versions, eligible_before, now, apply, limit)
+        if not versions:
+            return ()
+        eligible = tuple(version for version in versions if version.last_modified <= eligible_before)
+        if not eligible:
+            return ()
+        build_ids = tuple(sorted({item.build_id for item in eligible}, key=str))
+        buckets = tuple(sorted({item.bucket for item in eligible}))
+        object_keys = tuple(sorted({item.object_key for item in eligible}))
+        with self._transaction() as cursor:
+            # Serialize with publication, cancellation, and retention for every
+            # build which still exists.  Missing build rows are valid orphan
+            # candidates; existing active rows remain protected below.
+            cursor.execute(
+                """
+                SELECT id, status
+                FROM hbcb.builds
+                WHERE namespace = %s AND id = ANY(%s::uuid[])
+                ORDER BY id
+                FOR UPDATE
+                """,
+                (self.namespace, list(build_ids)),
+            )
+            statuses = {
+                _uuid(row[0], "orphan build ID"): BuildStatus(str(row[1]))
+                for row in cursor.fetchall()
+            }
+            cursor.execute(
+                """
+                SELECT bucket, object_key, version_id
+                FROM hbcb.artifacts
+                WHERE bucket = ANY(%s::text[])
+                  AND object_key = ANY(%s::text[])
+                """,
+                (list(buckets), list(object_keys)),
+            )
+            referenced = {
+                (str(row[0]), str(row[1]), str(row[2])) for row in cursor.fetchall()
+            }
+            cursor.execute(
+                """
+                SELECT bucket, object_key, version_id
+                FROM hbcb.artifact_deletion_queue
+                WHERE namespace = %s
+                  AND bucket = ANY(%s::text[])
+                  AND object_key = ANY(%s::text[])
+                  AND status <> 'deleted'
+                """,
+                (self.namespace, list(buckets), list(object_keys)),
+            )
+            already_queued = {
+                (str(row[0]), str(row[1]), str(row[2])) for row in cursor.fetchall()
+            }
+            selected = tuple(
+                item
+                for item in eligible
+                if item.identity not in referenced
+                and item.identity not in already_queued
+                and statuses.get(item.build_id) not in ACTIVE_STATUSES
+            )[:limit]
+            if apply:
+                for item in selected:
+                    cursor.execute(
+                        """
+                        INSERT INTO hbcb.artifact_deletion_queue (
+                            namespace, build_id, bucket, object_key, version_id,
+                            sha256, bytes, queued_at, evidence_origin,
+                            object_last_modified
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'orphan_inventory', %s)
+                        ON CONFLICT (namespace, bucket, object_key, version_id) DO NOTHING
+                        """,
+                        (
+                            item.namespace,
+                            item.build_id,
+                            item.bucket,
+                            item.object_key,
+                            item.version_id,
+                            item.sha256,
+                            item.bytes,
+                            now,
+                            item.last_modified,
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise MaintenanceError(
+                            "orphan_queue_conflict",
+                            "orphan evidence changed during reconciliation",
+                        )
+            return selected
+
+    def _validate_orphan_reconciliation(
+        self,
+        versions: tuple[StoredObjectVersion, ...],
+        eligible_before: datetime,
+        now: datetime,
+        apply: bool,
+        limit: int,
+    ) -> None:
+        if not isinstance(versions, tuple) or len(versions) > MAX_ORPHAN_SCAN_VERSIONS:
+            raise MaintenanceError("invalid_object_inventory", "object inventory is invalid")
+        if any(not isinstance(item, StoredObjectVersion) for item in versions):
+            raise MaintenanceError("invalid_object_inventory", "object inventory is invalid")
+        if any(item.namespace != self.namespace for item in versions):
+            raise MaintenanceError("namespace_mismatch", "object inventory namespace does not match")
+        if len({item.identity for item in versions}) != len(versions):
+            raise MaintenanceError("duplicate_object_version", "object inventory contains duplicates")
+        before = _utc(eligible_before, "orphan eligibility cutoff")
+        current = _utc(now, "orphan discovery time")
+        if before >= current:
+            raise MaintenanceError("invalid_orphan_cutoff", "orphan eligibility cutoff is invalid")
+        if not isinstance(apply, bool):
+            raise MaintenanceError("invalid_apply_flag", "apply flag must be boolean")
+        bounded_integer(limit, "orphan limit", minimum=1, maximum=MAX_MAINTENANCE_BATCH)
 
     def iter_queued_build_ids(self, page_size: int) -> Iterable[tuple[UUID, ...]]:
         bounded_integer(
@@ -1984,6 +2321,158 @@ class MinioVersionedObjectClient:
         except Exception as exc:
             raise MaintenanceError("storage_delete_failed", "exact artifact version deletion failed") from exc
 
+    def inventory_namespace_versions(
+        self,
+        bucket: str,
+        namespace: str,
+        *,
+        limit: int,
+    ) -> tuple[StoredObjectVersion, ...]:
+        """List a complete bounded namespace and verify each exact version.
+
+        MinIO's iterator paginates ListObjectVersions internally.  We consume
+        it to exhaustion and fail before reconciliation if the deployment is
+        larger than the explicit scan ceiling, or if any row is a delete
+        marker, malformed, duplicated, outside the canonical artifact key
+        grammar, or inconsistent with exact-version HEAD evidence.
+        """
+
+        selected_bucket = _bucket(bucket)
+        selected_namespace = validate_namespace(namespace)
+        bounded_integer(
+            limit,
+            "orphan scan limit",
+            minimum=1,
+            maximum=MAX_ORPHAN_SCAN_VERSIONS,
+        )
+        prefix = f"{selected_namespace}/v1/builds/"
+        collected: list[StoredObjectVersion] = []
+        seen: set[tuple[str, str, str]] = set()
+        try:
+            iterator = self._client.list_objects(
+                selected_bucket,
+                prefix=prefix,
+                recursive=True,
+                include_version=True,
+            )
+            for listed in iterator:
+                if len(collected) >= limit:
+                    raise MaintenanceError(
+                        "object_inventory_too_large",
+                        "object inventory exceeds the configured scan limit",
+                    )
+                if getattr(listed, "is_delete_marker", None) is not False:
+                    raise MaintenanceError(
+                        "ambiguous_object_inventory",
+                        "object inventory contains a delete marker",
+                    )
+                object_key = getattr(listed, "object_name", None)
+                version_id = getattr(listed, "version_id", None)
+                last_modified = getattr(listed, "last_modified", None)
+                listed_size = getattr(listed, "size", None)
+                if not isinstance(object_key, str) or not isinstance(version_id, str):
+                    raise MaintenanceError(
+                        "invalid_object_inventory",
+                        "object inventory entry is incomplete",
+                    )
+                build_id, attempt_id, relative_path = _artifact_owner_from_key(
+                    selected_namespace, object_key
+                )
+                exact_version = _version_id(version_id)
+                if exact_version == "null":
+                    raise MaintenanceError(
+                        "ambiguous_object_inventory",
+                        "object inventory contains an unversioned object",
+                    )
+                modified = _utc(last_modified, "object last_modified")
+                listed_bytes = bounded_integer(
+                    listed_size,
+                    "listed artifact bytes",
+                    minimum=1,
+                    maximum=MAX_PUBLISHED_BYTES,
+                )
+                identity = (selected_bucket, object_key, exact_version)
+                if identity in seen:
+                    raise MaintenanceError(
+                        "duplicate_object_version",
+                        "object inventory contains duplicate versions",
+                    )
+                observed = self._client.stat_object(
+                    selected_bucket,
+                    object_key,
+                    version_id=exact_version,
+                )
+                observed_version = _version_id(
+                    getattr(observed, "version_id", None),
+                    "observed version ID",
+                )
+                observed_size = bounded_integer(
+                    getattr(observed, "size", None),
+                    "artifact bytes",
+                    minimum=1,
+                    maximum=MAX_PUBLISHED_BYTES,
+                )
+                observed_modified = _utc(
+                    getattr(observed, "last_modified", None),
+                    "observed object last_modified",
+                )
+                # S3's version-list and exact-HEAD representations can differ
+                # in sub-second timestamp precision.  Compare their stable UTC
+                # second; identity, size, version ID, and digest still bind the
+                # exact immutable object.
+                if (
+                    observed_version != exact_version
+                    or listed_bytes != observed_size
+                    or observed_modified.replace(microsecond=0)
+                    != modified.replace(microsecond=0)
+                ):
+                    raise MaintenanceError(
+                        "object_inventory_changed",
+                        "object version changed during inventory",
+                    )
+                sha256 = self._metadata_sha256(observed)
+                if sha256 is None:
+                    raise MaintenanceError(
+                        "object_evidence_missing",
+                        "object version lacks required digest evidence",
+                    )
+                collected.append(
+                    StoredObjectVersion(
+                        namespace=selected_namespace,
+                        build_id=build_id,
+                        attempt_id=attempt_id,
+                        relative_path=relative_path,
+                        bucket=selected_bucket,
+                        object_key=object_key,
+                        version_id=exact_version,
+                        sha256=sha256,
+                        bytes=observed_size,
+                        last_modified=modified,
+                    )
+                )
+                seen.add(identity)
+        except MaintenanceError:
+            raise
+        except Exception as exc:
+            raise MaintenanceError(
+                "storage_inspection_failed",
+                "object version inventory could not be completed",
+            ) from exc
+        return tuple(sorted(collected, key=lambda item: item.identity))
+
+    @staticmethod
+    def _metadata_sha256(observed: Any) -> Optional[str]:
+        metadata = getattr(observed, "metadata", None)
+        if not isinstance(metadata, Mapping):
+            return None
+        for key, value in metadata.items():
+            if str(key).lower() in ("sha256", "x-amz-meta-sha256"):
+                try:
+                    return _sha256(str(value))
+                except MaintenanceError:
+                    return None
+        return None
+
     def assert_namespace_empty(self, bucket: str, namespace: str) -> None:
         _bucket(bucket)
         selected_namespace = validate_namespace(namespace)
@@ -2108,12 +2597,14 @@ __all__ = [
     "MinioVersionedObjectClient",
     "ObjectBackupEvidence",
     "ObjectRestoreResult",
+    "OrphanDiscoveryResult",
     "PostgresMaintenanceStore",
     "RedisReconstructionResult",
     "RetentionApplyResult",
     "RetentionCandidate",
     "RetentionPolicy",
     "RetentionRunResult",
+    "StoredObjectVersion",
     "VersionRemap",
     "bounded_integer",
     "validate_inventory_objects",

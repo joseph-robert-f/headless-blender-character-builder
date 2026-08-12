@@ -27,8 +27,9 @@ packages it describes.
 
 Anyone redistributing an image that contains Blender is responsible for the
 GPL's corresponding-source and notice requirements for that distribution
-method. The repository records the official corresponding source, but a link
-alone may not satisfy every distributor's obligations.
+method. The release gate packages the exact checksum-verified Blender source
+archive and image-to-source inventory; an upstream link alone is not the
+project's delivery method.
 
 ## Python packages
 
@@ -38,14 +39,14 @@ and `docker/test-requirements.lock`. Direct dependencies currently include:
 
 | Package | Pinned version | Upstream license identifier or family |
 |---|---:|---|
-| async-timeout | 4.0.3 | `Apache-2.0` |
-| FastAPI | 0.139.2 | `MIT` |
+| async-timeout | 5.0.1 | `Apache-2.0` |
+| FastAPI | 0.141.1 | `MIT` |
 | MinIO Python SDK | 7.2.20 | `Apache-2.0` |
 | Psycopg / psycopg-binary | 3.3.4 | Psycopg is `LGPL-3.0-only`; the binary wheel also carries independently licensed native components identified by its upstream notices. |
-| redis-py | 8.0.1 | `MIT` |
-| Uvicorn | 0.51.0 | `BSD-3-Clause` |
+| redis-py | 8.1.0 | `MIT` |
+| Uvicorn | 0.52.1 | `BSD-3-Clause` |
 | jsonschema (test only) | 4.26.0 | `MIT` |
-| httpx2 / httpcore2 (test only) | 2.7.0 | `BSD-3-Clause` |
+| httpx2 / httpcore2 (test only) | 2.10.0 | `BSD-3-Clause` |
 | truststore (test only) | 0.10.4 | `MIT` |
 
 Transitive packages and their exact versions are listed in the lock files.
@@ -59,11 +60,11 @@ These services are separate programs and retain their own licenses:
 
 | Component | v0.1 use | Notice |
 |---|---|---|
-| PostgreSQL | `postgres:16.9-bookworm` local and VPS-reference state service | PostgreSQL License plus the base image's Debian notices. The VPS overlay inherits this pin from the base Compose model. |
-| Redis server | `redis:8.0.1-bookworm` local and VPS-reference queue/coordination service | Use is governed by the selectable terms and notices shipped with that exact Redis 8 source/image release. Preserve those upstream files when redistributing the image. The VPS overlay inherits this pin from the base Compose model. |
-| MinIO server | Source-built `RELEASE.2025-10-15T17-29-55Z`, local compatibility fixture only | `AGPL-3.0-or-later`; the image copies upstream `LICENSE` and `CREDITS` to `/licenses/minio/`. This final Community release is not the recommended production object store. |
-| MinIO client (`mc`) | `RELEASE.2025-08-13T08-35-41Z`, health and initialization helper | `AGPL-3.0-or-later`; retain the upstream client license when redistributing the binary. |
-| Go toolchain | 1.24.8, MinIO build stage only | Go's BSD-style license; the toolchain is not copied into the MinIO runtime stage. |
+| PostgreSQL | `postgres:16.14-bookworm` local and VPS-reference state service | PostgreSQL License plus the base image's Debian notices. The VPS overlay inherits this pin from the base Compose model. |
+| Redis server | `redis:8.2.8-bookworm` local and VPS-reference queue/coordination service | Use is governed by the selectable terms and notices shipped with that exact Redis 8 source/image release. Preserve those upstream files when redistributing the image. The VPS overlay inherits this pin from the base Compose model. |
+| MinIO server | Final Community source revision `7aac2a2c5b7c882e68c1ce017d8256be2feea27f`, with the reviewed Go security-module set dated 2026-08-12; local compatibility fixture only | `AGPL-3.0-or-later`; the image copies upstream `LICENSE` and `CREDITS` to `/licenses/minio/`. The modified module graph is reproducibly hash checked in `docker/minio.Dockerfile`; this archived Community line is not the recommended production object store. |
+| MinIO client (`mc`) | Final Community source revision `77f82e18b5401a65958f1619df6ebb994634bd88`, with the same reviewed Go security-module set; health, initialization, and recovery helper only | `AGPL-3.0-or-later`; the image retains the upstream client license and credits under `/licenses/minio/`. |
+| Go toolchain | 1.25.12, MinIO and `mc` build stage only | Go's BSD-style license; the toolchain is not copied into the MinIO runtime stage. |
 | Caddy | `caddy:2.11.4-alpine`, operator-supplied digest-pinned VPS edge image | `Apache-2.0`; the repository does not vendor or publish a Caddy image. |
 
 The source-built MinIO server is a development compatibility fixture only. The

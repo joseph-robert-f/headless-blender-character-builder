@@ -14,8 +14,8 @@ offering has been published.
 | Docker Engine or Docker Desktop | A current maintained release with BuildKit and `linux/amd64` support | Required for container builds; no minimum patch release is asserted. The local asynchronous service specifically requires a local daemon/context, not an SSH, TCP, or HTTP endpoint. |
 | GNU Make | Any maintained version that can run the project Makefile | Required for the recommended interface; [direct Docker commands](installation.md#docker-without-make) are available |
 | Docker Compose | 2.24.4 or newer | Required by the current service doctor and the VPS/G8/full-release path; the VPS overlay uses Compose `!reset` and `!override` tags |
-| Python | 3.11 or newer | Required for native use, service smoke/recovery, and release tooling; not required for one-shot Docker builds |
-| curl | Supports `--fail-with-body` | Required only for the documented local API client journey; the service doctor checks the capability without making a network request |
+| Python | 3.11 or newer | Required for native use, service smoke/recovery, VPS operations, and release tooling; not required for one-shot Docker builds |
+| curl | Supports `--fail-with-body` and `--noproxy` | Required only for the documented local API client journey; the service doctor checks both capabilities without making a network request |
 | GPU | None | Release paths use CPU-compatible headless rendering; Cycles/GPU orchestration is not included |
 
 Run `./scripts/doctor` for the one-shot Docker path,
@@ -54,6 +54,10 @@ briefly total about 7.375 GiB and 8.25 CPUs. Allow at least 8 GiB Docker memory 
 20 GB free disk for basic local-service evaluation. The optional maintainer
 `make service-smoke` gate launches another direct builder capped at 4 GiB, so
 allow at least 12 GiB Docker memory plus retained-evidence disk space for that path.
+The separate `make orphan-minio-check` release/CI test runs exact-version
+orphan deletion in an internal-only Compose project with fresh disposable
+PostgreSQL and MinIO volumes; the gate removes and verifies removal of those
+project-scoped resources when it exits.
 
 The full release gate additionally builds test/recovery targets and retains more
 evidence. The VPS planning baseline is 8 vCPU and 32 GiB RAM for one

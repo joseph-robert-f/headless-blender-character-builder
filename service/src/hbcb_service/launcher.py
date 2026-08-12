@@ -18,6 +18,7 @@ from typing import Callable, Optional
 from uuid import UUID
 
 from .errors import WorkerError
+from .process_boundary import secure_supervisor_process
 
 
 IMAGE_REFERENCE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/@:+-]{0,254}$")
@@ -330,6 +331,11 @@ class SubprocessBuilderLauncher:
             raise WorkerError("request_invalid", "canonical build request is outside policy")
         if not isinstance(attempt_id, UUID) or not callable(heartbeat):
             raise WorkerError("attempt_invalid", "worker attempt is invalid")
+        # The service supervisor holds database, queue, and storage credentials.
+        # A scrubbed child environment alone is insufficient on Linux because a
+        # same-UID descendant can otherwise inspect the parent's procfs state.
+        # Harden before creating either scratch state or an untrusted process.
+        secure_supervisor_process()
         try:
             scratch = Path(
                 tempfile.mkdtemp(prefix=f"attempt-{attempt_id}-", dir=str(self._scratch_root))
@@ -341,6 +347,7 @@ class SubprocessBuilderLauncher:
             raise WorkerError("scratch_create_failed", "worker scratch could not be created") from exc
         request_path = scratch / "request.json"
         output_path = scratch / "output"
+        process: Optional[subprocess.Popen[bytes]] = None
         try:
             self._write_request(request_path, request_canonical)
             command = (
@@ -359,6 +366,7 @@ class SubprocessBuilderLauncher:
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
+                    close_fds=True,
                     start_new_session=os.name != "nt",
                 )
             except OSError as exc:
@@ -410,7 +418,17 @@ class SubprocessBuilderLauncher:
                 termination=termination,
                 log_tail=tail.bytes(),
             )
-        except Exception:
+        except BaseException:
+            # Popen transfers ownership immediately. Any later failure or
+            # interrupt must reap the complete builder/Blender process tree
+            # before its scratch directory can be removed.
+            if process is not None:
+                _terminate(process)
+                if process.stdout is not None:
+                    try:
+                        process.stdout.close()
+                    except OSError:
+                        pass
             try:
                 self.cleanup(scratch)
             except WorkerError:
