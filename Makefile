@@ -60,10 +60,19 @@ test-image:
 service-test-image: image
 	$(DOCKER) build --file docker/service.Dockerfile --target service-test --build-arg "HBCB_BUILDER_IMAGE=$(BUILDER_IMAGE)" --tag "$(SERVICE_TEST_IMAGE)" --platform "$(PLATFORM)" .
 
-validate: ensure-image
+validate:
 	@set -eu; \
 	  request=$$REQUEST; \
-	  test -f "$$request"; \
+	  if ! test -f "$$request"; then \
+	    echo "HBCB_MAKE: FAIL[request_missing]: set REQUEST to an existing regular JSON file" >&2; \
+	    exit 2; \
+	  fi; \
+	  if image_platform=`$(DOCKER) image inspect --format '{{.Os}}/{{.Architecture}}' "$(BUILDER_IMAGE)" 2>/dev/null` && \
+	    test "$$image_platform" = "$(PLATFORM)"; then \
+	    :; \
+	  else \
+	    $(MAKE) image; \
+	  fi; \
 	  runtime_uid=`id -u`; runtime_gid=`id -g`; \
 	  if test "$$runtime_uid" = 0; then runtime_uid=65532; fi; \
 	  if test "$$runtime_gid" = 0; then runtime_gid=65532; fi; \
@@ -103,8 +112,14 @@ build: _validate-output-name
 	@set -eu; \
 	  request=$$REQUEST; output_parent=$$BUILD_PARENT; output_name=$$OUTPUT_NAME; \
 	  output_path=$$output_parent/$$output_name; \
-	  test -f "$$request"; \
-	  test ! -e "$$output_path"; \
+	  if ! test -f "$$request"; then \
+	    echo "HBCB_MAKE: FAIL[request_missing]: set REQUEST to an existing regular JSON file" >&2; \
+	    exit 2; \
+	  fi; \
+	  if test -e "$$output_path" || test -L "$$output_path"; then \
+	    echo "HBCB_MAKE: FAIL[output_exists]: the selected build output already exists; choose a new OUTPUT_NAME or move the existing output aside" >&2; \
+	    exit 2; \
+	  fi; \
 	  $(MAKE) image; \
 	  mkdir -p "$$output_parent"; \
 	  host_uid=`id -u`; runtime_uid=$$host_uid; runtime_gid=`id -g`; \
@@ -139,8 +154,14 @@ verify: _validate-output-name
 	@set -eu; \
 	  request=$$REQUEST; output_parent=$$BUILD_PARENT; output_name=$$OUTPUT_NAME; \
 	  output_path=$$output_parent/$$output_name; \
-	  test -f "$$request"; \
-	  test -d "$$output_path"; \
+	  if ! test -f "$$request"; then \
+	    echo "HBCB_MAKE: FAIL[request_missing]: set REQUEST to an existing regular JSON file" >&2; \
+	    exit 2; \
+	  fi; \
+	  if test -L "$$output_path" || ! test -d "$$output_path"; then \
+	    echo "HBCB_MAKE: FAIL[output_missing]: the selected build output is not an existing non-symlink directory; run make build with the same REQUEST and OUTPUT_NAME first" >&2; \
+	    exit 2; \
+	  fi; \
 	  runtime_uid=`id -u`; runtime_gid=`id -g`; \
 	  if test "$$runtime_uid" = 0; then runtime_uid=65532; fi; \
 	  if test "$$runtime_gid" = 0; then runtime_gid=65532; fi; \
@@ -176,15 +197,28 @@ verify-demo: verify
 
 demo-native:
 	@set -eu; \
-	  test -f "$(REQUEST)"; \
-	  test ! -e "$(DEMO_OUTPUT)"; \
+	  if ! test -f "$(REQUEST)"; then \
+	    echo "HBCB_MAKE: FAIL[request_missing]: set REQUEST to an existing regular JSON file" >&2; \
+	    exit 2; \
+	  fi; \
+	  if test -e "$(DEMO_OUTPUT)" || test -L "$(DEMO_OUTPUT)"; then \
+	    echo "HBCB_MAKE: FAIL[output_exists]: build/demo already exists; move the existing output aside" >&2; \
+	    exit 2; \
+	  fi; \
 	  mkdir -p "$(BUILD_PARENT)"; \
 	  HBCB_BLENDER_BINARY="$(BLENDER)" "$(PYTHON)" -m builder_cli \
 	    build --request "$(REQUEST)" --output "$(DEMO_OUTPUT)"
 
 verify-demo-native:
 	@set -eu; \
-	  test -d "$(DEMO_OUTPUT)"; \
+	  if ! test -f "$(REQUEST)"; then \
+	    echo "HBCB_MAKE: FAIL[request_missing]: set REQUEST to an existing regular JSON file" >&2; \
+	    exit 2; \
+	  fi; \
+	  if test -L "$(DEMO_OUTPUT)" || ! test -d "$(DEMO_OUTPUT)"; then \
+	    echo "HBCB_MAKE: FAIL[output_missing]: build/demo is not an existing non-symlink directory; run make demo-native first" >&2; \
+	    exit 2; \
+	  fi; \
 	  HBCB_BLENDER_BINARY="$(BLENDER)" "$(PYTHON)" -m builder_cli \
 	    verify --request "$(REQUEST)" --output "$(DEMO_OUTPUT)"
 

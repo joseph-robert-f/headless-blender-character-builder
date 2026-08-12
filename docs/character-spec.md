@@ -184,6 +184,11 @@ The terminal mapping is fixed:
 
 Any unmeasurable mandatory property produces `needs_review`; it never silently passes.
 
+These are builder-process codes. Direct CLI or Docker callers receive the
+listed code. Through `make build` or `make verify`, GNU Make usually exits `2`
+for any failed recipe; use `BUILDER: FAIL[n]` or Make's `Error n` diagnostic to
+recover the underlying builder code.
+
 ## Manifest contract
 
 `manifest/v1` is success-only. It records canonical request/spec hashes, generator and Blender provenance, millimeter dimensions, passing QA summary, and SHA-256 plus byte size for exactly these eight artifacts:

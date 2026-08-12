@@ -47,14 +47,17 @@ QA fails, it removes its stage and must not leave a partial named result.
 | BuildKit/frontend error | Docker is too old or BuildKit/Buildx is unavailable | Upgrade Docker; `docker build` must support `--platform` and the pinned Dockerfile frontend |
 | `linux/amd64` platform or emulation error | The release image is amd64 and emulation is unavailable | Enable Docker Desktop's amd64 emulation or use an amd64 Linux host |
 | Very slow first build on Apple Silicon | Blender and its base image run through amd64 emulation | Allow extra time; later builds reuse verified local layers |
-| Exit `137` or daemon reports OOM | Docker killed Blender under memory pressure | Close heavy workloads, give Docker at least 4 GiB for the one-shot path, and retry with a fresh output name |
+| Builder code / Make `Error 137`, or daemon reports OOM | Docker killed Blender under memory pressure | Close heavy workloads, give Docker at least 4 GiB for the one-shot path, and retry with a fresh output name |
 | `no space left on device` | Image layers, build cache, or outputs filled Docker/host storage | Inspect `docker system df` and host free space; remove only independently identified disposable data—never blindly prune service volumes |
 | Bind mount/file-sharing error on macOS | The checkout is outside Docker Desktop's shared paths | Move/share the repository path in Docker Desktop, then rerun the doctor |
 | Output files are inaccessible | A prior root-run or unusual Docker mapping owns them | Do not rerun the builder as root; inspect ownership and move the old result aside before a new named build |
-| `output must not already exist` / `FAIL[4]` | Publication is intentionally no-clobber | Choose a new safe `OUTPUT_NAME`, or move the complete old directory somewhere outside `build/` |
-| `manifest request provenance mismatch` / `FAIL[11]` | Verification used a different JSON request than the build | Verify with the exact request that produced the manifest; compare its recorded request hash |
-| `BuildRequest was rejected` / `FAIL[3]` | JSON, field, enum, size, or runtime contract violation | Run `make validate REQUEST=/absolute/path/request.json`; compare with the [character guide](character-spec.md) |
-| `needs_review` / exit `11` with no output | Mandatory geometry evidence was unknown or below policy | Adjust the bounded recipe and try a new output name; do not manufacture a success manifest |
+| `HBCB_MAKE: FAIL[request_missing]` | `REQUEST` does not name an existing regular file | Set `REQUEST=/absolute/path/to/request.json`; Make checks this before building or inspecting an image |
+| `HBCB_MAKE: FAIL[output_exists]` | The selected build output already exists and publication is intentionally no-clobber | Choose a new safe `OUTPUT_NAME`, or move the complete old output aside |
+| `HBCB_MAKE: FAIL[output_missing]` | `make verify` cannot find a regular, non-symlink output directory | Run `make build` first with the same `REQUEST` and `OUTPUT_NAME`, or correct the name; verification deliberately refuses an output-directory symlink |
+| `output must not already exist` / `BUILDER: FAIL[4]` | A direct builder invocation reached the same no-clobber guard | Choose a new output path, or move the complete old output aside |
+| `manifest request provenance mismatch` / `BUILDER: FAIL[11]` | Verification used a different JSON request than the build | Verify with the exact request that produced the manifest; compare its recorded request hash |
+| `BuildRequest was rejected` / `BUILDER: FAIL[3]` | JSON, field, enum, size, or runtime contract violation | Run `make validate REQUEST=/absolute/path/request.json`; compare with the [character guide](character-spec.md) |
+| `needs_review` / `BUILDER: FAIL[11]` with no output | Mandatory geometry evidence was unknown or below policy | Read the preceding `BLENDER_BUILDER: FAIL[11]` line after `safe diagnostics:` for the bounded reason, then adjust the recipe and use a new output name; do not manufacture a success manifest |
 | Native Blender exits during Metal initialization | Host Blender/backend incompatibility occurred before project code | Prefer the Docker path; native macOS is best effort even with exact Blender 4.5.12 |
 
 ## Named builds and reruns
@@ -73,9 +76,26 @@ characters. Paths, slashes, `.`/`..`, spaces, shell syntax, and uppercase names
 are rejected. Published output is immutable by design; the builder has no
 overwrite switch.
 
-## Exit-code reference
+## Builder codes versus Make's exit status
 
-| Exit | Meaning |
+The codes below belong to the `builder` process. A direct `builder` or
+`docker run` invocation returns that code to its caller. When a Make target's
+recipe fails, GNU Make itself usually exits `2` instead of forwarding the
+recipe's code. Read the preceding `BUILDER: FAIL[n]` marker or GNU Make's
+`Error n` diagnostic to identify the underlying builder status. For example, a
+geometry review failure commonly looks like this:
+
+```text
+BLENDER_BUILDER: FAIL[11]: mandatory geometry QA status is needs_review; safe diagnostics: minimum wall measurement unavailable
+BUILDER: FAIL[11]: Blender build failed
+make: *** [build] Error 11
+```
+
+The shell status after that `make build` command is normally `2`, while `11`
+remains the builder status. The named `HBCB_MAKE: FAIL[...]` markers are Make
+precondition failures; they stop before Docker work and use recipe status `2`.
+
+| Builder code | Meaning |
 |---:|---|
 | `0` | Requested operation passed |
 | `2` | Invalid CLI usage or unsupported option |
@@ -173,7 +193,8 @@ git rev-parse HEAD
 uname -a
 ```
 
-Also include the exact command, exit code, final `PASS`/`FAIL[n]` marker, and
-only relevant sanitized manifest/QA fields. Do not attach a complete build if
-you do not have redistribution rights. Suspected vulnerabilities belong in the
-private process described by [SECURITY.md](../SECURITY.md), not a public issue.
+Also include the exact command, the shell status, the final `PASS`,
+`BUILDER: FAIL[n]`, `HBCB_MAKE: FAIL[...]`, or `Error n` line, and only relevant
+sanitized manifest/QA fields. Do not attach a complete build if you do not have
+redistribution rights. Suspected vulnerabilities belong in the private process
+described by [SECURITY.md](../SECURITY.md), not a public issue.

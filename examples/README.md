@@ -10,7 +10,7 @@ Blender scene, GLB, and STL pass the complete checks.
 | Request | What it demonstrates | Expected result |
 |---|---|---|
 | [`facet-bot.json`](requests/facet-bot.json) | The canonical geometric mascot and release fixture | **Passes** the complete build and fresh-process verification gates |
-| [`moss-hopper.json`](requests/moss-hopper.json) | A materially different chibi character and the fail-closed review path | **`needs_review`**; exit `11`, no output directory, and no success manifest |
+| [`moss-hopper.json`](requests/moss-hopper.json) | A materially different chibi character and the fail-closed review path | **`needs_review`**; builder code `11`, no output directory, and no success manifest |
 
 Build and independently reopen the passing example without overwriting the
 quickstart's `build/facet-bot` output:
@@ -32,9 +32,10 @@ make validate REQUEST="$PWD/examples/requests/moss-hopper.json"
 make build REQUEST="$PWD/examples/requests/moss-hopper.json" OUTPUT_NAME=moss-hopper
 ```
 
-Validation passes, but the build exits `11`. `build/moss-hopper/` must not
-exist afterward. The generator found unresolved short-wall candidates, so it
-refuses to claim the STL passed.
+Validation passes, but the builder reports `BUILDER: FAIL[11]` and GNU Make
+prints `Error 11`; the `make` process itself normally exits `2`.
+`build/moss-hopper/` must not exist afterward. The generator found unresolved
+short-wall candidates, so it refuses to claim the STL passed.
 
 ## Make a character your own
 

@@ -1096,6 +1096,7 @@ def _run_expected_exit(
     extra_cli: Sequence[str] = (),
     empty_reference: bool = False,
     preexisting_output: bool = False,
+    expected_output_fragment: Optional[str] = None,
 ) -> Mapping[str, Any]:
     output_parent.mkdir(parents=True, mode=0o700)
     if os.getuid() == 0:
@@ -1129,6 +1130,11 @@ def _run_expected_exit(
         raise GateFailure(
             "%s expected exit %s, observed %s\n%s"
             % (label, expected_exit, completed.returncode, _redact(completed.stdout, work_dir))
+        )
+    if expected_output_fragment is not None:
+        _require(
+            expected_output_fragment in completed.stdout,
+            "%s omitted its expected safe diagnostic" % label,
         )
     _require("BLENDER_BUILDER: PASS" not in completed.stdout, "%s reported build success" % label)
     published = output_parent / "demo"
@@ -1581,6 +1587,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         canaries=canaries,
         runtime_uid=runtime_uid,
         runtime_gid=runtime_gid,
+        expected_output_fragment=(
+            "mandatory geometry QA status is needs_review; "
+            "safe diagnostics: minimum wall measurement unavailable"
+        ),
     )
     exits["12"] = _run_expected_exit(
         docker,
