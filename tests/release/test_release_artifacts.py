@@ -586,6 +586,23 @@ class ReleaseArtifactsTests(unittest.TestCase):
                 preflight.verify_bundle(output, "0.1.0-rc.1", "a" * 40)
             self.assertEqual(tampered.exception.code, "checksum_mismatch")
 
+    def test_live_image_null_config_fails_closed_not_attribute_error(self) -> None:
+        payload = (
+            json.dumps(
+                [
+                    {
+                        "Architecture": "amd64",
+                        "Os": "linux",
+                        "Id": "sha256:" + "0" * 64,
+                        "Config": None,
+                    }
+                ]
+            )
+        ).encode("utf-8")
+        with self.assertRaises(preflight.PreflightFailure) as blocked:
+            preflight._live_image(payload, "builder", "0.1.0-rc.1", "a" * 40)
+        self.assertEqual(blocked.exception.code, "live_image_invalid")
+
     def test_publication_preflight_requires_every_release_artifact_role(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

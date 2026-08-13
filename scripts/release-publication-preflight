@@ -1889,7 +1889,8 @@ def _live_image(payload: bytes, role: str, version: str, revision: str) -> Mappi
         raise PreflightFailure("live_image_invalid", "local release image inspect is invalid") from None
     if isinstance(value, list) and len(value) == 1:
         value = value[0]
-    labels = value.get("Config", {}).get("Labels") if isinstance(value, dict) else None
+    config = value.get("Config") if isinstance(value, dict) else None
+    labels = config.get("Labels") if isinstance(config, dict) else None
     if (
         not isinstance(value, dict)
         or value.get("Architecture") != "amd64"
