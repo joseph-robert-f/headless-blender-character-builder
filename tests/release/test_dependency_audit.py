@@ -932,6 +932,32 @@ class DependencyAuditTests(unittest.TestCase):
             report = audit_tool.run_audit(root, online=False)
             self.assert_check_failure(report, "docker-base", "OCI base digest is stale")
 
+    def test_local_build_missing_or_non_string_target_fails_closed(self) -> None:
+        for surface, mutate in (
+            ("missing target", lambda postgres: postgres.pop("target")),
+            ("non-string target", lambda postgres: postgres.__setitem__("target", 7)),
+        ):
+            with self.subTest(surface=surface), tempfile.TemporaryDirectory() as temporary:
+                root = fixture_root(Path(temporary))
+                policy_path = root / "release" / "dependency-policy.json"
+                document = json.loads(policy_path.read_text(encoding="utf-8"))
+                postgres = next(
+                    item
+                    for item in document["compose_images"]
+                    if item["id"] == "postgres"
+                )
+                mutate(postgres)
+                policy_path.write_text(
+                    json.dumps(document, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                report = audit_tool.run_audit(root, online=False)
+                self.assert_check_failure(
+                    report,
+                    "compose-postgres",
+                    "Local-build Compose image recipe is incomplete",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

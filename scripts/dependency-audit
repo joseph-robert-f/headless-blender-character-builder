@@ -1001,6 +1001,7 @@ def audit_compose(root: Path, policy: Mapping[str, object], report: Dict[str, ob
                 failures.append("Local-build Compose image recipe is incomplete")
                 base_reference = "invalid"
                 dockerfile = "invalid"
+                target = "invalid"
             try:
                 parsed = parse_image_reference(base_reference)
             except AuditInputError as failure:
