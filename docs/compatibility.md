@@ -5,6 +5,18 @@ means the path is exercised by the repository's local release gates; it does
 not imply that a release, image, hosted service, SLA, or production support
 offering has been published.
 
+## First-release support boundary
+
+| Use | v0.1 status |
+|---|---|
+| One trusted user builds their own model locally with the one-shot Docker builder | Supported |
+| One trusted operator evaluates the Compose service on loopback | Experimental and local-only |
+| Internet-facing, public, hostile-input, or multi-tenant service | Out of scope |
+| VPS deployment | Design and validation reference only; out of scope |
+
+“Trusted” means the user controls the machine and creates or reviews the
+bounded JSON request. It does not include accepting requests from strangers.
+
 ## Toolchain
 
 | Surface | Version or capability | v0.1 status |
@@ -27,7 +39,7 @@ The checks are read-only and do not install software.
 
 | Host path | Status | Notes |
 |---|---|---|
-| Linux `amd64` + Docker | Release reference | Builder, service, deployment, recovery, and release gates target this platform. |
+| Linux `amd64` + Docker | Release reference | The one-shot builder targets this platform. Service, deployment, and recovery gates validate experimental or future paths; they do not expand v0.1 support. |
 | Docker Desktop on Apple Silicon | Evaluation path | Runs the `linux/amd64` image through emulation and is slower than native `amd64`. |
 | Docker Desktop on Intel macOS | Evaluation path | Runs the Linux image in Docker Desktop; it is not a native macOS service deployment. |
 | Native Linux `amd64` + Blender 4.5.12 | Best-effort contributor path | Useful for generator development; container output remains the release reference. |
@@ -60,9 +72,9 @@ PostgreSQL and MinIO volumes; the gate removes and verifies removal of those
 project-scoped resources when it exits.
 
 The full release gate additionally builds test/recovery targets and retains more
-evidence. The VPS planning baseline is 8 vCPU and 32 GiB RAM for one
-concurrency-one worker plus host overhead; it is an operational starting point,
-not a sizing guarantee.
+evidence. The out-of-scope VPS planning baseline is 8 vCPU and 32 GiB RAM for
+one concurrency-one worker plus host overhead; it is a design input, not a
+sizing guarantee or supported deployment configuration.
 
 ## Native-mode boundary
 

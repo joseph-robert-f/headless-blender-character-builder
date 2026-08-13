@@ -1,6 +1,11 @@
 # VPS deployment and operations
 
-This runbook describes a production-oriented v0.1 reference topology: one
+> **Outside the v0.1 support boundary:** this is a future design and validation
+> reference for experienced operators. It is not a v0.1 installation path. Do
+> not expose it to the Internet, accept hostile or multi-tenant workloads, or
+> treat passing local recovery tests as authorization to deploy it.
+
+This runbook describes a future single-operator reference topology: one
 `linux/amd64` Linux VPS running the reviewed Docker Compose overlay, with one
 API process, one concurrency-one worker, local PostgreSQL and Redis, Caddy at
 the public edge, and an external versioned S3-compatible artifact service. It
@@ -11,9 +16,12 @@ multi-tenant platform, high-availability design, or managed-cloud template.
 
 The repository currently contains source, container build definitions, local
 release tooling, and the deployment reference. It does **not** publish the
-three required application images, a populated digest release lock, a signed
-source release, or a live service. Consequently, these instructions are not yet a copy-paste
-path to a public production deployment.
+four required project-built images (builder, API, worker, and the derived
+PostgreSQL runtime), a populated digest release lock, a signed source release,
+or a live service. Consequently, these instructions are not yet a copy-paste
+path to a public production deployment. Current publication tooling inventories
+only builder, API, and worker; it does not yet inventory, SBOM, sign, push, or
+lock the derived PostgreSQL image.
 
 Do not substitute mutable images, a locally edited all-zero lock example, or a
 Git clone of `main` for those missing release inputs. Until a publisher makes
@@ -28,7 +36,7 @@ private images, operating storage, and running an external smoke build are
 operator actions against explicitly authorized infrastructure. Local G8
 validation does not perform any of those actions.
 
-## Supported topology
+## Reference topology
 
 ```text
 Internet
@@ -50,7 +58,7 @@ one worker -------------------+                          public TLS endpoint
                                                                   for signed URLs
 ```
 
-The production services are:
+The future reference services are:
 
 - `caddy`: TLS termination and reverse proxy. It alone publishes host ports.
 - `api`: bearer-authenticated asynchronous build API. It cannot reach the
@@ -350,6 +358,7 @@ mixing images from different tags.
 
 The lock pins:
 
+- the project-derived PostgreSQL image by OCI digest;
 - API and worker images by OCI digest;
 - Caddy by OCI digest;
 - the builder provenance reference and image configuration ID;

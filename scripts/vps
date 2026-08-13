@@ -163,6 +163,7 @@ VPS_REQUIRED = frozenset(
 LOCK_REQUIRED = frozenset(
     {
         "HBCB_RELEASE_VERSION",
+        "HBCB_POSTGRES_IMAGE",
         "HBCB_API_IMAGE",
         "HBCB_WORKER_IMAGE",
         "HBCB_CADDY_IMAGE",
@@ -549,7 +550,13 @@ def _validate_release_lock_shape(values: Mapping[str, str]) -> None:
     _require_exact_keys(values, LOCK_REQUIRED, "release lock")
     if SEMVER.fullmatch(values["HBCB_RELEASE_VERSION"]) is None:
         raise OperatorError("release version is outside policy")
-    for name in ("HBCB_API_IMAGE", "HBCB_WORKER_IMAGE", "HBCB_CADDY_IMAGE", "HBCB_BUILDER_IMAGE_REFERENCE"):
+    for name in (
+        "HBCB_POSTGRES_IMAGE",
+        "HBCB_API_IMAGE",
+        "HBCB_WORKER_IMAGE",
+        "HBCB_CADDY_IMAGE",
+        "HBCB_BUILDER_IMAGE_REFERENCE",
+    ):
         match = IMAGE_DIGEST.fullmatch(values[name])
         if match is None or set(match.group(1)) == {"0"}:
             raise OperatorError(f"{name} must be a non-placeholder digest reference")

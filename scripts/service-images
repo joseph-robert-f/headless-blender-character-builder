@@ -36,6 +36,7 @@ hbcb_service_settings || exit 3
 image_rows() {
   printf '%s\t%s\n' \
     builder "$HBCB_BUILDER_PROJECT_IMAGE" \
+    postgres "$HBCB_POSTGRES_IMAGE" \
     api "$HBCB_SERVICE_API_IMAGE" \
     worker "$HBCB_SERVICE_WORKER_IMAGE" \
     minio "$HBCB_MINIO_IMAGE" \

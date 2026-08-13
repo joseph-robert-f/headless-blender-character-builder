@@ -38,6 +38,7 @@ command -v "$python_bin" >/dev/null 2>&1 || fail 'Python is unavailable' 3
 hbcb_service_settings >/dev/null || fail 'local service settings are invalid' 3
 service_reference=${HBCB_ORPHAN_SERVICE_IMAGE:-$HBCB_SERVICE_TEST_IMAGE}
 minio_reference=${HBCB_ORPHAN_MINIO_IMAGE:-$HBCB_MINIO_IMAGE}
+postgres_reference=${HBCB_ORPHAN_POSTGRES_IMAGE:-$HBCB_POSTGRES_IMAGE}
 
 image_id() {
   selected_reference=$1
@@ -61,7 +62,9 @@ image_id() {
 
 HBCB_ORPHAN_SERVICE_IMAGE_ID=$(image_id "$service_reference" service-test)
 HBCB_ORPHAN_MINIO_IMAGE_ID=$(image_id "$minio_reference" MinIO)
+HBCB_ORPHAN_POSTGRES_IMAGE_ID=$(image_id "$postgres_reference" PostgreSQL)
 export HBCB_ORPHAN_SERVICE_IMAGE_ID HBCB_ORPHAN_MINIO_IMAGE_ID
+export HBCB_ORPHAN_POSTGRES_IMAGE_ID
 
 random_hex() {
   "$python_bin" -c \

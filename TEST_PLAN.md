@@ -4,6 +4,11 @@ Status: **living verification plan; historical G0–G9 evidence passed locally; 
 
 Last updated: **August 12, 2026**
 
+> **v0.1 support boundary:** passing a gate proves an engineering property; it
+> does not expand product support. v0.1 supports the trusted local one-shot Docker
+> builder. Compose is experimental and loopback-only; public, hostile-input,
+> multi-tenant, public-OCI, and VPS operation remain outside v0.1 support.
+
 ## 1. Purpose and authority
 
 `PLAN.md` defines what v0.1 must build. This document defines how an owner or independent reviewer proves those requirements. If the documents conflict, `PLAN.md` remains authoritative until both are intentionally updated.
@@ -31,7 +36,7 @@ against its final signed-off commit and record the unique run ID in the pull
 request; this tracked plan cannot name that result without changing the commit
 being attested.
 
-The G4 `linux/amd64` image, narrow `builder build|verify` CLI, hardened one-shot Docker runtime, keyless Make targets, native fallback, baked provenance, notices, and SPDX SBOM are implemented and passed from a clean indexed source export. The current public-readiness layer adds request-only `builder validate` plus safe named Make outputs without changing the build/verify artifact contract. G5–G6 add Postgres/Redis/versioned-storage foundations, generated scoped configuration, the bounded authenticated FastAPI surface, production repository, fenced concurrency-one worker, stale Redis claim recovery, complete nested-process termination, immutable artifact publication, fixed-region signing, and secret-free structured logs without changing the G4 builder revision. G7 packages those components into a hardened local Compose service with convergent least-privilege initialization and a real HTTP-to-Blender-to-download gate. G8 adds a digest-locked VPS overlay, HTTPS guidance, maintained external S3 boundary, retention, backup/restore, Redis reconstruction, upgrade/rollback handoff, and a passing isolated recovery drill. G9 adds the public documentation, governance, fork-safe CI definitions, license/SBOM inventory, real-model preview, source audit, and deterministic local release bundle; the final clean-index rehearsal passed without a remote operation. The excluded hardcoded branded proof of concept is preserved baseline material, not v0.1 acceptance evidence.
+The G4 `linux/amd64` image, narrow `builder build|verify` CLI, hardened one-shot Docker runtime, keyless Make targets, native fallback, baked provenance, notices, and SPDX SBOM are implemented and passed from a clean indexed source export. The current public-readiness layer adds request-only `builder validate` plus safe named Make outputs without changing the build/verify artifact contract. G5–G6 add Postgres/Redis/versioned-storage foundations, generated scoped configuration, the bounded authenticated FastAPI surface, durable repository, fenced concurrency-one worker, stale Redis claim recovery, complete nested-process termination, immutable artifact publication, fixed-region signing, and secret-free structured logs without changing the G4 builder revision. G7 packages those components into an experimental hardened local Compose service with convergent least-privilege initialization and a real HTTP-to-Blender-to-download gate. G8 validates a future digest-locked VPS design, HTTPS guidance, maintained external S3 boundary, retention, backup/restore, Redis reconstruction, upgrade/rollback handoff, and an isolated recovery drill; those tests do not make VPS operation a v0.1-supported path. G9 adds the public documentation, governance, fork-safe CI definitions, license/SBOM inventory, real-model preview, source audit, and deterministic local release bundle; the final clean-index rehearsal passed without a remote operation. The excluded hardcoded branded proof of concept is preserved baseline material, not v0.1 acceptance evidence.
 
 Known local reviewer environment:
 
@@ -100,7 +105,7 @@ Record milestone summaries in `docs/progress.md` once implementation begins. Nev
 | T1 — schemas, generic engine, and artifacts | G1–G3 | `PASS` | Prove bounded requests create and independently verify real, varied Blender geometry |
 | T2 — keyless container quickstart | G4 | `PASS` | Prove the primary public experience from a clean source tree |
 | T3 — asynchronous service | G5–G7 | `PASS` | Prove durable API, queue, worker, auth, and artifacts |
-| T4 — VPS and recovery | G8 | `PASS` locally / live `CONDITIONAL` | Prove deployability without making live infrastructure mandatory |
+| T4 — VPS and recovery | G8 | `PASS` locally / live `CONDITIONAL` | Validate the future VPS topology and recovery contracts without claiming a live deployment |
 | T5 — release candidate | G9 | `PASS` locally | Prove tests, security, licenses, docs, and packaging together |
 
 Do not execute later stages to compensate for a failed dependency gate.
@@ -350,7 +355,9 @@ vulnerability reporting was enabled and verified on August 4, 2026. Public OCI
 publication is additionally blocked: the current inventory deliberately covers
 project and Blender source only and sets `public_oci_ready: false` until an
 actual-final-image review completes every applicable native, base-image, and
-copyleft source/delivery obligation described in `docs/release-process.md`.
+copyleft source/delivery obligation and the transaction gains inventory, SBOM,
+signing, publication, and digest-lock support for the derived PostgreSQL image,
+as described in `docs/release-process.md`.
 
 The historical final G9 index passed the complete gate on August 3, 2026. The staged
 rehearsal covered 23 release tests, 64 builder unit/contract/container/security

@@ -4,6 +4,12 @@ Status: **Executed v0.1 build plan and authoritative scope record**
 
 Last updated: **August 12, 2026**
 
+> **v0.1 support boundary:** this plan records implemented and tested engineering
+> surfaces; it does not make every surface a supported product. v0.1 supports one
+> trusted user running the local one-shot Docker builder. The loopback Compose
+> service is experimental, and Internet-facing, hostile-input, multi-tenant,
+> public-OCI, and VPS operation are outside v0.1 support.
+
 This document is the authoritative scope record for the first public
 implementation. The release-blocking milestones **M0 through M5** and work
 packages **G0 through G9** were executed in order using the defaults in Section
@@ -13,7 +19,9 @@ part of that completion target.
 
 ## 1. Proposed project
 
-Build a public, self-hostable repository that turns a bounded `BuildRequest` JSON document—containing a nested `CharacterSpec`—into real Blender geometry and a verified set of artifacts through a headless worker.
+Build an open-source repository that turns a bounded `BuildRequest` JSON
+document—containing a nested `CharacterSpec`—into real Blender geometry and a
+verified set of artifacts through a headless worker.
 
 The v0.1 source candidate implements three evaluation modes and one
 deployment reference. Two more capable integrations are explicitly planned,
@@ -21,8 +29,13 @@ not present:
 
 1. **Keyless single-container quickstart:** run `make demo` with Git and Docker only; build a bundled JSON request into real artifacts in `build/demo/` without Compose, an account, or an API key.
 2. **Deterministic native CLI:** invoke the same runner with Blender installed locally for generator development and debugging.
-3. **Docker Compose service:** submit asynchronous builds through HTTP and run them on local worker containers with durable state and artifact storage.
-4. **VPS deployment reference (implemented source, not a published service):** review the same pinned builder lineage and artifact contract for one Linux VPS. The repository has not published the release package or immutable registry images needed for a live copy-paste deployment.
+3. **Experimental Docker Compose service:** evaluate asynchronous builds on
+   loopback with one trusted operator, local worker containers, durable state,
+   and artifact storage.
+4. **VPS design reference (outside v0.1 support):** review the same pinned builder
+   lineage and artifact contract for one Linux VPS. The repository has not
+   published the release package or immutable registry images needed for a live
+   deployment.
 
 Post-v0.1 proposals, not implemented capabilities:
 
@@ -40,7 +53,9 @@ It should **not** promise unrestricted text-to-3D, organic sculpting, exact like
 - **No API key required for the core demo.** The deterministic worker is the product foundation; AI planning is only a post-v0.1 adapter proposal.
 - **One container before one stack.** The README's primary path must prove useful geometry with one disposable worker container. Compose is the service path, not a prerequisite for evaluating the project.
 - **One build contract everywhere.** Native CLI, the one-shot container, the asynchronous worker, and future cloud jobs must call the same validated runner rather than reimplementing Blender behavior.
-- **Specifications over arbitrary code.** Callers submit a strict schema. The public service does not accept Python, shell arguments, add-ons, node graphs, filesystem paths, or container settings.
+- **Specifications over arbitrary code.** Callers submit a strict schema. The
+  service boundary does not accept Python, shell arguments, add-ons, node
+  graphs, filesystem paths, or container settings.
 - **Synchronous locally, asynchronous as a service.** Direct CLI and one-shot-container builds run to completion for simple automation; HTTP requests return a build ID rather than holding a connection open while Blender runs.
 - **One job, one fresh Blender process.** A build cannot inherit user preferences, cached scene state, or another customer's data.
 - **Reproducible outputs.** Every result records canonical request/spec hashes, generator and Blender versions, source revision, mode-appropriate worker provenance, input hashes, and artifact hashes.
@@ -54,11 +69,11 @@ It should **not** promise unrestricted text-to-3D, organic sculpting, exact like
 
 Wants one command that builds a known character and proves that it is genuine editable geometry.
 
-### Application developer
+### Application developer *(experimental service)*
 
 Wants a stable HTTP contract that can be called from a web app, workflow, agent, or MCP server.
 
-### Self-hosting operator
+### Self-hosting operator *(future, outside v0.1 support)*
 
 Wants a documented Docker/VPS deployment with authentication, resource limits, persistent job state, object storage, logs, backups, and upgrade guidance.
 
@@ -72,10 +87,10 @@ Wants to add a new bounded generator, component, material, export format, or QA 
 |---|---|---|
 | Primary quickstart | Git, Docker Engine/Desktop, and `make`; no Compose, account, or API key | A custom `BuildRequest` after the bundled demo succeeds |
 | Native generator development | Exact Blender 4.5.12 LTS and Python 3.11+ development tools | Docker for release-parity checks |
-| Full local service | Primary prerequisites plus Docker Compose 2.24.4+, Python 3.11+, and `curl` for the supported client journey | Another deliberately configured HTTP client; locally generated service credentials |
+| Experimental local service | Primary prerequisites plus Docker Compose 2.24.4+, Python 3.11+, and one trusted operator | Another deliberately configured HTTP client; locally generated service credentials |
 | Prompt-to-spec demo *(post-v0.1; not implemented)* | Local prerequisites plus an `OPENAI_API_KEY`, OpenAI API billing, and explicit planner enablement | Reference images the user owns or is licensed to use |
 | Codex/MCP caller *(post-v0.1; not implemented)* | Running build service URL and service token | OpenAI API key only if this service performs prompt planning itself |
-| VPS deployment reference *(source only; publication blocked)* | Linux VPS, Python 3.11+, Docker/Compose 2.24.4+, domain/TLS, API authentication secret, backups | Managed Postgres, Redis, and S3-compatible storage |
+| VPS design reference *(outside v0.1 support; publication blocked)* | Operations and security expertise plus the future release inputs | Managed Postgres, Redis, and S3-compatible storage |
 | Managed cloud deployment *(post-v0.1; not implemented)* | Cloud account, container registry, object-storage bucket, job-state database, queue, IAM/service identities, secret manager | GPU job capacity for faster previews |
 | 3D printing workflow | Exact printer technology, material, nozzle/resin profile, minimum feature size, and slicer profile | A physical calibration/test-print process |
 
@@ -285,7 +300,7 @@ The interfaces for queue, database, and storage must be replaceable. A productio
 
 A Cloud Run Job runs a container and exits; it does not listen for normal HTTP requests. The API service should invoke the existing job through `jobs.run` and pass only a build ID. See [Cloud Run job creation](https://cloud.google.com/run/docs/create-jobs) and [job execution](https://docs.cloud.google.com/run/docs/execute/jobs).
 
-## 7. Public API v1
+## 7. Experimental local API v1
 
 ### Endpoints
 
@@ -686,7 +701,7 @@ Exit criteria:
 - deterministic mode remains fully functional without an API key;
 - strict schema rejects extra fields and unbounded values;
 - OpenAI key is present only in the planner process and never in Blender, output manifests, images, or logs;
-- MCP is a thin wrapper over the public API rather than a second execution engine;
+- MCP is a thin wrapper over the versioned API rather than a second execution engine;
 - tool calls return build IDs instead of blocking until Blender completes.
 
 OpenAI documents the application-side tool-call loop and recommends strict function schemas in its [function-calling guide](https://developers.openai.com/api/docs/guides/function-calling). Remote MCP can expose trusted external actions with approval controls; see the [MCP guide](https://developers.openai.com/api/docs/guides/tools-connectors-mcp).
@@ -942,7 +957,7 @@ These defaults remove implementation blockers for `/goal`. They are binding for 
 | Release platform | `linux/amd64` builder image is release-blocking; Docker Desktop emulation and native macOS/Linux development are documented; `linux/arm64` is best effort until an official checksum-pinned Blender distribution is validated |
 | Local modes | Single-container synchronous quickstart first; full Compose asynchronous service second |
 | Service stack | FastAPI, Postgres, Redis, and MinIO in Compose, behind replaceable state/queue/storage interfaces |
-| Cloud scope | Validated VPS deployment package in v0.1; maintained managed-cloud template post-v0.1 |
+| Cloud scope | VPS design and local recovery validation are present but outside v0.1 support; maintained managed-cloud template post-v0.1 |
 | Public artifacts | Track only a small optimized documentation preview; ignore generated models/renders; publish larger examples as Release assets; no Git LFS in v0.1 |
 | Governance | DCO sign-off, maintainer review, no CLA unless a future licensing strategy requires it |
 
@@ -950,12 +965,19 @@ If implementation evidence makes a default infeasible, `/goal` must choose the s
 
 ## 18. Binding v0.1 release cut
 
-The v0.1 release candidate contains two public surfaces:
+The v0.1 release candidate contains one supported product surface and one
+experimental engineering surface:
 
 1. **Deterministic builder:** schemas, one geometric generator family, Blender source, exporters, rendering, QA, manifest, native contributor command, and the primary keyless single-container demo.
-2. **Self-hosted service:** asynchronous API, worker lifecycle, Postgres, Redis, MinIO, Compose orchestration, local authentication, and a VPS deployment package around the exact same builder.
+2. **Experimental local service:** loopback asynchronous API, worker lifecycle,
+   Postgres, Redis, MinIO, Compose orchestration, and local authentication around
+   the exact same builder. The VPS material is a tested future design reference,
+   not part of v0.1 support.
 
-Both surfaces are part of the complete local v0.1 release candidate, but the deterministic builder must remain independently usable. A service failure or missing `.env` must never break `make demo`.
+Both surfaces are present in the source candidate, but only the trusted-user
+one-shot builder is supported in v0.1. The deterministic builder must remain
+independently usable. A service failure or missing `.env` must never break
+`make demo`.
 
 Required v0.1 content:
 

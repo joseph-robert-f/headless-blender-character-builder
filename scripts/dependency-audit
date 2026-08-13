@@ -53,6 +53,7 @@ EXPECTED_MANUAL_REVIEW_FILES = {
     "dockerfile-frontend": {
         "docker/builder.Dockerfile",
         "docker/minio.Dockerfile",
+        "docker/postgres.Dockerfile",
         "docker/service.Dockerfile",
     },
     "github-actions": {
@@ -89,11 +90,13 @@ EXPECTED_MANUAL_REVIEW_NAMES = {
 }
 EXPECTED_DOCKERFILE_FRONTEND_FILES = {
     "docker/minio.Dockerfile",
+    "docker/postgres.Dockerfile",
     "docker/service.Dockerfile",
 }
 EXPECTED_COMPOSE_IMAGE_FILES = {
     "postgres": {
         "compose.yaml",
+        "deploy/vps/compose.yaml",
         "tests/deployment/g8_recovery_compose.yaml",
         "tests/service_integration/g8_orphan_minio_compose.yaml",
     },
@@ -103,10 +106,7 @@ EXPECTED_COMPOSE_IMAGE_FILES = {
     },
 }
 EXPECTED_COMPOSE_ASSERTION_FILES = {
-    "postgres": {
-        "tests/deployment/test_g8_recovery_drill.py",
-        "tests/security/postgres_fixture_gate.py",
-    },
+    "postgres": {"tests/security/postgres_fixture_gate.py"},
     "redis-server": {"tests/deployment/test_g8_recovery_drill.py"},
 }
 EXACT_FRONTEND_TAG = re.compile(r"^[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
@@ -350,14 +350,21 @@ def compose_service_block(text: str, service: str) -> str:
     raise AuditInputError("Compose service is missing: " + service)
 
 
-def compose_service_image(text: str, service: str) -> str:
+def compose_service_image(
+    text: str,
+    service: str,
+    *,
+    require_platform: bool = True,
+) -> str:
     block = compose_service_block(text, service)
-    matched = re.search(r"(?m)^    image:\s*([^\s#]+)\s*$", block)
+    matched = re.search(r"(?m)^    image:\s*([^#]+?)\s*$", block)
     if matched is None:
         raise AuditInputError("Compose service has no literal image: " + service)
-    if re.search(r"(?m)^    platform:\s*linux/amd64\s*$", block) is None:
+    if require_platform and re.search(
+        r"(?m)^    platform:\s*linux/amd64\s*$", block
+    ) is None:
         raise AuditInputError("Compose service platform is not linux/amd64: " + service)
-    return matched.group(1)
+    return matched.group(1).strip()
 
 
 def python_string_constants(text: str, relative: str) -> List[str]:
@@ -939,6 +946,9 @@ def audit_compose(root: Path, policy: Mapping[str, object], report: Dict[str, ob
         normalized_files = [str(path) for path in files]
         normalized_assertions = [str(path) for path in assertions]
         failures: List[str] = []
+        scan_mode = raw.get("scan_mode", "external")
+        if scan_mode not in {"external", "local-build"}:
+            failures.append("Compose image scan mode is unsupported")
         if (
             len(normalized_files) != len(set(normalized_files))
             or set(normalized_files) != EXPECTED_COMPOSE_IMAGE_FILES[identifier]
@@ -950,22 +960,109 @@ def audit_compose(root: Path, policy: Mapping[str, object], report: Dict[str, ob
             != EXPECTED_COMPOSE_ASSERTION_FILES[identifier]
         ):
             failures.append("Compose assertion files do not match the expected inventory")
-        references = [
-            compose_service_image(read_text(root, relative), service)
+        references = {
+            relative: compose_service_image(
+                read_text(root, relative),
+                service,
+                require_platform=not (
+                    scan_mode == "local-build"
+                    and relative == "deploy/vps/compose.yaml"
+                ),
+            )
             for relative in normalized_files
-        ]
-        if len(set(references)) != 1:
-            failures.append("Compose image differs across: " + ", ".join(normalized_files))
-        reference = references[0]
-        try:
-            parsed = parse_image_reference(reference)
-        except AuditInputError as failure:
-            failures.append(str(failure))
-            parsed = {"digest": "", "repository": "", "tag": ""}
-        for relative in normalized_assertions:
-            constants = python_string_constants(read_text(root, relative), relative)
-            if reference not in constants:
-                failures.append(relative + " lacks the exact image assertion")
+        }
+        expected_references = raw.get("image_references")
+        if scan_mode == "local-build":
+            if (
+                identifier != "postgres"
+                or not isinstance(expected_references, dict)
+                or set(expected_references) != set(normalized_files)
+                or not all(
+                    isinstance(relative, str)
+                    and isinstance(reference, str)
+                    and reference
+                    for relative, reference in expected_references.items()
+                )
+            ):
+                failures.append("Local-build Compose image policy is invalid")
+            else:
+                for relative, observed in references.items():
+                    if observed != expected_references[relative]:
+                        failures.append(relative + " local image expression is stale")
+            base_reference = raw.get("base_reference")
+            dockerfile = raw.get("dockerfile")
+            target = raw.get("target")
+            if (
+                not isinstance(base_reference, str)
+                or not isinstance(dockerfile, str)
+                or not isinstance(target, str)
+                or target != "postgres"
+            ):
+                failures.append("Local-build Compose image recipe is incomplete")
+                base_reference = "invalid"
+                dockerfile = "invalid"
+            try:
+                parsed = parse_image_reference(base_reference)
+            except AuditInputError as failure:
+                failures.append("Local-build base is not digest pinned: " + str(failure))
+                parsed = {"digest": "", "repository": "", "tag": ""}
+            try:
+                recipe = read_text(root, dockerfile)
+            except AuditInputError as failure:
+                failures.append(str(failure))
+                recipe = ""
+            expected_from = (
+                "FROM --platform=linux/amd64 "
+                + base_reference
+                + " AS postgres-sanitized"
+            )
+            if recipe.splitlines().count(expected_from) != 1:
+                failures.append("Local-build Dockerfile base identity is stale")
+            if recipe.splitlines().count("FROM scratch AS " + target) != 1:
+                failures.append("Local-build Dockerfile target is stale")
+            if recipe.count("rm -f /usr/local/bin/gosu") != 1:
+                failures.append("Local-build Dockerfile does not remove gosu exactly once")
+            if (
+                'org.opencontainers.image.base.name="%s:%s"'
+                % (parsed["repository"], parsed["tag"])
+                not in recipe
+                or 'org.opencontainers.image.base.digest="sha256:%s"'
+                % parsed["digest"]
+                not in recipe
+            ):
+                failures.append("Local-build Dockerfile base labels are stale")
+            base_block = compose_service_block(read_text(root, "compose.yaml"), service)
+            required_build = (
+                "    build:\n"
+                "      context: .\n"
+                "      dockerfile: %s\n"
+                "      target: %s" % (dockerfile, target)
+            )
+            if required_build not in "  " + service + ":\n" + base_block:
+                failures.append("Base Compose local-build recipe is stale")
+            vps_block = compose_service_block(
+                read_text(root, "deploy/vps/compose.yaml"), service
+            )
+            if "    build: !reset null" not in vps_block:
+                failures.append("VPS Compose does not disable local image builds")
+            for relative in normalized_assertions:
+                constants = python_string_constants(read_text(root, relative), relative)
+                if base_reference not in constants:
+                    failures.append(relative + " lacks the exact base image assertion")
+            reference = base_reference
+        else:
+            if len(set(references.values())) != 1:
+                failures.append("Compose image differs across: " + ", ".join(normalized_files))
+            reference = next(iter(references.values()))
+            try:
+                parsed = parse_image_reference(reference)
+            except AuditInputError as failure:
+                failures.append(str(failure))
+                parsed = {"digest": "", "repository": "", "tag": ""}
+            for relative in normalized_assertions:
+                constants = python_string_constants(read_text(root, relative), relative)
+                if reference not in constants:
+                    failures.append(relative + " lacks the exact image assertion")
         tag_reference = str(parsed["repository"]) + ":" + str(parsed["tag"])
         notice_label = str(raw.get("notice_label", ""))
         if not table_row_has_version(notices, notice_label, tag_reference):
@@ -978,6 +1075,7 @@ def audit_compose(root: Path, policy: Mapping[str, object], report: Dict[str, ob
                     "official_image": str(raw.get("official_image", "")),
                     "reference": reference,
                     "repository": str(parsed["repository"]),
+                    "scan_mode": str(scan_mode),
                     "tag": str(parsed["tag"]),
                 }
             )

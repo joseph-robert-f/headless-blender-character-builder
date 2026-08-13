@@ -34,6 +34,7 @@ SOURCE_ENV_FILE = ROOT / ".env"
 EVIDENCE_PARENT = ROOT / "build" / "g8-recovery"
 DEFAULT_SERVICE_IMAGE_TAG = "hbcb-service-api:dev"
 DEFAULT_MINIO_IMAGE_TAG = "hbcb-minio-local:final-community-20260212-hbcb.1"
+DEFAULT_POSTGRES_IMAGE_TAG = "hbcb-postgres-local:16.14-alpine3.24-hbcb.1"
 MAX_COMMAND_OUTPUT = 16 * 1024 * 1024
 MAX_ENV_BYTES = 64 * 1024
 MAX_DATABASE_BACKUP_BYTES = 4 * 1024 * 1024 * 1024
@@ -326,6 +327,7 @@ class DrillContext:
     runtime_gid: int
     work_root: Path
     backup_root: Path
+    postgres_image: str
     service_image: str
     minio_image: str
 
@@ -530,6 +532,7 @@ def _image_id(
 def _target_environment(
     source: Mapping[str, str],
     *,
+    postgres_image: str,
     service_image: str,
     minio_image: str,
     backup_root: Path,
@@ -564,6 +567,7 @@ def _target_environment(
         "HBCB_G8_STORAGE_MAINTENANCE_SECRET_KEY": secrets.token_hex(32),
         "HBCB_G8_STORAGE_BUCKET": source["HBCB_STORAGE_BUCKET"],
         "HBCB_G8_STORAGE_REGION": source["HBCB_STORAGE_REGION"],
+        "HBCB_G8_POSTGRES_IMAGE": postgres_image,
         "HBCB_G8_SERVICE_IMAGE": service_image,
         "HBCB_G8_MINIO_IMAGE": minio_image,
         "HBCB_G8_BACKUP_ROOT": str(backup_root),
@@ -621,6 +625,9 @@ def _create_context(runner: Optional[CommandRunner] = None) -> DrillContext:
         "HBCB_SERVICE_API_IMAGE", DEFAULT_SERVICE_IMAGE_TAG
     )
     minio_reference = _selected_reference("HBCB_MINIO_IMAGE", DEFAULT_MINIO_IMAGE_TAG)
+    postgres_reference = _selected_reference(
+        "HBCB_POSTGRES_IMAGE", DEFAULT_POSTGRES_IMAGE_TAG
+    )
     builder_image = _image_id(
         selected_runner, builder_reference, "builder_image", docker
     )
@@ -628,6 +635,9 @@ def _create_context(runner: Optional[CommandRunner] = None) -> DrillContext:
         selected_runner, service_reference, "service_image", docker
     )
     minio_image = _image_id(selected_runner, minio_reference, "minio_image", docker)
+    postgres_image = _image_id(
+        selected_runner, postgres_reference, "postgres_image", docker
+    )
 
     EVIDENCE_PARENT.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(EVIDENCE_PARENT, 0o700)
@@ -653,6 +663,7 @@ def _create_context(runner: Optional[CommandRunner] = None) -> DrillContext:
         source_values=source_values,
         target_environment=_target_environment(
             source_values,
+            postgres_image=postgres_image,
             service_image=service_image,
             minio_image=minio_image,
             backup_root=backup_root,
@@ -665,6 +676,7 @@ def _create_context(runner: Optional[CommandRunner] = None) -> DrillContext:
         runtime_gid=runtime_gid,
         work_root=work_root,
         backup_root=backup_root,
+        postgres_image=postgres_image,
         service_image=service_image,
         minio_image=minio_image,
     )

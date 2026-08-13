@@ -2,7 +2,9 @@
 
 The source checkout includes a loopback-only asynchronous service used for
 integration testing and self-hosting experiments. It is not a hosted public
-API and no production images are currently published.
+API, it is not a v0.1-supported product path, and no production images are
+currently published. Use it only as an experimental evaluation with one
+trusted local operator and requests that operator created or reviewed.
 
 The API is a small asynchronous control surface over the repository's pinned,
 containerized builder contract. It accepts only `BuildRequest v1` JSON, never
@@ -26,12 +28,14 @@ separate command; it stops this checkout's stack while preserving its data.
 `make init-env` creates a private local bearer token, a checkout-specific Compose
 project identity, and other scoped credentials in ignored `.env`; it prints no
 secret and refuses to overwrite an existing file. The API binds to loopback,
-using host port `8080` by default. The lightweight client below is the supported
-first evaluation. `make service-smoke` is a separate, slower
+using host port `8080` by default. The lightweight client below is the
+documented first evaluation of this experimental path. `make service-smoke` is
+a separate, slower
 maintainer/integration confidence gate that builds directly and through the
 service, restarts the API, tests cancellation and IAM, downloads all artifacts,
 and independently verifies them. The local stack is for loopback evaluation
-only; do not publish its ports or treat it as the G8 production deployment.
+only; do not publish its ports or treat the future G8 design reference as a v0.1
+deployment path.
 
 ## Lightweight local client
 

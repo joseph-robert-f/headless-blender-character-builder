@@ -31,6 +31,7 @@ LOADER.exec_module(VPS)
 def valid_lock() -> dict[str, str]:
     return {
         "HBCB_RELEASE_VERSION": "0.1.0",
+        "HBCB_POSTGRES_IMAGE": "ghcr.io/example/postgres@sha256:" + "6" * 64,
         "HBCB_API_IMAGE": "ghcr.io/example/api@sha256:" + "1" * 64,
         "HBCB_WORKER_IMAGE": "ghcr.io/example/worker@sha256:" + "2" * 64,
         "HBCB_CADDY_IMAGE": "caddy@sha256:" + "3" * 64,
@@ -189,6 +190,7 @@ class VpsOperatorTests(unittest.TestCase):
         values = valid_lock()
         VPS.validate_release_lock(values)
         for name, value in (
+            ("HBCB_POSTGRES_IMAGE", "postgres:16.14-alpine3.24"),
             ("HBCB_API_IMAGE", "ghcr.io/example/api:latest"),
             ("HBCB_WORKER_IMAGE", "ghcr.io/example/worker@sha256:" + "0" * 64),
             ("HBCB_BUILDER_SOURCE_REVISION", "9" * 64),

@@ -235,6 +235,7 @@ class ServiceComposeTests(unittest.TestCase):
         for variable in (
             "HBCB_API_HOST_PORT",
             "HBCB_STORAGE_HOST_PORT",
+            "HBCB_POSTGRES_IMAGE",
             "HBCB_MINIO_IMAGE",
             "HBCB_SERVICE_API_IMAGE",
             "HBCB_SERVICE_WORKER_IMAGE",
@@ -244,13 +245,20 @@ class ServiceComposeTests(unittest.TestCase):
         self.assertIn(
             "HBCB_STORAGE_PUBLIC_ENDPOINT:-localhost:9000", compose
         )
-        for maintained_server in (
-            "postgres:16.14-alpine3.24@sha256:"
-            "57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
+        self.assertIn(
             "redis:8.2.8-alpine3.22@sha256:"
             "a7859ed111db3c1f5404a973a4747505d559fb5ca32d37e447afc0ef845a2103",
-        ):
-            self.assertIn(maintained_server, compose)
+            compose,
+        )
+        postgres_dockerfile = (ROOT / "docker" / "postgres.Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "postgres:16.14-alpine3.24@sha256:"
+            "57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
+            postgres_dockerfile,
+        )
+        self.assertIn("dockerfile: docker/postgres.Dockerfile", compose)
         self.assertRegex(
             compose,
             r"(?ms)^  postgres:\n.*?^    user: \"70:70\"$",
@@ -528,6 +536,7 @@ class ServiceComposeTests(unittest.TestCase):
                 for line in compose_log.read_text(encoding="utf-8").splitlines()
             ]
             self.assertEqual(compose_commands, [
+                "--project-name hbcb-exact-source --env-file .env build postgres",
                 "--project-name hbcb-exact-source --env-file .env build minio",
                 "--project-name hbcb-exact-source --env-file .env build api",
                 "--project-name hbcb-exact-source --env-file .env build worker",

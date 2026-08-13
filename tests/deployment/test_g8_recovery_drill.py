@@ -367,6 +367,7 @@ class RecoveryDrillTests(unittest.TestCase):
             runtime_gid=65532,
             work_root=Path("/fixture/work"),
             backup_root=Path("/fixture/backup"),
+            postgres_image="sha256:" + "c" * 64,
             service_image="sha256:" + "a" * 64,
             minio_image="sha256:" + "b" * 64,
         )
@@ -403,11 +404,7 @@ class RecoveryDrillTests(unittest.TestCase):
         self.assertNotIn("\n    ports:", text)
         self.assertNotIn("\n    build:", text)
         self.assertIn("  recovery:\n    internal: true", text)
-        self.assertIn(
-            "postgres:16.14-alpine3.24@sha256:"
-            "57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
-            text,
-        )
+        self.assertIn("HBCB_G8_POSTGRES_IMAGE", text)
         self.assertRegex(
             text,
             r"(?ms)^  postgres:\n.*?^    user: \"70:70\"$",
@@ -489,6 +486,7 @@ class RecoveryDrillTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             generated = recovery._target_environment(
                 source_environment(),
+                postgres_image="sha256:" + "6" * 64,
                 service_image="sha256:" + "4" * 64,
                 minio_image="sha256:" + "5" * 64,
                 backup_root=Path(temporary),

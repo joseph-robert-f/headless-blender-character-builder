@@ -60,7 +60,7 @@ These services are separate programs and retain their own licenses:
 
 | Component | v0.1 use | Notice |
 |---|---|---|
-| PostgreSQL | `postgres:16.14-alpine3.24` local and VPS-reference state service | PostgreSQL License plus the base image's Alpine notices. The VPS overlay inherits this pin from the base Compose model. |
+| PostgreSQL | Project-derived gosu-free runtime from the exact `postgres:16.14-alpine3.24` digest-pinned official image; local state service and future digest-locked VPS input | PostgreSQL License plus the official base image's Alpine notices. `docker/postgres.Dockerfile` preserves the upstream filesystem, entrypoint, and notices while flattening the final image after removing the unused `gosu` helper. The VPS path remains future/out of v0.1 scope and requires an independently published digest-pinned derived image. |
 | Redis server | `redis:8.2.8-alpine3.22` local and VPS-reference queue/coordination service | Use is governed by the selectable terms and notices shipped with that exact Redis 8 source/image release. Preserve those upstream files when redistributing the image. The VPS overlay inherits this pin from the base Compose model. |
 | MinIO server | Final Community source revision `7aac2a2c5b7c882e68c1ce017d8256be2feea27f`, with the reviewed Go security-module set dated 2026-08-12, on digest-pinned `alpine:3.22.5`; local compatibility fixture only | `AGPL-3.0-or-later`; the image copies upstream `LICENSE` and `CREDITS` to `/licenses/minio/` and retains Alpine's installed package notices. The modified module graph is reproducibly hash checked in `docker/minio.Dockerfile`; this archived Community line is not the recommended production object store. |
 | MinIO client (`mc`) | Final Community source revision `77f82e18b5401a65958f1619df6ebb994634bd88`, with the same reviewed Go security-module set; health, initialization, and recovery helper only | `AGPL-3.0-or-later`; the image retains the upstream client license and credits under `/licenses/minio/`. |
@@ -68,9 +68,11 @@ These services are separate programs and retain their own licenses:
 | Caddy | `caddy:2.11.4-alpine`, operator-supplied digest-pinned VPS edge image | `Apache-2.0`; the repository does not vendor or publish a Caddy image. |
 
 The source-built MinIO server is a development compatibility fixture only. The
-production-oriented VPS overlay instead requires an operator-managed external
-versioned S3 service and private gateway, while retaining the pinned
-PostgreSQL and Redis services and requiring a digest-pinned Caddy image.
+future, out-of-scope VPS overlay instead requires an operator-managed external
+versioned S3 service and private gateway. That future path requires
+digest-pinned derived PostgreSQL and service images, the pinned Redis service,
+and a digest-pinned Caddy image; it is not part of the supported local-builder
+v0.1 contract.
 
 This repository does not currently publish or redistribute the builder,
 service, database, queue, storage, or edge images as a release set. An operator

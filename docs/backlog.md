@@ -4,6 +4,18 @@ This backlog records extension ideas after the v0.1 release boundary. It is
 not a promise of implementation, compatibility, hosted availability, or a
 physical-print outcome.
 
+## v0.1 release boundary
+
+- **Supported:** one trusted user building their own models locally with the
+  one-shot Docker builder. A trusted user controls the machine and creates or
+  reviews the bounded JSON request.
+- **Experimental:** the optional Compose service on loopback for one trusted
+  operator.
+- **Out of scope:** Internet-facing, hostile-input, multi-tenant, public OCI,
+  and VPS operation.
+
+Testing an experimental or future path does not make it part of v0.1 support.
+
 ## Good first issues
 
 No unclaimed good-first issues remain from the initial v0.1 review.
@@ -29,7 +41,8 @@ The maintainer/security pass also:
   commit-bound readiness, immediate per-push identity checks, checksum-bound
   registry manifests, isolated credentials, exact recovery inventory, and an
   explicit role-by-role visibility commit; the tracked public-OCI readiness
-  gate remains false pending the separate corresponding-source review;
+  gate remains false pending complete image source/delivery review and derived-
+  PostgreSQL publication support;
 - reduced public image metadata to the three reviewed, registry-qualified
   release tags, exact image identities, allowlisted labels, and reviewed raw
   image-manifest digests, with coherent-removal/replacement and private-alias
@@ -43,9 +56,10 @@ The maintainer/security pass also:
   ID, including ambiguous-create cleanup and same-name foreign-container
   preservation; and
 - resolved the exact `linux/amd64` release-scan backlog with archive-only image
-  scans, fail-closed UNRATED handling, maintained base/runtime upgrades,
-  identity-bound 30-day dispositions, live MinIO/PostgreSQL gates, and two
-  independent exit-zero candidate scans with 194/194 matches and no blockers.
+  scans, fail-closed UNRATED handling, maintained base/runtime upgrades, and
+  identity-bound 30-day dispositions. Two independent post-PostgreSQL-change
+  candidate scans and a final exact-policy scan passed with 155/155 matches,
+  no unused dispositions, no unresolved blockers, and no scan errors.
 
 Future starter issues are created manually. Maintainers should copy a reviewed
 proposal into the repository issue template and apply the maintained labels
@@ -53,12 +67,10 @@ below.
 
 ## Maintainer and security issues
 
-No unresolved maintainer/security issue from the full-system backlog review
-remains. The completed release-scan evidence is recorded in the
-[current vulnerability review](security/vulnerability-review-2026-08-12.md).
-Public OCI publication remains separately blocked by its explicit tracked
-readiness gate pending complete corresponding-source review; that release hold
-is not an open source-implementation backlog item.
+- Before any future VPS/public-OCI release, add the derived PostgreSQL image to
+  release inventory, SBOM, signing, push, corresponding-source/notices, and
+  digest-lock generation. Current publication tooling covers only builder,
+  API, and worker, so `public_oci_ready` must remain false.
 
 ## Candidate extensions
 
@@ -85,7 +97,7 @@ fitness warranty.
 
 - an opt-in OpenAI prompt-to-spec planner with strict structured output and
   user confirmation before a paid or mutating build;
-- a thin MCP adapter exposing create/get/cancel over the public service API;
+- a thin MCP adapter exposing create/get/cancel over the versioned service API;
 - rights-cleared reference ingestion in a separately isolated pipeline;
 - signed webhooks, quotas, and tenant-aware authorization.
 
@@ -112,6 +124,8 @@ Blender child, artifacts, or logs.
 - protected-character packs or automatic IP clearance;
 - general organic sculpting or exact-likeness generation;
 - a public unauthenticated demo;
+- Internet-facing, hostile-input, or multi-tenant service operation in v0.1;
+- production VPS deployment in v0.1;
 - production billing or marketplace behavior in this repository.
 
 ## Issue label catalog

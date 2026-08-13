@@ -190,6 +190,11 @@ esac
 HBCB_MINIO_RECIPE_ID=$minio_recipe_id
 export HBCB_MINIO_RECIPE_ID
 
+# Always materialize the gosu-free PostgreSQL runtime from the exact pinned
+# Dockerfile.  Compose tags it with this checkout's scoped name, while the
+# Docker build cache keeps repeated local starts inexpensive.
+compose --env-file .env build postgres
+
 rebuild_minio=${HBCB_REBUILD_MINIO:-0}
 case "$rebuild_minio" in
   0|1) ;;

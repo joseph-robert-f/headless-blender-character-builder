@@ -80,18 +80,23 @@ matching candidate tag, then fails unless labels, tags, inspected image IDs,
 release metadata, and corresponding-source inventory agree. A mutable tag is
 never sufficient deployment identity.
 
-Record for each builder, API, and worker image:
+The current release evidence records builder, API, and worker. A complete
+future VPS release must record the derived PostgreSQL image under the same
+contract before it can populate a release lock. Record for each of those four
+project-built images:
 
 - repository and version tag;
 - OCI config image ID from `docker image inspect`;
 - platform (`linux/amd64`);
 - source commit and clean indexed-tree hash;
-- builder source revision;
+- builder or PostgreSQL recipe/source revision, as applicable;
 - single-platform image-manifest digest after registry publication;
 - SPDX SBOM checksum.
 
-Populate `deploy/vps/release.lock.env` from these reviewed values. Production
-Compose accepts digest references, not a floating `latest` tag.
+The current three-image evidence cannot populate a complete
+`deploy/vps/release.lock.env`; PostgreSQL publication support is still missing.
+Once all four records exist, populate the lock from those reviewed values.
+Production Compose accepts digest references, not a floating `latest` tag.
 
 ## Container corresponding-source gate
 
@@ -116,7 +121,8 @@ may reuse an operator-supplied download, but it passes the identical byte-count
 and SHA-256 gate. Missing or altered source fails closed.
 
 Public OCI publication remains blocked. Before any push, an independent reviewer
-must inventory the actual final images—including native Python wheels and
+must inventory the actual final images—including the project-derived PostgreSQL
+runtime, native Python wheels, and
 operating-system packages—identify every applicable copyleft/source-delivery
 duty, add checksum-bound source material and a retention plan, and change the
 machine-readable readiness flag through review. The existing assets must still
@@ -124,6 +130,11 @@ be co-published and retained with each eventual public image version. This is a
 conservative release policy, not legal advice; obtain qualified review.
 
 ## Conditional publication
+
+> **Do not execute this transaction today.** It handles only builder, API, and
+> worker. `public_oci_ready` must remain false until the derived PostgreSQL image
+> has matching inventory, SBOM, signing, publication, source/notice, and
+> digest-lock support in addition to the independent source/delivery review.
 
 Publication requires explicit owner authorization, an installed and
 authenticated GitHub CLI, authenticated GHCR access, and a tested Git tag-
@@ -142,8 +153,11 @@ authority; any such concurrency invalidates the run.
 3. runs `make dependency-scan` from that exact commit using a new output
    directory; requires exit `0`; reviews the retained reports; and performs
    publication no more than seven days after that scan;
-4. confirms the local release check built `linux/amd64` builder, API, and
-   worker images from that exact commit and verifies their local identities;
+4. confirms the local release check built `linux/amd64` builder, API, worker,
+   and derived PostgreSQL images from that exact commit and verifies their
+   local identities; the current transaction handles only the first three, so
+   this step cannot pass until PostgreSQL inventory, SBOM, signing, push, and
+   release-lock support are added;
 5. independently completes actual-image copyleft/source review, supplies every
    required source asset, changes `public_oci_ready` to true through a reviewed
    code change, and confirms every mapped asset will be retained;
@@ -948,7 +962,7 @@ asset downloads, and manifest copies.
 The registry digests also enable a publisher-supplied
 `release.lock.env`. Populate every nonzero value in
 `deploy/vps/release.lock.env.example` from this single reviewed release,
-including the three project image identities and separately pinned Caddy and
+including the four project image identities and separately pinned Caddy and
 migration identities. Validate it through the documented offline VPS preflight
 from the exact extracted source tree before delivery. The release transaction
 does not synthesize or deploy this operator artifact; automated propagation

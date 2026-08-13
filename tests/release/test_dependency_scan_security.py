@@ -206,7 +206,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
         self.assertEqual(policy["format"], "hbcb-vulnerability-policy/v1")
         self.assertEqual(policy["default_action"], "deny")
         dispositions = policy["dispositions"]
-        self.assertEqual(len(dispositions), 194)
+        self.assertEqual(len(dispositions), 155)
         self.assertEqual(
             Counter(
                 (item["target"], item["disposition"])
@@ -221,7 +221,6 @@ class DependencyScanSecurityTests(unittest.TestCase):
                     ("osv-image-docker-base", "accepted-risk"): 27,
                     ("osv-image-minio", "mitigated"): 2,
                     ("osv-image-minio", "not-affected"): 6,
-                    ("osv-image-postgres", "not-affected"): 39,
                     ("osv-image-worker", "accepted-risk"): 32,
                 }
             ),
@@ -229,7 +228,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
         expected_evidence = [
             {
                 "path": "docs/security/vulnerability-review-2026-08-12.md",
-                "sha256": "d85cd5a3c439f25d91dcb5cdeadafde9a5d854276591f309d6e6e0dae40d269b",
+                "sha256": "6baa0a692b0a6b69aa6252db636e30240f3fe5ac8c590b67d5b5a07a3bec7638",
             }
         ]
         self.assertTrue(
@@ -278,7 +277,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
     def test_policy_image_identifiers_are_safe_unique_and_complete(self) -> None:
         expected = scan_tool.expected_external_image_ids()
         self.assertEqual(
-            set(expected), {"caddy", "docker-base", "postgres", "redis-server"}
+            set(expected), {"caddy", "docker-base", "redis-server"}
         )
         self.assertTrue(all(scan_tool.SAFE_ID.fullmatch(item) for item in expected))
 
@@ -303,6 +302,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
             "postgres": (
                 "compose.yaml",
                 "deploy/vps/compose.yaml",
+                "docker/postgres.Dockerfile",
                 "tests/deployment/g8_recovery_compose.yaml",
                 "tests/security/postgres_fixture_gate.py",
                 "tests/service_integration/g8_orphan_minio_compose.yaml",
@@ -454,20 +454,25 @@ class DependencyScanSecurityTests(unittest.TestCase):
                 scan_tool._bind_disposition_context("caddy", image_identity, root)
 
     def test_external_inventory_rejects_unsafe_duplicate_mutable_or_partial_items(self) -> None:
-        expected = ("docker-base", "postgres")
+        expected = ("docker-base",)
         digest = "a" * 64
         valid = [
-            {"id": "postgres", "reference": "postgres:16@sha256:" + digest},
+            {
+                "id": "postgres",
+                "reference": "postgres:16@sha256:" + digest,
+                "scan_mode": "local-build",
+            },
             {"id": "docker-base", "reference": "debian:12@sha256:" + digest},
         ]
         self.assertEqual(
             [item["id"] for item in scan_tool.validate_external_images(valid, expected)],
-            ["docker-base", "postgres"],
+            ["docker-base"],
         )
         invalid_inventories = (
             valid + [valid[0]],
-            [{"id": "../escape", "reference": "postgres:16@sha256:" + digest}],
-            [{"id": "postgres", "reference": "postgres:16"}],
+            valid + [{"id": "../escape", "reference": "postgres:16@sha256:" + digest}],
+            [valid[0], {"id": "docker-base", "reference": "debian:12"}],
+            [dict(valid[0], scan_mode="external"), valid[1]],
             [valid[0]],
         )
         for inventory in invalid_inventories:
@@ -614,7 +619,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
                 Path("/scanner"),
                 root,
                 root,
-                "postgres",
+                "caddy",
                 reference,
                 records,
                 {
@@ -623,14 +628,14 @@ class DependencyScanSecurityTests(unittest.TestCase):
                     "format": scan_tool.VULNERABILITY_POLICY_FORMAT,
                 },
             )
-            self.assertFalse((root / "external-image-postgres.tar").exists())
-            runtime_gate.assert_called_once_with(reference, records)
+            self.assertFalse((root / "external-image-caddy.tar").exists())
+            runtime_gate.assert_not_called()
         self.assertEqual(len(commands), 1)
         self.assertIn("--archive", commands[0])
         self.assertNotIn(reference, commands[0])
         self.assertEqual(
             records[0]["image_identity"],
-            scan_tool._bind_disposition_context("postgres", identity),
+            scan_tool._bind_disposition_context("caddy", identity),
         )
         with tempfile.TemporaryDirectory() as temporary, self.assertRaisesRegex(
             scan_tool.ScanError,
@@ -1120,6 +1125,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
         recipe = "sha256:" + "c" * 64
         identity = {
             "config_digest": "sha256:" + "a" * 64,
+            "image_id": "sha256:" + "d" * 64,
             "oci_revision": "b" * 40,
             "platform": "linux/amd64",
             "policy_digest": IMAGE_IDENTITY,
@@ -1146,7 +1152,10 @@ class DependencyScanSecurityTests(unittest.TestCase):
             scan_tool,
             "prepare_local_image_archive",
             side_effect=prepare,
-        ), mock.patch.object(scan_tool, "run", side_effect=scan):
+        ), mock.patch.object(scan_tool, "run", side_effect=scan), mock.patch.object(
+            scan_tool,
+            "run_postgres_runtime_gate",
+        ) as postgres_gate:
             root = Path(temporary)
             records: list[dict[str, object]] = []
             for identifier, reference in local_images:
@@ -1166,6 +1175,9 @@ class DependencyScanSecurityTests(unittest.TestCase):
                 )
                 self.assertFalse((root / ("local-image-" + identifier + ".tar")).exists())
         self.assertEqual(len(commands), len(scan_tool.LOCAL_IMAGE_IDS))
+        postgres_gate.assert_called_once_with(
+            identity["image_id"], identity["config_digest"], mock.ANY
+        )
         for command, (identifier, reference) in zip(commands, local_images):
             self.assertIn("--archive", command)
             self.assertNotIn(reference, command)
@@ -1179,6 +1191,51 @@ class DependencyScanSecurityTests(unittest.TestCase):
             ],
         )
         self.assertEqual(len(records), len(scan_tool.LOCAL_IMAGE_IDS))
+
+    def test_postgres_local_scan_requires_runnable_and_archive_config_ids(self) -> None:
+        valid_identity = {
+            "config_digest": "sha256:" + "a" * 64,
+            "image_id": "sha256:" + "b" * 64,
+            "policy_digest": IMAGE_IDENTITY,
+        }
+        for field, value in (("config_digest", None), ("image_id", "latest")):
+            identity = dict(valid_identity)
+            if value is None:
+                identity.pop(field)
+            else:
+                identity[field] = value
+
+            def prepare(_reference, _identifier, archive, _expected_recipe):
+                archive.write_bytes(b"private postgres archive")
+                return identity
+
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                with mock.patch.object(
+                    scan_tool,
+                    "prepare_local_image_archive",
+                    side_effect=prepare,
+                ), mock.patch.object(scan_tool, "scan_image"), mock.patch.object(
+                    scan_tool, "run_postgres_runtime_gate"
+                ) as gate, self.assertRaisesRegex(
+                    scan_tool.ScanError, "immutable image identities are unavailable"
+                ):
+                    scan_tool.scan_local_image(
+                        Path("/scanner"),
+                        root,
+                        root,
+                        "postgres",
+                        "hbcb-postgres-local:test",
+                        [],
+                        {
+                            "default_action": "deny",
+                            "dispositions": [],
+                            "format": scan_tool.VULNERABILITY_POLICY_FORMAT,
+                        },
+                        "sha256:" + "c" * 64,
+                    )
+                gate.assert_not_called()
+                self.assertFalse((root / "local-image-postgres.tar").exists())
 
     def test_local_archive_export_uses_inspected_id_after_simulated_retag(self) -> None:
         labels = {"org.opencontainers.image.revision": "uncommitted"}
@@ -1317,7 +1374,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
 
     def test_every_requested_scan_target_is_recorded_when_not_run(self) -> None:
         records: list[dict[str, object]] = []
-        scan_tool.record_unrun_scans(records, True, ("postgres",))
+        scan_tool.record_unrun_scans(records, True, ())
         identifiers = {str(item["id"]) for item in records}
         self.assertEqual(
             identifiers,
@@ -1335,7 +1392,8 @@ class DependencyScanSecurityTests(unittest.TestCase):
         self.assertEqual(scan_tool.final_status(records, []), "incomplete")
 
     def test_postgres_runtime_gate_is_exact_and_fails_closed(self) -> None:
-        reference = "postgres:16@sha256:" + "a" * 64
+        runtime_image_id = "sha256:" + "a" * 64
+        linux_amd64_config_id = "sha256:" + "b" * 64
         records: list[dict[str, object]] = []
         commands: list[tuple[list[str], int, float]] = []
 
@@ -1350,7 +1408,9 @@ class DependencyScanSecurityTests(unittest.TestCase):
             return 0
 
         with mock.patch.object(scan_tool, "run", side_effect=passed):
-            scan_tool.run_postgres_runtime_gate(reference, records)
+            scan_tool.run_postgres_runtime_gate(
+                runtime_image_id, linux_amd64_config_id, records
+            )
         self.assertEqual(
             commands,
             [
@@ -1364,7 +1424,9 @@ class DependencyScanSecurityTests(unittest.TestCase):
                         "--docker",
                         "docker",
                         "--image",
-                        reference,
+                        runtime_image_id,
+                        "--config-id",
+                        linux_amd64_config_id,
                     ],
                     900,
                     scan_tool.POSTGRES_GATE_TERM_GRACE_SECONDS,
@@ -1376,7 +1438,9 @@ class DependencyScanSecurityTests(unittest.TestCase):
 
         records = []
         with mock.patch.object(scan_tool, "run", return_value=1):
-            scan_tool.run_postgres_runtime_gate(reference, records)
+            scan_tool.run_postgres_runtime_gate(
+                runtime_image_id, linux_amd64_config_id, records
+            )
         self.assertEqual(records[0]["status"], "incomplete")
         self.assertEqual(scan_tool.final_status(records, []), "incomplete")
 
@@ -1863,7 +1927,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
             self.assertTrue(
                 scan_tool.build_images(records, first, recipe, attempted)
             )
-        self.assertEqual(len(commands), 4)
+        self.assertEqual(len(commands), 5)
         first_references = dict(first)
         second_references = {reference for _identifier, reference in second}
         for identifier, command in zip(scan_tool.LOCAL_IMAGE_IDS, commands):
@@ -1872,10 +1936,20 @@ class DependencyScanSecurityTests(unittest.TestCase):
             self.assertEqual(command[tag_index + 1], first_references[identifier])
             self.assertFalse(set(command) & second_references)
         self.assertEqual(attempted, list(scan_tool.LOCAL_IMAGE_IDS))
-        for command in commands[2:]:
+        service_commands = [
+            command
+            for command in commands
+            if "docker/service.Dockerfile" in command
+        ]
+        self.assertEqual(len(service_commands), 2)
+        for command in service_commands:
             self.assertIn("HBCB_BUILDER_IMAGE=" + first_references["builder"], command)
         minio = next(command for command in commands if "docker/minio.Dockerfile" in command)
         self.assertIn("HBCB_MINIO_RECIPE_ID=" + recipe, minio)
+        postgres = next(
+            command for command in commands if "docker/postgres.Dockerfile" in command
+        )
+        self.assertEqual(postgres[postgres.index("--target") + 1], "postgres")
 
     def test_parallel_build_references_do_not_change_local_policy_identity(self) -> None:
         labels = {"org.opencontainers.image.revision": "uncommitted"}

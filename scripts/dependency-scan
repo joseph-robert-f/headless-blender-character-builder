@@ -100,7 +100,8 @@ OCI_CONFIG_MEDIA_TYPES = frozenset(
         "application/vnd.oci.image.config.v1+json",
     }
 )
-LOCAL_IMAGE_IDS = ("builder", "minio", "api", "worker")
+LOCAL_IMAGE_IDS = ("builder", "minio", "postgres", "api", "worker")
+DEPENDENCY_AUDIT_LOCAL_IMAGE_IDS = frozenset({"postgres"})
 DISPOSITION_CONTEXT_FILES = {
     "api": (
         "compose.yaml",
@@ -121,6 +122,7 @@ DISPOSITION_CONTEXT_FILES = {
     "postgres": (
         "compose.yaml",
         "deploy/vps/compose.yaml",
+        "docker/postgres.Dockerfile",
         "tests/deployment/g8_recovery_compose.yaml",
         "tests/security/postgres_fixture_gate.py",
         "tests/service_integration/g8_orphan_minio_compose.yaml",
@@ -292,6 +294,13 @@ def expected_external_image_ids(root: Path = ROOT) -> tuple:
             identifier = entry.get("id") if isinstance(entry, dict) else None
             if not isinstance(identifier, str):
                 raise ScanError("dependency policy %s identifier is invalid" % key)
+            scan_mode = entry.get("scan_mode", "external")
+            if scan_mode not in {"external", "local-build"}:
+                raise ScanError("dependency policy %s scan mode is invalid" % key)
+            if scan_mode == "local-build":
+                if key != "compose_images" or identifier not in DEPENDENCY_AUDIT_LOCAL_IMAGE_IDS:
+                    raise ScanError("dependency policy local-build image is invalid")
+                continue
             identifiers.append(identifier)
 
     local_ids = set(LOCAL_IMAGE_IDS)
@@ -309,15 +318,19 @@ def validate_external_images(raw_images: object, expected_ids: Sequence[str]) ->
     if not isinstance(raw_images, list):
         raise ValueError("missing image inventory")
     images: Dict[str, str] = {}
+    scan_modes: Dict[str, str] = {}
     for item in raw_images:
         if not isinstance(item, dict):
             raise ValueError("invalid image inventory item")
         identifier = item.get("id")
         reference = item.get("reference")
+        scan_mode = item.get("scan_mode", "external")
         if not isinstance(identifier, str) or SAFE_ID.fullmatch(identifier) is None:
             raise ValueError("unsafe image inventory identifier")
         if identifier in images:
             raise ValueError("duplicate image inventory identifier")
+        if scan_mode not in {"external", "local-build"}:
+            raise ValueError("invalid image inventory scan mode")
         if (
             not isinstance(reference, str)
             or SAFE_IMAGE_REFERENCE.fullmatch(reference) is None
@@ -325,9 +338,22 @@ def validate_external_images(raw_images: object, expected_ids: Sequence[str]) ->
         ):
             raise ValueError("unsafe or mutable image inventory reference")
         images[identifier] = reference
-    if set(images) != set(expected_ids):
+        scan_modes[identifier] = scan_mode
+    expected_external = set(expected_ids)
+    expected_all = expected_external | set(DEPENDENCY_AUDIT_LOCAL_IMAGE_IDS)
+    if set(images) != expected_all:
         raise ValueError("image inventory does not match the dependency policy")
-    return [{"id": identifier, "reference": images[identifier]} for identifier in sorted(images)]
+    if any(scan_modes[identifier] != "external" for identifier in expected_external):
+        raise ValueError("external image inventory scan mode is invalid")
+    if any(
+        scan_modes[identifier] != "local-build"
+        for identifier in DEPENDENCY_AUDIT_LOCAL_IMAGE_IDS
+    ):
+        raise ValueError("local-build image inventory scan mode is invalid")
+    return [
+        {"id": identifier, "reference": images[identifier]}
+        for identifier in sorted(expected_external)
+    ]
 
 
 def local_image_references(run_token: Optional[str] = None) -> Tuple[Tuple[str, str], ...]:
@@ -2254,6 +2280,23 @@ def build_images(
             ],
         ),
         (
+            "postgres",
+            900,
+            [
+                "docker",
+                "build",
+                "--file",
+                "docker/postgres.Dockerfile",
+                "--target",
+                "postgres",
+                "--tag",
+                references["postgres"],
+                "--platform",
+                "linux/amd64",
+                ".",
+            ],
+        ),
+        (
             "api",
             900,
             [
@@ -2524,8 +2567,6 @@ def scan_external_image(
             policy,
             image_identity=identity,
         )
-        if identifier == "postgres":
-            run_postgres_runtime_gate(reference, records)
     finally:
         try:
             archive.unlink()
@@ -2536,7 +2577,8 @@ def scan_external_image(
 
 
 def run_postgres_runtime_gate(
-    reference: str,
+    runtime_image_id: str,
+    linux_amd64_config_id: str,
     records: List[Dict[str, object]],
 ) -> None:
     code = run(
@@ -2546,7 +2588,9 @@ def run_postgres_runtime_gate(
             "--docker",
             "docker",
             "--image",
-            reference,
+            runtime_image_id,
+            "--config-id",
+            linux_amd64_config_id,
         ],
         timeout=900,
         termination_grace_seconds=POSTGRES_GATE_TERM_GRACE_SECONDS,
@@ -2592,6 +2636,17 @@ def scan_local_image(
             policy,
             image_identity=identity,
         )
+        if identifier == "postgres":
+            image_id = identity.get("image_id")
+            config_digest = identity.get("config_digest")
+            if (
+                not isinstance(image_id, str)
+                or DIGEST.fullmatch(image_id) is None
+                or not isinstance(config_digest, str)
+                or DIGEST.fullmatch(config_digest) is None
+            ):
+                raise ScanError("local PostgreSQL immutable image identities are unavailable")
+            run_postgres_runtime_gate(image_id, config_digest, records)
     finally:
         try:
             archive.unlink()
@@ -2621,11 +2676,7 @@ def record_unrun_scans(
                 "type": "vulnerability-scan",
             }
         )
-    if (
-        include_images
-        and "postgres" in external_ids
-        and "postgres-runtime-security" not in recorded
-    ):
+    if include_images and "postgres-runtime-security" not in recorded:
         records.append(
             {
                 "exit_code": None,

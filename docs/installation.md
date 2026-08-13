@@ -11,15 +11,20 @@ Compose, an AI key, or a provider account for one-shot builds.
 > is useful for source evaluation, but it is not the same as installing a
 > signed versioned release.
 
+The first release (v0.1) supports one trusted user building their own model locally with the
+one-shot Docker path. “Trusted” means that you control the machine and create
+or review the bounded JSON request. The local service is experimental; public,
+multi-tenant, and VPS operation are outside v0.1 support.
+
 ## Choose a path
 
 | Path | Status | Requirements |
 |---|---|---|
-| [Docker with Make](#container-path-recommended) | Recommended local path | Git, current Docker Engine/Desktop with BuildKit and `linux/amd64` support, GNU Make |
+| [Docker with Make](#container-path-recommended) | Supported v0.1 path | Git, current Docker Engine/Desktop with BuildKit and `linux/amd64` support, GNU Make |
 | [Docker without Make](#docker-without-make) | Equivalent manual path | Git, Docker, a POSIX shell, `id`, and `mkdir` |
 | [Native Blender](#native-blender-best-effort) | Best-effort contributor path | Git, Python 3.11+, exact Blender 4.5.12 LTS |
-| [Local asynchronous service](#local-asynchronous-service) | Local integration path | Local Docker daemon/context, Docker Compose 2.24.4+, Python 3.11+, 8 GiB Docker memory, 20 GB free disk, and the container requirements |
-| [VPS reference](deployment.md) | Production-oriented design; not yet published for deployment | Linux `amd64`, Python 3.11+, Compose 2.24.4+, domain/TLS, private storage networking, external versioned S3, role secrets, and a future release lock/image set |
+| [Local asynchronous service](#local-asynchronous-service) | Experimental, local-only | One trusted operator, local Docker daemon/context, Docker Compose 2.24.4+, Python 3.11+, 8 GiB Docker memory, 20 GB free disk, and the container requirements |
+| [VPS reference](deployment.md) | Design reference; outside v0.1 support | Linux `amd64`, Python 3.11+, Compose 2.24.4+, and operations/security expertise; not a v0.1 installation path |
 
 The container runtime limit is four CPUs, 4 GB RAM, 512 PIDs, and 2 GB of
 scratch. Allow about four CPU cores, 8 GB of host RAM, and 10 GB of free disk
@@ -396,6 +401,11 @@ The exported `PYTHON` selector also reaches the existing
 
 ## Local asynchronous service
 
+> **Scope:** this service is an experimental convenience for one trusted local
+> operator. Keep it on loopback and submit only requests you created or
+> reviewed. Do not use it for Internet-facing, multi-user, multi-tenant, or
+> hostile-input workloads.
+
 The local service is optional and requires a Docker daemon on this machine.
 An SSH, TCP, or HTTP Docker context is not supported because the API and
 artifact ports bind to the daemon host while the documented client connects to
@@ -481,8 +491,8 @@ make service-images
 make service-image-cleanup
 ```
 
-The helper removes only the five exact builder, API, worker, MinIO-fixture, and
-test tags printed by `make service-images`. It keeps `.env` and every named
+The helper removes only the six exact builder, derived-PostgreSQL, API, worker,
+MinIO-fixture, and test tags printed by `make service-images`. It keeps `.env` and every named
 volume. It also keeps shared Docker/BuildKit cache because Docker cannot prove
 that every cache record belongs to one checkout. Never substitute a global
 `docker system prune`, `docker builder prune`, `docker image prune`, or
@@ -500,3 +510,5 @@ path as `REQUEST` to `make service-client`.
 
 The local stack is loopback-only and uses a MinIO compatibility fixture. It is
 not the [VPS reference](deployment.md) and must not be exposed to the Internet.
+The VPS material is a design and validation reference, not a supported v0.1
+deployment path.

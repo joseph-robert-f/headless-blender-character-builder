@@ -231,11 +231,11 @@ This is the optional maintainer/integration confidence gate: it performs direct
 and service builds, restart, cancellation, artifact, Redis, and IAM checks and
 retains evidence under `build/service-smoke/`. It is not required to start or
 try the API. Use `make service-client REQUEST=/absolute/path/to/request.json`
-for the supported first-evaluation path; the [HTTP API guide](api.md) also
-retains a longer manual protocol example for integrators.
+for the documented first evaluation of this experimental path; the [HTTP API
+guide](api.md) also retains a longer manual protocol example for integrators.
 
 For exact image cleanup, stop the stack, list the selected service project's
-five tags, review them, and then remove only that list:
+six tags, review them, and then remove only that list:
 
 ```sh
 make service-down

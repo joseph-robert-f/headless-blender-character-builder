@@ -6,6 +6,11 @@ import json
 import os
 import signal
 import subprocess
+import sys
+import tempfile
+import threading
+import time
+import tarfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -21,6 +26,8 @@ assert SPEC is not None and SPEC.loader is not None
 GATE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(GATE)
 SCAN = load_script("hbcb_postgres_gate_dependency_scan", "dependency-scan")
+TEST_IMAGE_ID = "sha256:" + "a" * 64
+TEST_CONFIG_ID = "sha256:" + "b" * 64
 
 
 def completed(
@@ -35,19 +42,32 @@ def completed(
 
 def valid_document() -> dict[str, object]:
     return {
-        "Id": "sha256:" + "a" * 64,
+        "Id": TEST_IMAGE_ID,
         "Os": "linux",
         "Architecture": "amd64",
         "Config": {
             "Entrypoint": ["docker-entrypoint.sh"],
             "Cmd": ["postgres"],
+            "User": "70:70",
+            "WorkingDir": "/",
+            "StopSignal": "SIGINT",
+            "ExposedPorts": {"5432/tcp": {}},
             "Env": [
-                "GOSU_VERSION=1.19",
                 "PG_MAJOR=16",
                 "PG_VERSION=16.14",
                 "PGDATA=/var/lib/postgresql/data",
             ],
             "Volumes": {"/var/lib/postgresql/data": {}},
+            "Labels": {
+                "org.opencontainers.image.version": GATE.EXPECTED_VERSION,
+                "org.opencontainers.image.revision": GATE.EXPECTED_UPSTREAM_REVISION,
+                "org.opencontainers.image.source": GATE.EXPECTED_UPSTREAM_SOURCE,
+                "org.opencontainers.image.licenses": "PostgreSQL",
+                "org.opencontainers.image.base.name": "postgres:16.14-alpine3.24",
+                "org.opencontainers.image.base.digest": "sha256:"
+                + GATE.EXPECTED_BASE_IMAGE.rsplit("sha256:", 1)[1],
+                "io.hbcb.postgres.recipe-id": GATE.EXPECTED_RECIPE_ID,
+            },
         },
     }
 
@@ -60,7 +80,7 @@ class PostgresSecurityGateTests(unittest.TestCase):
         )
         self.assertGreater(
             SCAN.POSTGRES_GATE_TERM_GRACE_SECONDS,
-            GATE.MAX_OWNED_RUNTIME_DOCKER_TIMEOUT_SECONDS + cleanup_bound,
+            (GATE.CHILD_TERMINATION_GRACE_SECONDS * 2) + cleanup_bound,
         )
 
     def test_make_target_uses_the_exact_gate_and_image(self) -> None:
@@ -73,10 +93,9 @@ class PostgresSecurityGateTests(unittest.TestCase):
         self.assertNotIn("--image", target)
 
     def test_image_contract_is_exact_and_mutations_fail(self) -> None:
-        expected_id = "sha256:" + "a" * 64
         self.assertEqual(
-            GATE._validate_image(valid_document(), GATE.EXPECTED_IMAGE),
-            expected_id,
+            GATE._validate_image(valid_document(), TEST_IMAGE_ID),
+            TEST_IMAGE_ID,
         )
         mutations = []
         for field, value in (
@@ -90,6 +109,7 @@ class PostgresSecurityGateTests(unittest.TestCase):
         for field, value in (
             ("Entrypoint", ["/bin/sh"]),
             ("Cmd", ["postgres", "--help"]),
+            ("User", ""),
             ("Volumes", {}),
         ):
             document = valid_document()
@@ -99,14 +119,76 @@ class PostgresSecurityGateTests(unittest.TestCase):
             mutations.append(document)
         document = valid_document()
         environment = document["Config"]["Env"]  # type: ignore[index]
-        environment.remove("GOSU_VERSION=1.19")  # type: ignore[union-attr]
+        environment.append("GOSU_VERSION=1.19")  # type: ignore[union-attr]
+        mutations.append(document)
+        document = valid_document()
+        document["Config"]["Labels"]["io.hbcb.postgres.recipe-id"] = "changed"  # type: ignore[index]
         mutations.append(document)
 
         for document in mutations:
             with self.subTest(document=document), self.assertRaises(GATE.GateError):
-                GATE._validate_image(document, GATE.EXPECTED_IMAGE)
-        with self.assertRaisesRegex(GATE.GateError, "reviewed exact pin"):
+                GATE._validate_image(document, TEST_IMAGE_ID)
+        with self.assertRaisesRegex(GATE.GateError, "exact image ID"):
             GATE._validate_image(valid_document(), "postgres:latest")
+
+    def test_prebuilt_selection_binds_runnable_and_archive_config_ids(self) -> None:
+        selected = valid_document()
+        selected["Descriptor"] = {"digest": TEST_IMAGE_ID}
+        with mock.patch.object(GATE, "_inspect_tag", return_value=selected), mock.patch.object(
+            GATE, "_inspect_image", return_value=valid_document()
+        ), mock.patch.object(
+            GATE, "_exported_config_id", return_value=TEST_CONFIG_ID
+        ):
+            self.assertEqual(
+                GATE._validate_selected_image(
+                    "docker", TEST_IMAGE_ID, TEST_CONFIG_ID
+                ),
+                TEST_IMAGE_ID,
+            )
+            with self.assertRaisesRegex(GATE.GateError, "config identity changed"):
+                GATE._validate_selected_image(
+                    "docker", TEST_IMAGE_ID, "sha256:" + "c" * 64
+                )
+
+    def test_archive_config_identity_is_content_derived_and_platform_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "image.tar"
+            config_payload = json.dumps(
+                {"architecture": "amd64", "config": {}, "os": "linux"},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("ascii")
+            config_name = "config.json"
+            manifest_payload = json.dumps(
+                [{"Config": config_name, "Layers": [], "RepoTags": None}],
+                separators=(",", ":"),
+            ).encode("ascii")
+            with tarfile.open(archive, "w") as handle:
+                for name, payload in (
+                    ("manifest.json", manifest_payload),
+                    (config_name, config_payload),
+                ):
+                    member = tarfile.TarInfo(name)
+                    member.size = len(payload)
+                    handle.addfile(member, io.BytesIO(payload))
+            expected = "sha256:" + __import__("hashlib").sha256(config_payload).hexdigest()
+            self.assertEqual(GATE._archive_config_id(archive), expected)
+
+            wrong_platform = json.dumps(
+                {"architecture": "arm64", "config": {}, "os": "linux"},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("ascii")
+            with tarfile.open(archive, "w") as handle:
+                for name, payload in (
+                    ("manifest.json", manifest_payload),
+                    (config_name, wrong_platform),
+                ):
+                    member = tarfile.TarInfo(name)
+                    member.size = len(payload)
+                    handle.addfile(member, io.BytesIO(payload))
+            with self.assertRaisesRegex(GATE.GateError, "archive config is invalid"):
+                GATE._archive_config_id(archive)
 
     def test_runtime_gate_is_hardened_proves_uid_and_removes_owned_resources(self) -> None:
         calls: list[tuple[str, ...]] = []
@@ -153,10 +235,9 @@ class PostgresSecurityGateTests(unittest.TestCase):
             raise AssertionError(command)
 
         with mock.patch.object(GATE, "_run", side_effect=fake_run):
-            observed_id, sentinel_sha = GATE._runtime_gate("docker", GATE.EXPECTED_IMAGE)
+            observed_id = GATE._runtime_gate("docker", TEST_IMAGE_ID)
 
         self.assertEqual(observed_id, container_id)
-        self.assertRegex(sentinel_sha, r"^[0-9a-f]{64}$")
         run = next(command for command in calls if command[1:3] == ("run", "--detach"))
         self.assertRegex(resource_name, GATE.RESOURCE_NAME)
         self.assertRegex(owner_label, r"^io\.hbcb\.postgres-fixture-owner=[0-9a-f]{32}$")
@@ -171,11 +252,11 @@ class PostgresSecurityGateTests(unittest.TestCase):
             "no-new-privileges:true",
             "--user",
             "70:70",
-            GATE.EXPECTED_IMAGE,
+            TEST_IMAGE_ID,
         ):
             self.assertIn(required, run)
         self.assertNotIn("--publish", run)
-        self.assertTrue(any("target=/usr/local/bin/gosu,readonly" in item for item in run))
+        self.assertFalse(any("/usr/local/bin/gosu" in item for item in run))
         proof = next(
             command
             for command in calls
@@ -187,7 +268,8 @@ class PostgresSecurityGateTests(unittest.TestCase):
             "/proc/1/comm",
             "/proc/1/cmdline",
             GATE.EXPECTED_ENTRYPOINT_SHA256,
-            sentinel_sha,
+            "test ! -e /usr/local/bin/gosu",
+            "test ! -L /usr/local/bin/gosu",
             "PGDATA/PG_VERSION",
             "current_database()",
         ):
@@ -195,6 +277,70 @@ class PostgresSecurityGateTests(unittest.TestCase):
         self.assertFalse(container_owned)
         self.assertFalse(volume_owned)
         self.assertEqual(calls[-1][1:3], ("volume", "ls"))
+
+    def test_invalid_owned_build_is_removed_but_foreign_race_winner_survives(self) -> None:
+        tag = "hbcb-postgres-security-build-" + "b" * 16 + ":local"
+        owner_label = GATE.BUILD_OWNER_LABEL_KEY + "=" + "c" * 32
+        owned = valid_document()
+        owned["Config"]["Labels"][GATE.BUILD_OWNER_LABEL_KEY] = "c" * 32  # type: ignore[index]
+        foreign = valid_document()
+        foreign["Config"]["Labels"][GATE.BUILD_OWNER_LABEL_KEY] = "d" * 32  # type: ignore[index]
+
+        for document, removed in ((owned, True), (foreign, False)):
+            calls: list[tuple[str, ...]] = []
+            present = True
+
+            def fake_run(command: tuple[str, ...], **_: object) -> subprocess.CompletedProcess[bytes]:
+                nonlocal present
+                command = tuple(command)
+                calls.append(command)
+                if command[1:3] == ("image", "ls"):
+                    return completed(command, stdout=((TEST_IMAGE_ID + "\n").encode() if present else b""))
+                if command[1:3] == ("image", "inspect"):
+                    return completed(command, stdout=json.dumps([document]).encode())
+                if command[1:3] == ("image", "rm"):
+                    present = False
+                    return completed(command)
+                raise AssertionError(command)
+
+            with mock.patch.object(GATE, "_run", side_effect=fake_run):
+                if removed:
+                    GATE._remove_owned_image_tag("docker", tag, owner_label, None)
+                else:
+                    with self.assertRaisesRegex(GATE.GateError, "not owned"):
+                        GATE._remove_owned_image_tag("docker", tag, owner_label, None)
+            self.assertEqual(any(call[1:3] == ("image", "rm") for call in calls), removed)
+
+    def test_build_tag_query_error_fails_closed(self) -> None:
+        with mock.patch.object(
+            GATE,
+            "_run",
+            return_value=completed(("docker", "image", "ls"), returncode=1),
+        ):
+            with self.assertRaisesRegex(GATE.GateError, "could not be queried"):
+                GATE._tag_image_ids("docker", "hbcb-postgres-security-build-" + "a" * 16 + ":local")
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process groups required")
+    def test_live_signal_reaps_term_resistant_descendant_after_leader_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            identity = Path(temporary) / "group"
+            script = (
+                "import os,signal,subprocess,sys; "
+                "child=subprocess.Popen([sys.executable,'-c',"
+                "'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(60)']); "
+                "open(sys.argv[1],'w').write(str(os.getpgrp())+'|'+str(child.pid))"
+            )
+            timer = threading.Timer(0.3, os.kill, (os.getpid(), signal.SIGTERM))
+            started = time.monotonic()
+            with self.assertRaises(GATE._TerminationSignal) as raised:
+                with GATE._TerminationGuard():
+                    timer.start()
+                    GATE._run((sys.executable, "-c", script, str(identity)), timeout=10)
+            timer.join(timeout=2)
+            self.assertEqual(raised.exception.signum, signal.SIGTERM)
+            self.assertLess(time.monotonic() - started, 8)
+            process_group = int(identity.read_text(encoding="ascii").split("|", 1)[0])
+            self.assertFalse(GATE._process_group_exists(process_group))
 
     def test_ambiguous_start_failure_removes_only_owned_resources(self) -> None:
         calls: list[tuple[str, ...]] = []
@@ -236,7 +382,7 @@ class PostgresSecurityGateTests(unittest.TestCase):
 
         with mock.patch.object(GATE, "_run", side_effect=fake_run):
             with self.assertRaisesRegex(GATE.GateError, "container ID is invalid"):
-                GATE._runtime_gate("docker", GATE.EXPECTED_IMAGE)
+                GATE._runtime_gate("docker", TEST_IMAGE_ID)
         self.assertFalse(container_owned)
         self.assertFalse(volume_owned)
         self.assertTrue(any(command[1:3] == ("rm", "--force") for command in calls))
@@ -255,7 +401,7 @@ class PostgresSecurityGateTests(unittest.TestCase):
 
         with mock.patch.object(GATE, "_run", side_effect=fake_run):
             with self.assertRaisesRegex(GATE.GateError, "volume ownership is invalid"):
-                GATE._runtime_gate("docker", GATE.EXPECTED_IMAGE)
+                GATE._runtime_gate("docker", TEST_IMAGE_ID)
         self.assertFalse(any(command[1:3] == ("volume", "rm") for command in calls))
         self.assertFalse(any(command[1:3] == ("rm", "--force") for command in calls))
 
@@ -278,7 +424,7 @@ class PostgresSecurityGateTests(unittest.TestCase):
                 GATE.GateError,
                 "container: container cleanup failure",
             ) as raised:
-                GATE._runtime_gate("docker", GATE.EXPECTED_IMAGE)
+                GATE._runtime_gate("docker", TEST_IMAGE_ID)
         container_cleanup.assert_called_once()
         volume_cleanup.assert_called_once()
         self.assertIs(raised.exception.__context__, operation_failure)
@@ -298,7 +444,7 @@ class PostgresSecurityGateTests(unittest.TestCase):
             side_effect=GATE.GateError("volume cleanup failure"),
         ):
             with self.assertRaises(GATE.GateError) as raised:
-                GATE._runtime_gate("docker", GATE.EXPECTED_IMAGE)
+                GATE._runtime_gate("docker", TEST_IMAGE_ID)
         self.assertIn("container: container cleanup failure", str(raised.exception))
         self.assertIn("volume: volume cleanup failure", str(raised.exception))
 
@@ -343,7 +489,7 @@ class PostgresSecurityGateTests(unittest.TestCase):
 
         with mock.patch.object(GATE, "_run", side_effect=fake_run):
             with self.assertRaises(GATE._TerminationSignal) as raised:
-                GATE._runtime_gate("docker", GATE.EXPECTED_IMAGE)
+                GATE._runtime_gate("docker", TEST_IMAGE_ID)
         self.assertEqual(raised.exception.signum, signal.SIGTERM)
         self.assertFalse(container_owned)
         self.assertFalse(volume_owned)
@@ -351,7 +497,7 @@ class PostgresSecurityGateTests(unittest.TestCase):
         self.assertTrue(any(command[1:3] == ("volume", "rm") for command in calls))
         self.assertEqual(calls[-1][1:3], ("volume", "ls"))
 
-    def test_execute_pulls_exact_image_and_emits_bounded_evidence(self) -> None:
+    def test_execute_inspects_exact_image_id_and_emits_bounded_evidence(self) -> None:
         calls: list[tuple[str, ...]] = []
 
         def fake_run(command: tuple[str, ...], **_: object) -> subprocess.CompletedProcess[bytes]:
@@ -365,18 +511,22 @@ class PostgresSecurityGateTests(unittest.TestCase):
         with mock.patch.object(GATE, "_run", side_effect=fake_run), mock.patch.object(
             GATE,
             "_runtime_gate",
-            return_value=("e" * 64, "f" * 64),
+            return_value="e" * 64,
+        ), mock.patch.object(
+            GATE,
+            "_exported_config_id",
+            return_value=TEST_CONFIG_ID,
         ), redirect_stdout(output):
-            self.assertEqual(GATE.execute("docker", GATE.EXPECTED_IMAGE), 0)
+            self.assertEqual(
+                GATE.execute("docker", TEST_IMAGE_ID, TEST_CONFIG_ID), 0
+            )
         self.assertEqual(
             calls[0],
             (
                 "docker",
-                "pull",
-                "--quiet",
-                "--platform",
-                "linux/amd64",
-                GATE.EXPECTED_IMAGE,
+                "image",
+                "inspect",
+                TEST_IMAGE_ID,
             ),
         )
         self.assertEqual(
@@ -387,13 +537,26 @@ class PostgresSecurityGateTests(unittest.TestCase):
                 "inspect",
                 "--platform",
                 "linux/amd64",
-                GATE.EXPECTED_IMAGE,
+                TEST_IMAGE_ID,
             ),
         )
         evidence = json.loads(output.getvalue())
         self.assertEqual(evidence["status"], "pass")
         self.assertEqual(evidence["runtime_uid"], 70)
-        self.assertEqual(evidence["image_reference"], GATE.EXPECTED_IMAGE)
+        self.assertEqual(evidence["image_id"], TEST_IMAGE_ID)
+        self.assertFalse(evidence["gosu_present"])
+        self.assertEqual(evidence["linux_amd64_config_id"], TEST_CONFIG_ID)
+        self.assertEqual(evidence["base_image_reference"], GATE.EXPECTED_BASE_IMAGE)
+
+    def test_prebuilt_execution_requires_both_exact_ids(self) -> None:
+        for image, config in (
+            (TEST_IMAGE_ID, None),
+            (None, TEST_CONFIG_ID),
+            ("postgres:latest", TEST_CONFIG_ID),
+            (TEST_IMAGE_ID, "config-latest"),
+        ):
+            with self.subTest(image=image, config=config), self.assertRaises(GATE.GateError):
+                GATE.execute("docker", image, config)
 
 
 if __name__ == "__main__":

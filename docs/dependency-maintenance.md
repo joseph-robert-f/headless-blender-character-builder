@@ -17,7 +17,7 @@ reviewed authentication design.
 |---|---:|---:|---|
 | `make dependency-check` | No | No | Fail when declarations, locks, hashes, notices, provenance, Compose recovery pins, or exact assertions disagree. |
 | `make dependency-audit` | Yes | No | Run the offline gate, then report PyPI candidates, Docker Official Image support status, and tag-to-digest drift. It never edits files. |
-| `make dependency-scan DEPENDENCY_OUTPUT=build/dependency-audit-review` | Yes | Yes | Download a checksum-pinned OSV-Scanner, build the four project images, scan all three Python locks and every release image, run the isolated PostgreSQL runtime proof, then enforce the checked-in UNRATED/HIGH/CRITICAL disposition policy while retaining the detailed reports. |
+| `make dependency-scan DEPENDENCY_OUTPUT=build/dependency-audit-review` | Yes | Yes | Download a checksum-pinned OSV-Scanner, build the five project images—including the gosu-free PostgreSQL derivative—scan all three Python locks and every release image, run the isolated PostgreSQL runtime proof, then enforce the checked-in UNRATED/HIGH/CRITICAL disposition policy while retaining the detailed reports. |
 
 `make postgres-security-check` reruns only the exact PostgreSQL fresh-volume
 proof. It is useful while diagnosing that fixture, but it does not replace the
@@ -70,8 +70,9 @@ The workflow:
    final disposition identity additionally hashes the exact repository runtime
    controls used by that target's review. API and worker bind the base/VPS
    Compose models and Caddyfile; MinIO binds those models, both disposable
-   integration models, and its runtime security gate; PostgreSQL binds every
-   Compose model that can start it plus its fresh-volume runtime gate; and Caddy
+   integration models, and its runtime security gate; PostgreSQL binds its
+   Dockerfile, every Compose model that can start it, and its fresh-volume
+   runtime gate; and Caddy
    binds its VPS Compose model and Caddyfile. A relevant configuration or gate
    change therefore cannot reuse an earlier disposition. The per-run tags are removed in reverse build order
    even after a build or scan failure. For every external image, the scanner
@@ -79,10 +80,13 @@ The workflow:
    requires exactly one `linux/amd64` child, verifies that child's manifest and
    config digests, and pulls and inspects that exact child. OSV-Scanner receives
    only validated, size-capped private archives—not mutable local tags or
-   multi-architecture registry references. After the exact PostgreSQL image is
-   scanned, one random owner-labelled, network-disabled fixture proves that a
-   fresh volume initializes as UID/GID 70 while a mounted `gosu` sentinel would
-   fail if invoked. Cleanup removes only the exact labelled container and
+   multi-architecture registry references. The official PostgreSQL base is
+   checked for maintenance and digest drift as provenance, but it is not the
+   runtime scan target: the scanner builds, exports by immutable image ID, and
+   scans the repository's derived image after deleting `gosu`. After that exact
+   derivative is scanned, one random owner-labelled, network-disabled fixture
+   proves that `gosu` is absent and a fresh volume initializes as UID/GID 70.
+   Cleanup removes only the exact labelled container and
    volume, including after failure or interruption;
 5. retains per-file and aggregate size-capped JSON and Markdown reports for
    seven days; and
@@ -207,8 +211,8 @@ The full `make dependency-scan` result is required before merge.
 
 ### Dockerfile frontend
 
-The service and MinIO Dockerfiles use one exact-version, manifest-digest-pinned
-`docker/dockerfile` frontend. Update both first-line directives and the reviewed
+The service, MinIO, and PostgreSQL Dockerfiles use one exact-version,
+manifest-digest-pinned `docker/dockerfile` frontend. Update all three first-line directives and the reviewed
 reference in `release/dependency-policy.json` together. Confirm the digest from
 Docker's verified-publisher registry metadata, review the required BuildKit
 version and release notes, then run the offline gate and rebuild every affected
@@ -216,10 +220,13 @@ target. The build engine itself remains a manually reviewed tool boundary.
 
 ### PostgreSQL or Redis
 
-Update `compose.yaml`, `tests/deployment/g8_recovery_compose.yaml`, the exact
-assertions in `tests/deployment/test_g8_recovery_drill.py`, and
-`THIRD_PARTY_NOTICES.md` together. Run the service and G8 recovery gates plus a
-full `make dependency-scan` using a new output path before merge.
+For PostgreSQL, update the exact official base in `docker/postgres.Dockerfile`,
+its provenance labels, `release/dependency-policy.json`, every local/recovery
+Compose image expression, the digest-pinned VPS lock example, the runtime gate,
+and `THIRD_PARTY_NOTICES.md` together. Redis remains a direct external image;
+update its Compose pins and recovery assertions together. Run the service and
+G8 recovery gates plus a full `make dependency-scan` using a new output path
+before merge.
 
 Do not treat a PostgreSQL major release as an image update. It requires a
 separately designed backup, migration, rollback, and existing-volume rehearsal.

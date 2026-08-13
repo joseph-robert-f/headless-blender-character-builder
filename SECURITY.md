@@ -7,19 +7,22 @@ passed strict input rejection, private staging, atomic success publication,
 disabled embedded-script auto-execution, offline Blender, artifact hashing,
 fresh reload/re-import, and a pinned non-root one-shot runtime with no network,
 a read-only root, dropped capabilities, fixed mounts, and resource limits.
-The service adds auth-first bounded HTTP handling, HMAC idempotency, fenced
-PostgreSQL leases, transactional outbox plus stale Redis recovery,
+The experimental local service adds auth-first bounded HTTP handling, HMAC
+idempotency, fenced PostgreSQL leases, transactional outbox plus stale Redis recovery,
 cancellation-wins publication locking, nested-process termination, immutable
 versioned artifacts, secret-free logs, distinct runtime/maintenance identities,
-and tested least-privilege denials. The VPS package adds HTTPS configuration,
-digest locks, bounded resources/logs, supported external-S3 guidance,
-retention, quiesced backup/restore, and forward-only recovery.
+and tested least-privilege denials. The out-of-scope VPS reference exercises
+HTTPS configuration, digest locks, bounded resources/logs, external-S3
+guidance, retention, quiesced backup/restore, and forward-only recovery.
 
-There is still no supported hosted service, public multi-tenant abuse-control
-plane, security SLA, or automatic patch service. Local validation does not
-prove a live operator's DNS, TLS issuance, firewall, S3-provider IAM, off-host
-backup, or incident process. Do not expose the local development stack beyond
-its loopback bindings or to untrusted users.
+The first release (v0.1) supports one trusted user building their own model locally with the one-shot
+Docker builder. A trusted user controls the machine and creates or reviews the
+bounded JSON request. The Compose service is experimental and local-only;
+Internet-facing, multi-tenant, hostile-input, and VPS operation are outside v0.1
+support. There is no supported hosted service, security SLA, or automatic patch
+service. Local validation does not prove a live operator's DNS, TLS issuance,
+firewall, S3-provider IAM, off-host backup, or incident process. Do not expose
+the local development stack beyond its loopback bindings or to untrusted users.
 
 ## Reporting a vulnerability
 
@@ -42,7 +45,11 @@ for the pre-release project.
 
 ## Security boundary
 
-The intended public worker accepts strict declarative JSON only. Customer- or model-authored Python, arbitrary Blender commands, add-ons, uploaded `.blend` files, remote URLs, and host paths are outside the normal v0.1 boundary. See `docs/threat-model.md` for the maintained threat model and `PLAN.md` for release gates.
+The supported one-shot builder and experimental local worker accept strict
+declarative JSON only. Customer- or model-authored Python, arbitrary Blender
+commands, add-ons, uploaded `.blend` files, remote URLs, and host paths are
+outside the normal v0.1 boundary. See `docs/threat-model.md` for the maintained
+threat model and `PLAN.md` for release gates.
 
 ## Local Compose boundary
 
@@ -55,4 +62,9 @@ The intended public worker accepts strict declarative JSON only. Customer- or mo
   `AccessDenied`, including artifact-digest mutation and unversioned deletion.
 - The test-profile container intentionally receives both runtime identities solely to execute negative permission probes. It is one-shot, non-core, and should never be enabled as an application service.
 
-The source-built MinIO Community image is a zero-account local compatibility fixture pinned to its final security release. Cache reuse requires the exact local Dockerfile recipe identifier as well as pinned upstream version/revision and a live binary check. Its upstream project is no longer a supported production distribution. Production operators must use a currently maintained managed or operator-supported S3-compatible service and follow the G8 deployment guidance.
+The source-built MinIO Community image is a zero-account local compatibility
+fixture pinned to its final security release. Cache reuse requires the exact
+local Dockerfile recipe identifier as well as pinned upstream version/revision
+and a live binary check. Its upstream project is no longer a supported
+production distribution. It must not be used as production storage; production
+storage and VPS operation are outside v0.1 support.

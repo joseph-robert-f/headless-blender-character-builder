@@ -197,11 +197,13 @@ hbcb_service_settings() {
   HBCB_STORAGE_PUBLIC_ENDPOINT=localhost:$hbcb_service_storage_port
 
   if [ "$hbcb_service_project" = hbcb-local ]; then
+    HBCB_POSTGRES_IMAGE=hbcb-postgres-local:16.14-alpine3.24-hbcb.1
     HBCB_MINIO_IMAGE=hbcb-minio-local:final-community-20260212-hbcb.1
     HBCB_SERVICE_API_IMAGE=hbcb-service-api:dev
     HBCB_SERVICE_WORKER_IMAGE=hbcb-service-worker:dev
     HBCB_SERVICE_TEST_IMAGE=hbcb-service-test:dev
   else
+    HBCB_POSTGRES_IMAGE=$hbcb_service_project-postgres:16.14-alpine3.24-hbcb.1
     HBCB_MINIO_IMAGE=$hbcb_service_project-minio:final-community-20260212-hbcb.1
     HBCB_SERVICE_API_IMAGE=$hbcb_service_project-api:dev
     HBCB_SERVICE_WORKER_IMAGE=$hbcb_service_project-worker:dev
@@ -211,7 +213,8 @@ hbcb_service_settings() {
 
   export HBCB_COMPOSE_PROJECT_NAME COMPOSE_PROJECT_NAME
   export HBCB_API_HOST_PORT HBCB_STORAGE_HOST_PORT HBCB_STORAGE_PUBLIC_ENDPOINT
-  export HBCB_MINIO_IMAGE HBCB_SERVICE_API_IMAGE HBCB_SERVICE_WORKER_IMAGE
+  export HBCB_POSTGRES_IMAGE HBCB_MINIO_IMAGE
+  export HBCB_SERVICE_API_IMAGE HBCB_SERVICE_WORKER_IMAGE
   export HBCB_SERVICE_TEST_IMAGE HBCB_BUILDER_PROJECT_IMAGE
 }
 

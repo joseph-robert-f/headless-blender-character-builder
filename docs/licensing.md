@@ -42,7 +42,10 @@ for every native, base-image, or copyleft component in the final containers.
 Public OCI publication remains blocked until an independent review starts from
 actual final-image SBOMs, identifies every applicable source/delivery duty
 (including LGPL/native and operating-system components), and adds the required
-checksum-bound material and retention plan. This guide is not legal advice.
+checksum-bound material and retention plan. The future transaction must also
+inventory, SBOM, sign, publish, and digest-lock the project-derived PostgreSQL
+image; current tooling handles only builder, API, and worker. This guide is not
+legal advice.
 
 Blender's GPL does not automatically apply to normal artwork created with
 Blender. See [`OUTPUT_POLICY.md`](../OUTPUT_POLICY.md) for the project's output
