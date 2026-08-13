@@ -230,6 +230,12 @@ before merge.
 
 Do not treat a PostgreSQL major release as an image update. It requires a
 separately designed backup, migration, rollback, and existing-volume rehearsal.
+The same rehearsal is required for any change to the base OS or runtime UID
+(for example a Debian-to-Alpine or gosu-removal swap) even without a major
+version bump: `make service-up` fails closed on an incompatible existing
+`postgres-data` volume, and operators must follow the documented dump/restore
+path in [Troubleshooting](troubleshooting.md#postgresql-image-upgrade-and-existing-volumes)
+rather than reuse data in place.
 For Redis, review persistence format, UID, configuration, and the documented
 empty-queue reconstruction path even though PostgreSQL remains authoritative.
 

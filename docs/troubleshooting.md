@@ -214,6 +214,70 @@ Common service cases:
   resources. The maintainer smoke adds a separate 4 GiB builder workload and is
   best run with at least 12 GiB allocated to Docker.
 
+### PostgreSQL image upgrade and existing volumes
+
+The local and VPS PostgreSQL runtime switched from the official Debian image
+(`postgres:16.14-bookworm`, root entrypoint, `PGDATA` chowned to UID 999) to a
+derived gosu-free Alpine image that runs as UID/GID 70:70. Alpine also links
+against musl instead of glibc, which changes locale/collation behavior. Both
+differences make a `postgres-data` volume that predates the swap unsafe to
+reuse in place: the new image cannot write PGDATA it does not own, and even if
+ownership were fixed, collation-dependent sort order and indexes could
+silently diverge. `make service-up` detects this before starting the stack and
+refuses to proceed with a clear error naming the volume; it never deletes or
+migrates data automatically.
+
+The supported path is dump and restore, never in-place reuse:
+
+1. Start the **old** pinned image directly against the preserved volume (the
+   current `compose.yaml` always builds the Alpine target, so use `docker run`
+   rather than the Compose wrapper for this one-time step) and dump it:
+
+   ```sh
+   project=$(grep '^HBCB_COMPOSE_PROJECT_NAME=' .env | cut -d= -f2-)
+   docker run --detach --name pgdata-migrate \
+     -v "${project}_postgres-data:/var/lib/postgresql/data" \
+     -e POSTGRES_PASSWORD=migrate-only \
+     postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8
+   docker exec pgdata-migrate pg_isready --quiet   # wait until this succeeds
+   docker exec pgdata-migrate pg_dumpall --username postgres > pgdata-backup.sql
+   docker stop pgdata-migrate && docker rm pgdata-migrate
+   ```
+
+2. Move the old volume aside — rename or keep it, never prune it automatically:
+
+   ```sh
+   docker volume ls   # confirm the exact name: ${project}_postgres-data
+   docker container run --rm \
+     -v "${project}_postgres-data:/from" \
+     -v "${project}_postgres-data-pre-alpine:/to" \
+     alpine sh -c 'cp -a /from/. /to/.'
+   docker volume rm "${project}_postgres-data"
+   ```
+
+3. Start the new stack to initialize a fresh UID-70 volume, then restore
+   through the running `postgres` container directly (Compose names it
+   `<project>-postgres-1`; confirm with `make service-ps`):
+
+   ```sh
+   make service-up
+   docker exec -i "${project}-postgres-1" \
+     psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" < pgdata-backup.sql
+   ```
+
+Discarding the old data instead of migrating it is a valid choice for
+disposable local development data, but it is an explicit operator decision,
+not something the tooling does for you:
+
+```sh
+make service-down
+docker volume rm "${project}_postgres-data"
+make service-up
+```
+
+Use the exact project name printed by `make service-ps`; do not select
+similarly named resources or run a global volume prune.
+
 A successful lightweight client run ends with:
 
 ```text
