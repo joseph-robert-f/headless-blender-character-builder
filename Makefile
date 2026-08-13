@@ -3,6 +3,8 @@
 BUILDER_IMAGE ?= headless-blender-character-builder:dev
 TEST_IMAGE ?= $(BUILDER_IMAGE)-test
 SERVICE_TEST_IMAGE ?= $(BUILDER_IMAGE)-service-test
+WORKER_BOUNDARY_IMAGE ?= $(BUILDER_IMAGE)-worker-boundary-test
+MINIO_IMAGE ?= hbcb-minio-local:final-community-20260212-hbcb.1
 DOCKER ?= docker
 PLATFORM ?= linux/amd64
 PYTHON ?= python3
@@ -17,7 +19,7 @@ OUTPUT_NAME ?= demo
 DEMO_OUTPUT := $(BUILD_PARENT)/demo
 export REQUEST BUILD_PARENT OUTPUT_NAME
 
-.PHONY: help image ensure-image test-image service-test-image validate build verify demo verify-demo demo-native verify-demo-native _validate-output-name init-env service-up service-smoke service-down service-config service-ps service-logs g8-static g8-caddy g8-recovery g8-gate operator-smoke lint test-unit test-blender dependency-check dependency-audit dependency-scan security-check release-static release-check check
+.PHONY: help image ensure-image test-image service-test-image worker-boundary-image worker-boundary-check minio-security-check orphan-minio-check validate build verify demo verify-demo demo-native verify-demo-native _validate-output-name init-env service-up service-smoke service-down service-config service-ps service-logs g8-static g8-caddy g8-recovery g8-gate operator-smoke lint test-unit test-blender dependency-check dependency-audit dependency-scan security-check release-static release-check check
 
 help:
 	@echo "Headless Blender Character Builder"
@@ -32,10 +34,13 @@ help:
 	@echo "  make service-ps    Show this checkout's local service status"
 	@echo "  make service-logs  Show bounded API and worker diagnostic logs"
 	@echo "  make service-smoke Run the maintainer service integration gate"
+	@echo "  make orphan-minio-check Prove orphan cleanup in disposable storage"
 	@echo "  make service-down  Stop services while preserving durable volumes"
 	@echo "  make g8-gate       Validate VPS config and run the local recovery drill"
 	@echo "  make operator-smoke Conditionally test an authorized public HTTPS target"
 	@echo "  make test-unit     Run unit/contract/security tests in Docker"
+	@echo "  make worker-boundary-check Test child credential isolation in the worker image"
+	@echo "  make minio-security-check Prove the local storage fixture identity and disabled auth features"
 	@echo "  make test-blender  Run Blender integration gates in Docker"
 	@echo "  make dependency-check Validate synchronized dependency pins offline"
 	@echo "  make dependency-audit Report upstream version/tag status without mutation"
@@ -47,7 +52,7 @@ help:
 	@echo "  make demo-native BLENDER=/absolute/path/to/blender"
 
 image:
-	$(DOCKER) build --file docker/builder.Dockerfile --target builder --tag "$(BUILDER_IMAGE)" --platform "$(PLATFORM)" .
+	$(DOCKER) build --file docker/builder.Dockerfile --target builder --build-arg "HBCB_DISTRIBUTION_VERSION=$${HBCB_DISTRIBUTION_VERSION:-0.1.0-local}" --build-arg "HBCB_SOURCE_REVISION=$${HBCB_SOURCE_REVISION:-uncommitted}" --tag "$(BUILDER_IMAGE)" --platform "$(PLATFORM)" .
 
 ensure-image:
 	@if image_platform=`$(DOCKER) image inspect --format '{{.Os}}/{{.Architecture}}' "$(BUILDER_IMAGE)" 2>/dev/null` && \
@@ -58,24 +63,46 @@ ensure-image:
 	fi
 
 test-image:
-	$(DOCKER) build --file docker/builder.Dockerfile --target test --tag "$(TEST_IMAGE)" --platform "$(PLATFORM)" .
+	$(DOCKER) build --file docker/builder.Dockerfile --target test --build-arg "HBCB_DISTRIBUTION_VERSION=$${HBCB_DISTRIBUTION_VERSION:-0.1.0-local}" --build-arg "HBCB_SOURCE_REVISION=$${HBCB_SOURCE_REVISION:-uncommitted}" --tag "$(TEST_IMAGE)" --platform "$(PLATFORM)" .
 
 service-test-image: image
-	$(DOCKER) build --file docker/service.Dockerfile --target service-test --build-arg "HBCB_BUILDER_IMAGE=$(BUILDER_IMAGE)" --tag "$(SERVICE_TEST_IMAGE)" --platform "$(PLATFORM)" .
+	$(DOCKER) build --file docker/service.Dockerfile --target service-test --build-arg "HBCB_BUILDER_IMAGE=$(BUILDER_IMAGE)" --build-arg "HBCB_DISTRIBUTION_VERSION=$${HBCB_DISTRIBUTION_VERSION:-0.1.0-local}" --build-arg "HBCB_SOURCE_REVISION=$${HBCB_SOURCE_REVISION:-uncommitted}" --tag "$(SERVICE_TEST_IMAGE)" --platform "$(PLATFORM)" .
+
+worker-boundary-image: image
+	$(DOCKER) build --file docker/service.Dockerfile --target worker --build-arg "HBCB_BUILDER_IMAGE=$(BUILDER_IMAGE)" --build-arg "HBCB_DISTRIBUTION_VERSION=$${HBCB_DISTRIBUTION_VERSION:-0.1.0-local}" --build-arg "HBCB_SOURCE_REVISION=$${HBCB_SOURCE_REVISION:-uncommitted}" --tag "$(WORKER_BOUNDARY_IMAGE)" --platform "$(PLATFORM)" .
+
+worker-boundary-check: worker-boundary-image
+	$(DOCKER) run \
+	  --rm \
+	  --init \
+	  --platform "$(PLATFORM)" \
+	  --network none \
+	  --read-only \
+	  --cap-drop ALL \
+	  --security-opt no-new-privileges:true \
+	  --pids-limit 64 \
+	  --cpus 1 \
+	  --memory 1g \
+	  --user 65532:65532 \
+	  --tmpfs /work:rw,nosuid,nodev,noexec,size=256m,mode=0700,uid=65532,gid=65532 \
+	  --mount "type=bind,source=$(CURDIR)/tests/security/worker_process_boundary_gate.py,target=/opt/hbcb/worker-process-boundary-gate.py,readonly" \
+	  --env HBCB_BOUNDARY_TEST_CANARY=hbcb-boundary-synthetic-canary \
+	  --entrypoint /opt/blender/4.5/python/bin/python3.11 \
+	  "$(WORKER_BOUNDARY_IMAGE)" \
+	  /opt/hbcb/worker-process-boundary-gate.py
+
+minio-security-check:
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/security/minio_fixture_gate.py --docker "$(DOCKER)" --image "$(MINIO_IMAGE)"
 
 validate:
 	@set -eu; \
 	  request=$$REQUEST; \
+	  case "$$request" in /*) ;; *) request="`pwd -P`/$$request" ;; esac; \
 	  if ! test -f "$$request"; then \
 	    echo "HBCB_MAKE: FAIL[request_missing]: set REQUEST to an existing regular JSON file" >&2; \
 	    exit 2; \
 	  fi; \
-	  if image_platform=`$(DOCKER) image inspect --format '{{.Os}}/{{.Architecture}}' "$(BUILDER_IMAGE)" 2>/dev/null` && \
-	    test "$$image_platform" = "$(PLATFORM)"; then \
-	    :; \
-	  else \
-	    $(MAKE) image; \
-	  fi; \
+	  $(MAKE) image; \
 	  runtime_uid=`id -u`; runtime_gid=`id -g`; \
 	  if test "$$runtime_uid" = 0; then runtime_uid=65532; fi; \
 	  if test "$$runtime_gid" = 0; then runtime_gid=65532; fi; \
@@ -114,6 +141,7 @@ _validate-output-name:
 build: _validate-output-name
 	@set -eu; \
 	  request=$$REQUEST; output_parent=$$BUILD_PARENT; output_name=$$OUTPUT_NAME; \
+	  case "$$request" in /*) ;; *) request="`pwd -P`/$$request" ;; esac; \
 	  output_path=$$output_parent/$$output_name; \
 	  if ! test -f "$$request"; then \
 	    echo "HBCB_MAKE: FAIL[request_missing]: set REQUEST to an existing regular JSON file" >&2; \
@@ -156,6 +184,7 @@ build: _validate-output-name
 verify: _validate-output-name
 	@set -eu; \
 	  request=$$REQUEST; output_parent=$$BUILD_PARENT; output_name=$$OUTPUT_NAME; \
+	  case "$$request" in /*) ;; *) request="`pwd -P`/$$request" ;; esac; \
 	  output_path=$$output_parent/$$output_name; \
 	  if ! test -f "$$request"; then \
 	    echo "HBCB_MAKE: FAIL[request_missing]: set REQUEST to an existing regular JSON file" >&2; \
@@ -233,6 +262,9 @@ service-up:
 
 service-smoke:
 	DOCKER="$(DOCKER)" PYTHON="$(PYTHON)" BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-smoke
+
+orphan-minio-check:
+	DOCKER="$(DOCKER)" PYTHON="$(PYTHON)" ./scripts/orphan-minio-gate
 
 service-down:
 	DOCKER="$(DOCKER)" PYTHON="$(PYTHON)" BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose down
@@ -318,4 +350,4 @@ security-check: release-static
 release-check:
 	PYTHON="$(PYTHON)" DOCKER="$(DOCKER)" HBCB_RELEASE_VERSION="$(RELEASE_VERSION)" HBCB_COMPOSE_BIN="$(HBCB_COMPOSE_BIN)" ./scripts/release-check
 
-check: dependency-check lint test-unit test-blender
+check: dependency-check lint test-unit worker-boundary-check test-blender

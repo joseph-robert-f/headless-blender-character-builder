@@ -1,8 +1,8 @@
 # Feature Testing and Owner Review Plan
 
-Status: **living verification plan; G0–G9 passed locally; external publication checks conditional**
+Status: **living verification plan; historical G0–G9 evidence passed locally; current release-facing changes require a new exact-commit gate**
 
-Last updated: **August 4, 2026**
+Last updated: **August 12, 2026**
 
 ## 1. Purpose and authority
 
@@ -22,6 +22,14 @@ Do not call an unimplemented feature blocked, and do not mark a gate passed from
 ## 2. Current state
 
 Work packages G0 through G9 have passed every locally verifiable gate. The repository contains strict `BuildRequest`, `CharacterSpec`, QA, and manifest contracts plus a generic `geometric-character@1.0.0` registry/core. Two original requests generate real, materially different Blender geometry with stable structural fingerprints. The trusted builder saves `.blend`, exports display GLB and a raw-millimeter binary STL, renders four PNGs, measures complete geometry QA, verifies the model formats in a second fresh Blender process, and atomically publishes a success manifest last.
+
+The pass counts and `g9-final` record below describe the historical August 3
+index. They are not evidence for later lifecycle, worker, dependency, OCI, or
+release-tool changes. Every such pull request must run
+`HBCB_RELEASE_RUN_ID=<unique-safe-id> make release-check`
+against its final signed-off commit and record the unique run ID in the pull
+request; this tracked plan cannot name that result without changing the commit
+being attested.
 
 The G4 `linux/amd64` image, narrow `builder build|verify` CLI, hardened one-shot Docker runtime, keyless Make targets, native fallback, baked provenance, notices, and SPDX SBOM are implemented and passed from a clean indexed source export. The current public-readiness layer adds request-only `builder validate` plus safe named Make outputs without changing the build/verify artifact contract. G5–G6 add Postgres/Redis/versioned-storage foundations, generated scoped configuration, the bounded authenticated FastAPI surface, production repository, fenced concurrency-one worker, stale Redis claim recovery, complete nested-process termination, immutable artifact publication, fixed-region signing, and secret-free structured logs without changing the G4 builder revision. G7 packages those components into a hardened local Compose service with convergent least-privilege initialization and a real HTTP-to-Blender-to-download gate. G8 adds a digest-locked VPS overlay, HTTPS guidance, maintained external S3 boundary, retention, backup/restore, Redis reconstruction, upgrade/rollback handoff, and a passing isolated recovery drill. G9 adds the public documentation, governance, fork-safe CI definitions, license/SBOM inventory, real-model preview, source audit, and deterministic local release bundle; the final clean-index rehearsal passed without a remote operation. The excluded hardcoded branded proof of concept is preserved baseline material, not v0.1 acceptance evidence.
 
@@ -147,19 +155,29 @@ licenses the tracked original preview, whose provenance is bound by
 
 ENG-01 through ENG-06 are runnable and passed after G1–G3.
 
-Current contract and engine commands:
+Current contract and engine commands. Use the containerized unit target for the
+complete test tree because the root and service packages intentionally have
+separate dependency environments:
 
 ```sh
-python3.11 -m unittest discover -s tests -v
+make test-unit
 
-python3 tests/blender_integration/g2_gate.py \
+export PYTHON=${PYTHON:-python3}
+"$PYTHON" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'
+
+"$PYTHON" tests/blender_integration/g2_gate.py \
   --blender /absolute/path/to/blender \
   --evidence-dir /absolute/path/to/new-temporary-directory
 
-python3 tests/blender_integration/g3_gate.py \
+"$PYTHON" tests/blender_integration/g3_gate.py \
   --blender /absolute/path/to/blender \
   --work-dir /absolute/path/to/dedicated-temporary-directory
 ```
+
+The two direct Blender commands are focused contributor probes and require the
+documented native Python/Blender environment. `make test-blender` is the
+authoritative containerized integration path. Do not run unrestricted
+`unittest discover -s tests` after installing only the root package.
 
 | ID | Status | Required proof |
 |---|---|---|
@@ -310,7 +328,7 @@ G9 must be run from the final intended Git index:
 
 ```sh
 make release-static
-make release-check
+HBCB_RELEASE_RUN_ID=<unique-safe-id> make release-check
 ```
 
 The static gate exports the Git index, requires an exact file/mode match,
@@ -323,14 +341,18 @@ asynchronous service, IAM/Redis, VPS/Caddy/recovery, builder/API/worker SPDX
 generation, normalized local image evidence, deterministic source/sample
 packaging, and SHA-256 checksums without a remote operation.
 
-The ignored final evidence target is `build/release-check/g9-final/`. External
+Each run uses its mandatory unique ID under `build/release-check/<run-id>/`.
+The historical evidence described below used `g9-final`; do not reuse that ID.
+External
 GitHub-hosted CI, license detection, registry publication/digests, Release
 publication, and a live VPS remain conditional operator checks. GitHub private
 vulnerability reporting was enabled and verified on August 4, 2026. Public OCI
-publication is additionally blocked until the exact image corresponding-source
-delivery and retention gate in `docs/release-process.md` is complete.
+publication is additionally blocked: the current inventory deliberately covers
+project and Blender source only and sets `public_oci_ready: false` until an
+actual-final-image review completes every applicable native, base-image, and
+copyleft source/delivery obligation described in `docs/release-process.md`.
 
-The final intended index passed the complete gate on August 3, 2026. The staged
+The historical final G9 index passed the complete gate on August 3, 2026. The staged
 rehearsal covered 23 release tests, 64 builder unit/contract/container/security
 tests, 121 service tests, 49 deployment/recovery tests, real Blender G2/G3
 generation and fresh-process verification, a live HTTP-to-Blender service build,
@@ -414,7 +436,7 @@ Local v0.1 is `PASS` only when:
 - a clean indexed source export passes `make demo && make verify-demo`;
 - two requests prove genuinely varied schema-driven geometry;
 - artifact, authenticity, geometry, and print-QA checks pass;
-- `make service-smoke`, `make security-check`, and `make release-check` pass;
+- `make service-smoke`, `make orphan-minio-check`, `make security-check`, and a uniquely named full `make release-check` pass;
 - the local `linux/amd64` image gates pass without repository secrets; native
   GitHub-hosted Linux CI remains a conditional publication check;
 - no required test is failed, blocked, unimplemented, or silently skipped;

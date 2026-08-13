@@ -194,7 +194,12 @@ def audit_report(files: Mapping[str, bytes]) -> Dict[str, object]:
     }
 
 
-def image_inspect(role: str, number: int) -> bytes:
+def image_inspect(
+    role: str,
+    number: int,
+    version: str = "0.1.0-rc.1",
+    revision: str = "a" * 40,
+) -> bytes:
     title = {
         "api": "Headless Blender Character Builder service",
         "builder": "Headless Blender Character Builder",
@@ -207,15 +212,32 @@ def image_inspect(role: str, number: int) -> bytes:
                 "Env": ["IGNORED_CANARY=value"],
                 "Labels": {
                     "org.opencontainers.image.licenses": "GPL-3.0-or-later",
-                    "org.opencontainers.image.source": "https://example.invalid/project",
+                    "org.opencontainers.image.revision": revision,
+                    "org.opencontainers.image.source": "https://github.com/joseph-robert-f/headless-blender-character-builder",
                     "org.opencontainers.image.title": title,
-                    "org.opencontainers.image.version": "0.1.0",
+                    "org.opencontainers.image.version": version,
+                    **(
+                        {
+                            "org.blender.download.sha256": "95e3a2dfedba3bd32ca54fc355eac6b15a11986954ccb02815a07535d0120a25",
+                            "org.blender.version": "4.5.12 LTS",
+                        }
+                        if role in {"builder", "worker"}
+                        else {}
+                    ),
                 },
             },
             "Id": "sha256:" + str(number) * 64,
             "Os": "linux",
             "RepoDigests": [],
-            "RepoTags": ["hbcb-" + role + ":0.1.0"],
+            "RepoTags": [
+                {
+                    "api": "headless-blender-character-builder-api",
+                    "builder": "headless-blender-character-builder",
+                    "worker": "headless-blender-character-builder-worker",
+                }[role]
+                + ":"
+                + version
+            ],
             "RootFS": {"Layers": ["sha256:" + str(number + 3) * 64]},
         }
     ]

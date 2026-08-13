@@ -13,6 +13,7 @@ from typing import Mapping, Optional
 from .config import WorkerConfig
 from .errors import WorkerError
 from .launcher import SubprocessBuilderLauncher
+from .process_boundary import secure_supervisor_process
 from .queue import RedisStreamsQueue
 from .repository import PostgresRepository
 from .runtime import minio_client, postgres_connection_factory, redis_client
@@ -93,6 +94,10 @@ def create_supervisor(
 
 
 def main() -> None:
+    # Production service workers are Linux containers.  Refuse to initialize
+    # credential-bearing clients unless the supervisor can first prevent its
+    # same-UID Blender descendants from inspecting parent process state.
+    secure_supervisor_process(require_linux=True)
     stop = threading.Event()
 
     def request_stop(_signum: int, _frame: object) -> None:

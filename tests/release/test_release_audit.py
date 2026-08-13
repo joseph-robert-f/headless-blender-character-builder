@@ -36,7 +36,12 @@ class ReleaseAuditTests(unittest.TestCase):
         self.assertRegex(first["source_tree_sha256"], r"^[0-9a-f]{64}$")
 
     def test_release_tools_are_executable_and_not_publicly_writable(self) -> None:
-        for name in ("release-audit", "service-sbom", "release-artifacts"):
+        for name in (
+            "fetch-corresponding-source",
+            "release-audit",
+            "service-sbom",
+            "release-artifacts",
+        ):
             mode = stat.S_IMODE((ROOT / "scripts" / name).stat().st_mode)
             self.assertEqual(mode & 0o100, 0o100, name)
             self.assertEqual(mode & 0o022, 0, name)

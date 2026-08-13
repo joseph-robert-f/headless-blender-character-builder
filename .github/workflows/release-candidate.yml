@@ -26,6 +26,7 @@
           "name": "Retain checksum-verified release evidence",
           "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
           "with": {
+            "compression-level": 0,
             "if-no-files-found": "error",
             "name": "release-candidate-${{ github.run_id }}-${{ github.run_attempt }}",
             "path": "build/release-check/github-${{ github.run_id }}-${{ github.run_attempt }}",

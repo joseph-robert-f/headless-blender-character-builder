@@ -2,7 +2,7 @@
 
 Status: **Executed v0.1 build plan and authoritative scope record**
 
-Last updated: **August 4, 2026**
+Last updated: **August 12, 2026**
 
 This document is the authoritative scope record for the first public
 implementation. The release-blocking milestones **M0 through M5** and work
@@ -15,13 +15,19 @@ part of that completion target.
 
 Build a public, self-hostable repository that turns a bounded `BuildRequest` JSON document—containing a nested `CharacterSpec`—into real Blender geometry and a verified set of artifacts through a headless worker.
 
-The repository should work in five progressively more capable modes:
+The v0.1 source candidate implements three evaluation modes and one
+deployment reference. Two more capable integrations are explicitly planned,
+not present:
 
 1. **Keyless single-container quickstart:** run `make demo` with Git and Docker only; build a bundled JSON request into real artifacts in `build/demo/` without Compose, an account, or an API key.
 2. **Deterministic native CLI:** invoke the same runner with Blender installed locally for generator development and debugging.
 3. **Docker Compose service:** submit asynchronous builds through HTTP and run them on local worker containers with durable state and artifact storage.
-4. **Optional prompt planner and MCP adapter:** use a bring-your-own OpenAI API key to translate a brief into `CharacterSpec`, or let Codex call the deterministic build API through narrow MCP tools.
-5. **Self-hosted cloud deployment:** run the same pinned builder lineage and artifact contract on a VPS first and on a managed job platform later.
+4. **VPS deployment reference (implemented source, not a published service):** review the same pinned builder lineage and artifact contract for one Linux VPS. The repository has not published the release package or immutable registry images needed for a live copy-paste deployment.
+
+Post-v0.1 proposals, not implemented capabilities:
+
+- **Optional prompt planner and MCP adapter:** a future bring-your-own-key planner could translate a brief into `CharacterSpec`, and a thin MCP adapter could call the deterministic build API.
+- **Managed cloud deployment:** a future job-platform integration could run the same contract with separately designed cloud IAM and scaling.
 
 The public promise should be deliberately narrow:
 
@@ -31,7 +37,7 @@ It should **not** promise unrestricted text-to-3D, organic sculpting, exact like
 
 ## 2. Product principles
 
-- **No API key required for the core demo.** The deterministic worker is the product foundation; AI planning is an optional adapter.
+- **No API key required for the core demo.** The deterministic worker is the product foundation; AI planning is only a post-v0.1 adapter proposal.
 - **One container before one stack.** The README's primary path must prove useful geometry with one disposable worker container. Compose is the service path, not a prerequisite for evaluating the project.
 - **One build contract everywhere.** Native CLI, the one-shot container, the asynchronous worker, and future cloud jobs must call the same validated runner rather than reimplementing Blender behavior.
 - **Specifications over arbitrary code.** Callers submit a strict schema. The public service does not accept Python, shell arguments, add-ons, node graphs, filesystem paths, or container settings.
@@ -65,28 +71,29 @@ Wants to add a new bounded generator, component, material, export format, or QA 
 | Use case | Required | Optional |
 |---|---|---|
 | Primary quickstart | Git, Docker Engine/Desktop, and `make`; no Compose, account, or API key | A custom `BuildRequest` after the bundled demo succeeds |
-| Native generator development | Blender 4.5 LTS and Python development tools | Docker for release-parity checks |
-| Full local service | Primary prerequisites plus Docker Compose | `curl` or another HTTP client; locally generated service credentials |
-| Prompt-to-spec demo | Local prerequisites plus an `OPENAI_API_KEY`, OpenAI API billing, and explicit planner enablement | Reference images the user owns or is licensed to use |
-| Codex/MCP caller | Running build service URL and service token | OpenAI API key only if this service performs prompt planning itself |
-| VPS deployment | Linux VPS, Docker/Compose, domain/TLS, API authentication secret, backups | Managed Postgres, Redis, and S3-compatible storage |
-| Managed cloud deployment | Cloud account, container registry, object-storage bucket, job-state database, queue, IAM/service identities, secret manager | GPU job capacity for faster previews |
+| Native generator development | Exact Blender 4.5.12 LTS and Python 3.11+ development tools | Docker for release-parity checks |
+| Full local service | Primary prerequisites plus Docker Compose 2.24.4+, Python 3.11+, and `curl` for the supported client journey | Another deliberately configured HTTP client; locally generated service credentials |
+| Prompt-to-spec demo *(post-v0.1; not implemented)* | Local prerequisites plus an `OPENAI_API_KEY`, OpenAI API billing, and explicit planner enablement | Reference images the user owns or is licensed to use |
+| Codex/MCP caller *(post-v0.1; not implemented)* | Running build service URL and service token | OpenAI API key only if this service performs prompt planning itself |
+| VPS deployment reference *(source only; publication blocked)* | Linux VPS, Python 3.11+, Docker/Compose 2.24.4+, domain/TLS, API authentication secret, backups | Managed Postgres, Redis, and S3-compatible storage |
+| Managed cloud deployment *(post-v0.1; not implemented)* | Cloud account, container registry, object-storage bucket, job-state database, queue, IAM/service identities, secret manager | GPU job capacity for faster previews |
 | 3D printing workflow | Exact printer technology, material, nozzle/resin profile, minimum feature size, and slicer profile | A physical calibration/test-print process |
 
 Suggested development capacity, not a hard minimum:
 
 - 4 CPU cores and 8–16 GB RAM for the deterministic demo;
 - 10 GB of free disk for the image, scratch space, and artifacts;
-- 8 vCPU and 32 GB RAM for an initial VPS hosting one or two ordinary workers concurrently.
+- 8 vCPU and 32 GB RAM for the initial VPS's one fixed worker. Horizontal
+  concurrency is a later, separately reviewed scaling milestone.
 
-OpenAI credentials must never be required by the Blender worker or included in images. The planner receives the key through an environment variable or secret manager, consistent with [OpenAI's API-key guidance](https://developers.openai.com/api/docs/guides/production-best-practices#api-keys).
+OpenAI credentials must never be required by the Blender worker or included in images. A future planner would receive the key through an environment variable or secret manager, consistent with [OpenAI's API-key guidance](https://developers.openai.com/api/docs/guides/production-best-practices#api-keys).
 
 Credential policy by mode:
 
 - `make demo` and the direct one-shot container require **no secrets of any kind** and run with outbound networking disabled.
 - The full local service uses only credentials generated locally by `make init-env` for service authentication and its internal development services. Users do not have to bring third-party keys.
 - `.env.example` lists variable names and safe descriptions, never working production secrets. `.env` is ignored by Git.
-- `OPENAI_API_KEY` is introduced only by the optional planner workstream and is scoped to that process. It is never passed to the API worker, Blender, manifests, logs, or generated artifacts.
+- `OPENAI_API_KEY` would be introduced only by the unimplemented optional planner workstream and scoped to that process. It is never part of the v0.1 API worker or Blender environment, manifests, logs, or generated artifacts.
 - VPS and managed-cloud operators bring their own domain/TLS, authentication, storage, and cloud secrets through a secret manager or protected deployment environment.
 
 ## 5. Target first-run experience
@@ -182,15 +189,23 @@ Docker/runtime exit codes such as `125`, `126`, `127`, `137`, and `143` keep the
 
 ### Secondary path: full local service
 
-After the one-shot demo passes, users who need HTTP, queues, durable state, or multiple workers can start the Compose stack:
+After the one-shot demo passes, users who need HTTP, queues, durable state, or
+the fixed one-worker service can start the Compose stack:
 
 ```sh
 make init-env
+make service-config
 make service-up
-make service-smoke
+make service-ps
 ```
 
-`make init-env` creates an ignored `.env` containing random local-only service credentials. `make service-smoke` submits the bundled example, receives `202 Accepted`, polls the build to a terminal state, downloads the manifest, validates its hashes, and prints the artifact directory. The README should also show the equivalent `curl` calls, but Make is the tested golden path.
+`make init-env` creates an ignored `.env` containing random local-only service
+credentials. First-time evaluators follow the copy-paste client in
+`docs/api.md`; it submits a selected request, receives `202 Accepted`, polls to
+a terminal state, downloads and verifies the exact artifact set, and prints the
+durable result directory. `make service-smoke` remains the heavier maintainer
+integration gate: it exercises direct and service builds, cancellation, IAM,
+and retained evidence and can require at least 12 GiB of Docker memory.
 
 Expected stable developer commands:
 
@@ -596,7 +611,7 @@ Deliverables:
 
 Exit criteria:
 
-- two materially different requests build successfully from a clean Blender startup;
+- two materially different requests generate deterministic geometry from a clean Blender startup; the public `facet-bot` path publishes successfully, while `moss-hopper` intentionally proves the later fail-closed `needs_review` path rather than a second successful publication;
 - the same canonical request produces the same topology/object inventory and stable manifest fields across repeated runs on the reference platform;
 - malformed and out-of-range specs fail before scene creation;
 - exported GLB/STL can be re-imported and checked;
@@ -976,7 +991,7 @@ eligible for parallel review after its dependency was fixed.
 |---|---|---|---|---|
 | G0 | M0 | None | Inventory, preserved baseline, adopted decisions, ignore rules, local Git initialization/source index with no remote, licenses, progress log, and neutral example brief | No user file overwritten; all defaults recorded; indexed publication tree excludes generated/private files |
 | G1 | M1 | G0 | `BuildRequest`/`CharacterSpec`, QA, and manifest schemas; canonicalization; limits; example requests; rejection fixtures | Schema and policy unit tests pass; examples validate; extra properties and hostile fields fail |
-| G2 | M1 | G1 | Generic scene/core modules, registry, `geometric-character@1.0.0`, and two materially different original characters | Both requests generate from factory startup with stable structural fingerprints |
+| G2 | M1 | G1 | Generic scene/core modules, registry, `geometric-character@1.0.0`, and two materially different original characters | Both requests generate from factory startup with stable structural fingerprints; later complete QA intentionally leaves `moss-hopper` as `needs_review` without published output |
 | G3 | M1 | G2 | `.blend`, GLB, STL, preview/diagnostics, manifest, QA, fresh reload, and re-import checks | Required artifact and Blender integration tests pass within Section 8 tolerances |
 | G4 | M2 | G3 | Pinned deterministic builder image, trusted CLI, local filesystem adapter, hardened one-shot runtime, native fallback, and Make targets | From tracked source only, `make demo && make verify-demo` succeeds without `.env`, Compose, keys, or runtime network |
 | G5 | M3 | G4 | Postgres models/migrations, Redis job contract, storage interface, MinIO adapter, and generated local config | State, idempotency, storage, migration, and authorization unit tests pass |

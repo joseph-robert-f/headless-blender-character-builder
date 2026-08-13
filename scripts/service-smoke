@@ -174,5 +174,8 @@ compose --env-file .env --profile test run --rm --build service-test \
 compose --env-file .env --profile test run --rm service-test \
   tests/service_integration/g7_iam_gate.py
 
+compose --env-file .env --profile test run --rm service-test \
+  tests/service_integration/g8_lifecycle_gate.py
+
 printf 'SERVICE_SMOKE: PASS project=%s evidence=%s\n' \
   "$HBCB_COMPOSE_PROJECT_NAME" "$run_root"

@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""Fail closed unless every commit unique to a proposed head has DCO sign-off."""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import Sequence
+
+
+ROOT = Path(__file__).resolve().parents[1]
+FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+MAX_COMMITS = 500
+MAX_COMMIT_OBJECT_BYTES = 1024 * 1024
+GIT_TIMEOUT_SECONDS = 30
+TRAILER_PREFIX = b"Signed-off-by: "
+
+
+class DcoFailure(RuntimeError):
+    def __init__(self, code: str, message: str, commit: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.commit = commit
+
+
+def _git(arguments: Sequence[str], *, payload: bytes | None = None) -> bytes:
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_PAGER": "cat",
+            "GIT_TERMINAL_PROMPT": "0",
+            "LANG": "C",
+            "LC_ALL": "C",
+        }
+    )
+    try:
+        completed = subprocess.run(
+            [
+                "git",
+                "--no-pager",
+                "-c",
+                "color.ui=false",
+                "-C",
+                str(ROOT),
+                *arguments,
+            ],
+            input=payload,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            env=environment,
+            timeout=GIT_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise DcoFailure("git_unavailable", "Git could not complete the DCO check") from exc
+    if completed.returncode != 0:
+        raise DcoFailure("git_failed", "Git could not inspect the proposed commit history")
+    return completed.stdout
+
+
+def _require_commit(revision: str, label: str) -> None:
+    if FULL_SHA.fullmatch(revision) is None:
+        raise DcoFailure("invalid_revision", f"{label} must be one exact lowercase commit SHA")
+    try:
+        _git(("cat-file", "-e", f"{revision}^{{commit}}"))
+    except DcoFailure as exc:
+        if exc.code == "git_failed":
+            raise DcoFailure("missing_commit", f"{label} commit is absent from this checkout") from exc
+        raise
+
+
+def _commits(base: str, head: str) -> tuple[str, ...]:
+    try:
+        merge_bases = tuple(
+            line.decode("ascii")
+            for line in _git(("merge-base", "--all", base, head)).splitlines()
+        )
+    except (UnicodeDecodeError, DcoFailure) as exc:
+        raise DcoFailure("unrelated_history", "base and head do not share inspectable history") from exc
+    if not merge_bases or any(FULL_SHA.fullmatch(item) is None for item in merge_bases):
+        raise DcoFailure("unrelated_history", "base and head do not share inspectable history")
+
+    try:
+        commits = tuple(
+            line.decode("ascii")
+            for line in _git(
+                (
+                    "rev-list",
+                    "--reverse",
+                    "--topo-order",
+                    f"--max-count={MAX_COMMITS + 1}",
+                    head,
+                    "--not",
+                    base,
+                )
+            ).splitlines()
+        )
+    except UnicodeDecodeError as exc:
+        raise DcoFailure("invalid_history", "Git returned an invalid commit list") from exc
+    if not commits:
+        raise DcoFailure("empty_range", "the proposed head contains no commits outside the base")
+    if len(commits) > MAX_COMMITS:
+        raise DcoFailure("range_too_large", "the proposed change exceeds the 500-commit review limit")
+    if any(FULL_SHA.fullmatch(commit) is None for commit in commits):
+        raise DcoFailure("invalid_history", "Git returned an invalid commit list")
+    return commits
+
+
+def _commit_fields(commit: str) -> tuple[bytes, bytes, bytes, bytes, bytes]:
+    try:
+        raw_size = _git(("cat-file", "-s", commit)).strip()
+        size = int(raw_size.decode("ascii"))
+    except (UnicodeDecodeError, ValueError, DcoFailure) as exc:
+        raise DcoFailure("commit_unreadable", "a commit could not be inspected", commit) from exc
+    if not 1 <= size <= MAX_COMMIT_OBJECT_BYTES:
+        raise DcoFailure(
+            "commit_oversized",
+            "a commit object exceeds the 1 MiB DCO inspection limit",
+            commit,
+        )
+
+    fields = _git(
+        (
+            "show",
+            "--no-patch",
+            "--no-notes",
+            "--format=%an%x00%ae%x00%cn%x00%ce%x00%B",
+            commit,
+            "--",
+        )
+    ).split(b"\0", 4)
+    if len(fields) != 5 or any(b"\n" in value or b"\r" in value for value in fields[:4]):
+        raise DcoFailure("identity_unreadable", "a commit identity could not be inspected", commit)
+    return fields[0], fields[1], fields[2], fields[3], fields[4]
+
+
+def _check_commit(commit: str) -> None:
+    author_name, author_email, committer_name, committer_email, message = _commit_fields(commit)
+    parsed = _git(
+        ("interpret-trailers", "--parse", "--no-divider", "--unfold"),
+        payload=message,
+    )
+    signoffs = tuple(
+        line[len(TRAILER_PREFIX) :]
+        for line in parsed.splitlines()
+        if line.startswith(TRAILER_PREFIX)
+    )
+    if not signoffs:
+        raise DcoFailure(
+            "missing_signoff",
+            "commit lacks a terminal Signed-off-by trailer",
+            commit,
+        )
+    identities = {
+        author_name + b" <" + author_email + b">",
+        committer_name + b" <" + committer_email + b">",
+    }
+    if not any(signoff in identities for signoff in signoffs):
+        raise DcoFailure(
+            "identity_mismatch",
+            "Signed-off-by does not exactly match the commit author or committer",
+            commit,
+        )
+
+
+def check(base: str, head: str) -> int:
+    _require_commit(base, "base")
+    _require_commit(head, "head")
+    commits = _commits(base, head)
+    for commit in commits:
+        _check_commit(commit)
+    return len(commits)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    arguments = tuple(sys.argv[1:] if argv is None else argv)
+    if len(arguments) != 2:
+        print("usage: scripts/dco-check BASE_SHA HEAD_SHA", file=sys.stderr)
+        return 2
+    try:
+        count = check(arguments[0], arguments[1])
+    except DcoFailure as exc:
+        suffix = "" if exc.commit is None else f" commit={exc.commit[:12]}"
+        print(f"DCO_CHECK: FAIL[{exc.code}]: {exc.message}{suffix}", file=sys.stderr)
+        return 1
+    print(f"DCO_CHECK: PASS ({count} commits)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -11,14 +11,16 @@ import hashlib
 import json
 import os
 import re
+import selectors
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import BinaryIO, Iterator, Mapping, Sequence
+from typing import BinaryIO, Callable, Iterator, Mapping, Sequence
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -106,6 +108,18 @@ UPGRADE_HANDOFF_UPGRADING_KEYS = frozenset(
     }
 )
 MAX_BACKUP_DATABASE_BYTES = 64 * 1024 * 1024 * 1024
+DEFAULT_ORPHAN_DISCOVERY_LIMIT = 100
+MAX_ORPHAN_DISCOVERY_LIMIT = 1000
+DEFAULT_ORPHAN_SCAN_LIMIT = 100_000
+MAX_ORPHAN_SCAN_LIMIT = 100_000
+ORPHAN_DISCOVERY_CONFIRMATION_PREFIX = "discover-orphans"
+DEFAULT_COMMAND_TIMEOUT_SECONDS = 900
+DEFAULT_TRANSFER_TIMEOUT_SECONDS = 14_400
+MIN_COMMAND_TIMEOUT_SECONDS = 30
+MAX_COMMAND_TIMEOUT_SECONDS = 86_400
+COMMAND_STDOUT_LIMIT_BYTES = 1024 * 1024
+COMMAND_STDERR_LIMIT_BYTES = 1024 * 1024
+TERMINATION_GRACE_SECONDS = 5.0
 ROOT_OPERATOR_UID = 0
 MAINTENANCE_CONTAINER_UID = 65532
 ROOT_OPERATOR_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
@@ -212,6 +226,84 @@ class BackupRestartError(OperatorError):
     """A backup failed and the previously live service set did not reconverge."""
 
 
+class OperatorInterrupted(OperatorError):
+    """The operator wrapper received a termination signal."""
+
+
+class _ExecutionLimits:
+    """Per-invocation wall-clock limits for operator-owned child processes."""
+
+    __slots__ = ("command_timeout_seconds", "transfer_timeout_seconds")
+
+    def __init__(
+        self,
+        command_timeout_seconds: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
+        transfer_timeout_seconds: float = DEFAULT_TRANSFER_TIMEOUT_SECONDS,
+    ) -> None:
+        self.command_timeout_seconds = command_timeout_seconds
+        self.transfer_timeout_seconds = transfer_timeout_seconds
+
+
+_ACTIVE_EXECUTION_LIMITS = _ExecutionLimits()
+_ACTIVE_CHILD: subprocess.Popen[bytes] | None = None
+_PENDING_SIGNAL: int | None = None
+_TERMINATION_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+MINIMUM_PYTHON = (3, 11)
+
+
+def _require_python_runtime() -> None:
+    if sys.version_info < MINIMUM_PYTHON:
+        raise OperatorError("Python 3.11 or newer is required for VPS operations")
+
+
+def _record_termination_signal(signum: int, _frame: object) -> None:
+    """Record termination and immediately forward it to the active child tree."""
+
+    global _PENDING_SIGNAL
+    _PENDING_SIGNAL = signum
+    process = _ACTIVE_CHILD
+    if process is not None:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except OSError:
+            try:
+                process.terminate()
+            except OSError:
+                pass
+
+
+@contextlib.contextmanager
+def _termination_signal_guard() -> Iterator[None]:
+    """Keep INT/TERM/HUP from orphaning children while the host lock is held."""
+
+    global _PENDING_SIGNAL
+    previous = {item: signal.getsignal(item) for item in _TERMINATION_SIGNALS}
+    _PENDING_SIGNAL = None
+    pending_after_action: int | None = None
+    try:
+        for item in _TERMINATION_SIGNALS:
+            signal.signal(item, _record_termination_signal)
+        yield
+    finally:
+        pending_after_action = _PENDING_SIGNAL
+        for item, handler in previous.items():
+            signal.signal(item, handler)
+        _PENDING_SIGNAL = None
+    if pending_after_action is not None:
+        raise OperatorInterrupted("operator action was interrupted")
+
+
+@contextlib.contextmanager
+def _using_execution_limits(limits: _ExecutionLimits) -> Iterator[None]:
+    global _ACTIVE_EXECUTION_LIMITS
+    previous = _ACTIVE_EXECUTION_LIMITS
+    _ACTIVE_EXECUTION_LIMITS = limits
+    try:
+        yield
+    finally:
+        _ACTIVE_EXECUTION_LIMITS = previous
+
+
 def _regular_file(
     path: Path,
     *,
@@ -289,6 +381,22 @@ def _bounded_integer(values: Mapping[str, str], name: str, minimum: int, maximum
     if not minimum <= value <= maximum:
         raise OperatorError(f"{name} is outside policy")
     return value
+
+
+def _bounded_cli_integer(
+    label: str,
+    minimum: int,
+    maximum: int,
+) -> Callable[[str], int]:
+    def parse(rendered: str) -> int:
+        if not rendered.isascii() or not rendered.isdigit():
+            raise argparse.ArgumentTypeError(f"{label} is outside policy")
+        value = int(rendered)
+        if not minimum <= value <= maximum:
+            raise argparse.ArgumentTypeError(f"{label} is outside policy")
+        return value
+
+    return parse
 
 
 def migration_catalog_sha256() -> str:
@@ -650,25 +758,237 @@ def _compose_command(
     return [docker, "compose"]
 
 
+def _process_group_exists(process_group: int) -> bool:
+    try:
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Terminate an isolated child tree, then escalate after a short grace."""
+
+    process_group = process.pid
+    try:
+        os.killpg(process_group, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        try:
+            process.terminate()
+        except OSError:
+            pass
+
+    grace_deadline = time.monotonic() + TERMINATION_GRACE_SECONDS
+    while time.monotonic() < grace_deadline:
+        process.poll()
+        if not _process_group_exists(process_group):
+            return
+        time.sleep(min(0.05, max(0.0, grace_deadline - time.monotonic())))
+
+    try:
+        os.killpg(process_group, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        try:
+            process.kill()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=max(1.0, TERMINATION_GRACE_SECONDS))
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def _run_bounded(
+    command: Sequence[str],
+    *,
+    label: str,
+    environment: Mapping[str, str],
+    timeout_seconds: float | None = None,
+    transfer: bool = False,
+    stdout_sink: BinaryIO | None = None,
+    discard_stdout: bool = False,
+    stdin: BinaryIO | None = None,
+    stdout_limit_bytes: int = COMMAND_STDOUT_LIMIT_BYTES,
+    stderr_limit_bytes: int = COMMAND_STDERR_LIMIT_BYTES,
+) -> subprocess.CompletedProcess[bytes]:
+    """Run one command with a deadline, bounded output, and child-tree teardown."""
+
+    global _ACTIVE_CHILD, _PENDING_SIGNAL
+
+    if stdout_sink is not None and discard_stdout:
+        raise OperatorError(f"{label} output policy is invalid")
+    selected_timeout = (
+        _ACTIVE_EXECUTION_LIMITS.transfer_timeout_seconds
+        if transfer
+        else _ACTIVE_EXECUTION_LIMITS.command_timeout_seconds
+    ) if timeout_seconds is None else timeout_seconds
+    if (
+        isinstance(selected_timeout, bool)
+        or not isinstance(selected_timeout, (int, float))
+        or not 0 < selected_timeout <= MAX_COMMAND_TIMEOUT_SECONDS
+    ):
+        raise OperatorError(f"{label} timeout is outside policy")
+    for limit in (stdout_limit_bytes, stderr_limit_bytes):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+            raise OperatorError(f"{label} output policy is invalid")
+
+    if _ACTIVE_CHILD is not None:
+        raise OperatorError(f"{label} cannot nest an operator child process")
+    if _PENDING_SIGNAL is not None:
+        _PENDING_SIGNAL = None
+        raise OperatorInterrupted(f"{label} was interrupted")
+    try:
+        previous_mask = signal.pthread_sigmask(
+            signal.SIG_BLOCK, _TERMINATION_SIGNALS
+        )
+    except (AttributeError, OSError) as exc:
+        raise OperatorError(f"{label} cannot establish signal-safe execution") from exc
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        try:
+            process = subprocess.Popen(
+                list(command),
+                cwd=ROOT,
+                env=dict(environment),
+                stdin=subprocess.DEVNULL if stdin is None else stdin,
+                stdout=subprocess.DEVNULL if discard_stdout else subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            raise OperatorError(f"{label} could not start") from exc
+        _ACTIVE_CHILD = process
+    finally:
+        if process is None:
+            try:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+            except (AttributeError, OSError) as exc:
+                raise OperatorError(
+                    f"{label} cannot establish signal-safe execution"
+                ) from exc
+
+    selector: selectors.BaseSelector | None = None
+    try:
+        try:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        except (AttributeError, OSError) as exc:
+            raise OperatorError(
+                f"{label} cannot establish signal-safe execution"
+            ) from exc
+        deadline = time.monotonic() + float(selected_timeout)
+        captured = {"stdout": bytearray(), "stderr": bytearray()}
+        totals = {"stdout": 0, "stderr": 0}
+        selector = selectors.DefaultSelector()
+        if process.stdout is not None:
+            selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+        if process.stderr is not None:
+            selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+        while selector.get_map():
+            if _PENDING_SIGNAL is not None:
+                _terminate_process_group(process)
+                _PENDING_SIGNAL = None
+                raise OperatorInterrupted(f"{label} was interrupted")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _terminate_process_group(process)
+                raise OperatorError(f"{label} exceeded its wall-clock deadline")
+            try:
+                events = selector.select(min(remaining, 0.25))
+            except OSError as exc:
+                _terminate_process_group(process)
+                raise OperatorError(f"{label} output could not be monitored") from exc
+            for key, _mask in events:
+                stream = key.fileobj
+                stream_name = str(key.data)
+                try:
+                    chunk = os.read(stream.fileno(), 64 * 1024)
+                except OSError as exc:
+                    _terminate_process_group(process)
+                    raise OperatorError(f"{label} output could not be read") from exc
+                if not chunk:
+                    selector.unregister(stream)
+                    stream.close()
+                    continue
+                totals[stream_name] += len(chunk)
+                limit = (
+                    stdout_limit_bytes
+                    if stream_name == "stdout"
+                    else stderr_limit_bytes
+                )
+                if totals[stream_name] > limit:
+                    _terminate_process_group(process)
+                    raise OperatorError(f"{label} exceeded its bounded output limit")
+                if stream_name == "stdout" and stdout_sink is not None:
+                    try:
+                        written = stdout_sink.write(chunk)
+                    except OSError as exc:
+                        _terminate_process_group(process)
+                        raise OperatorError(f"{label} output could not be written") from exc
+                    if written is not None and written != len(chunk):
+                        _terminate_process_group(process)
+                        raise OperatorError(f"{label} output could not be written")
+                else:
+                    captured[stream_name].extend(chunk)
+
+        while True:
+            if _PENDING_SIGNAL is not None:
+                _terminate_process_group(process)
+                _PENDING_SIGNAL = None
+                raise OperatorInterrupted(f"{label} was interrupted")
+            returncode = process.poll()
+            if returncode is not None:
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _terminate_process_group(process)
+                raise OperatorError(f"{label} exceeded its wall-clock deadline")
+            time.sleep(min(remaining, 0.25))
+    except KeyboardInterrupt as exc:
+        _terminate_process_group(process)
+        raise OperatorError(f"{label} was interrupted") from exc
+    except BaseException:
+        _terminate_process_group(process)
+        raise
+    finally:
+        if _ACTIVE_CHILD is process:
+            _ACTIVE_CHILD = None
+        if selector is not None:
+            selector.close()
+        for stream in (process.stdout, process.stderr):
+            if stream is not None and not stream.closed:
+                stream.close()
+
+    return subprocess.CompletedProcess(
+        args=list(command),
+        returncode=returncode,
+        stdout=bytes(captured["stdout"]),
+        stderr=bytes(captured["stderr"]),
+    )
+
+
 def _validate_compose_version(
     command: Sequence[str],
     environment: Mapping[str, str],
 ) -> None:
     message = "Docker Compose 2.24.4 or newer is required"
     try:
-        result = subprocess.run(
+        result = _run_bounded(
             list(command) + ["version", "--short"],
-            cwd=ROOT,
-            env=dict(environment),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=30,
-            check=False,
+            label="Docker Compose version probe",
+            environment=environment,
+            timeout_seconds=30,
+            stdout_limit_bytes=1024,
+            stderr_limit_bytes=4096,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except OperatorError as exc:
         raise OperatorError(message) from exc
-    if result.returncode != 0 or len(result.stdout) > 1024 or len(result.stderr) > 4096:
+    if result.returncode != 0:
         raise OperatorError(message)
     try:
         rendered = result.stdout.decode("ascii", "strict").strip()
@@ -689,19 +1009,20 @@ def _run_safe(
     environment: Mapping[str, str],
     stdout=None,
     stdin: BinaryIO | None = None,
+    timeout_seconds: float | None = None,
+    transfer: bool = False,
+    stdout_limit_bytes: int = COMMAND_STDOUT_LIMIT_BYTES,
 ) -> None:
-    try:
-        result = subprocess.run(
-            list(command),
-            cwd=ROOT,
-            env=dict(environment),
-            stdin=subprocess.DEVNULL if stdin is None else stdin,
-            stdout=subprocess.PIPE if stdout is None else stdout,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-    except OSError as exc:
-        raise OperatorError(f"{label} could not start") from exc
+    result = _run_bounded(
+        command,
+        label=label,
+        environment=environment,
+        timeout_seconds=timeout_seconds,
+        transfer=transfer,
+        stdout_sink=stdout,
+        stdin=stdin,
+        stdout_limit_bytes=stdout_limit_bytes,
+    )
     if result.returncode != 0:
         raise OperatorError(f"{label} failed with exit {result.returncode}")
 
@@ -726,18 +1047,12 @@ def _postgres_scalar(
         "hbcb-postgres-probe",
         query,
     ]
-    try:
-        result = subprocess.run(
-            command,
-            cwd=ROOT,
-            env=dict(environment),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-    except OSError as exc:
-        raise OperatorError(f"{label} could not start") from exc
+    result = _run_bounded(
+        command,
+        label=label,
+        environment=environment,
+        stdout_limit_bytes=4096,
+    )
     if result.returncode != 0:
         raise OperatorError(f"{label} failed with exit {result.returncode}")
     if not 1 <= len(result.stdout) <= 4096:
@@ -824,23 +1139,17 @@ def _run_captured_json(
     label: str,
     environment: Mapping[str, str],
     expected_keys: frozenset[str],
+    transfer: bool = False,
 ) -> dict[str, object]:
-    try:
-        result = subprocess.run(
-            list(command),
-            cwd=ROOT,
-            env=dict(environment),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-    except OSError as exc:
-        raise OperatorError(f"{label} could not start") from exc
+    result = _run_bounded(
+        command,
+        label=label,
+        environment=environment,
+        transfer=transfer,
+        stdout_limit_bytes=16 * 1024,
+    )
     if result.returncode != 0:
         raise OperatorError(f"{label} failed with exit {result.returncode}")
-    if len(result.stdout) > 16 * 1024:
-        raise OperatorError(f"{label} returned an oversized result")
     try:
         payload = json.loads(result.stdout.decode("ascii"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -876,6 +1185,7 @@ def _maintenance_result(
     expected_keys: frozenset[str],
     host_backup: Path | None = None,
     read_only: bool = False,
+    transfer: bool = False,
 ) -> dict[str, object]:
     return _run_captured_json(
         _maintenance_command(
@@ -887,7 +1197,38 @@ def _maintenance_result(
         label=label,
         environment=environment,
         expected_keys=expected_keys,
+        transfer=transfer,
     )
+
+
+def _orphan_discovery_confirmation_token(limit: int, scan_limit: int) -> str:
+    return f"{ORPHAN_DISCOVERY_CONFIRMATION_PREFIX}:{limit}:{scan_limit}"
+
+
+def _validated_orphan_discovery_result(
+    payload: Mapping[str, object],
+    *,
+    apply: bool,
+    limit: int,
+    scan_limit: int,
+) -> tuple[int, int, int]:
+    counts: list[int] = []
+    for name in ("candidates", "queued", "scanned"):
+        value = payload.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise OperatorError("orphan discovery returned invalid evidence")
+        counts.append(value)
+    candidates, queued, scanned = counts
+    expected_dry_run = not apply
+    if (
+        payload.get("dry_run") is not expected_dry_run
+        or candidates > limit
+        or scanned > scan_limit
+        or (apply and queued != candidates)
+        or (not apply and queued != 0)
+    ):
+        raise OperatorError("orphan discovery returned invalid evidence")
+    return candidates, queued, scanned
 
 
 def _maintenance_probe(
@@ -895,25 +1236,20 @@ def _maintenance_probe(
     arguments: Sequence[str],
     *,
     environment: Mapping[str, str],
+    timeout_seconds: float | None = None,
 ) -> tuple[bool, str | None]:
     """Run a no-output maintenance probe and expose only its bounded error code."""
 
-    try:
-        result = subprocess.run(
-            _maintenance_command(prefix, arguments),
-            cwd=ROOT,
-            env=dict(environment),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-    except OSError as exc:
-        raise OperatorError("maintenance probe could not start") from exc
+    result = _run_bounded(
+        _maintenance_command(prefix, arguments),
+        label="maintenance probe",
+        environment=environment,
+        timeout_seconds=timeout_seconds,
+        discard_stdout=True,
+        stderr_limit_bytes=4096,
+    )
     if result.returncode == 0:
         return True, None
-    if len(result.stderr) > 4096:
-        return False, None
     try:
         payload = json.loads(result.stderr.decode("ascii"))
         code = payload["error"]["code"]
@@ -1079,22 +1415,16 @@ def _safe_backup_child(root: Path, value: Path, *, must_exist: bool) -> Path:
 
 
 def _validate_private_storage_network(name: str, environment: Mapping[str, str]) -> None:
-    try:
-        result = subprocess.run(
-            ["docker", "network", "inspect", "--format", "{{json .Internal}}", name],
-            cwd=ROOT,
-            env=dict(environment),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-    except OSError as exc:
-        raise OperatorError("private storage network validation could not start") from exc
+    result = _run_bounded(
+        ["docker", "network", "inspect", "--format", "{{json .Internal}}", name],
+        label="private storage network validation",
+        environment=environment,
+        stdout_limit_bytes=16,
+        stderr_limit_bytes=4096,
+    )
     if result.returncode != 0:
         raise OperatorError("private storage network is unavailable")
-    if result.stdout.strip() != "true":
+    if result.stdout.strip() != b"true":
         raise OperatorError(
             "storage network must be Docker-internal; attach an operator-managed private S3 gateway"
         )
@@ -1282,22 +1612,42 @@ def _exclusive_operator_lock(state: Path) -> Iterator[None]:
 def _stop_writers(
     prefix: Sequence[str], environment: Mapping[str, str], *, include_worker: bool
 ) -> None:
-    _run_safe(
-        list(prefix) + ["stop", "caddy"],
-        label="public ingress stop",
-        environment=environment,
-    )
-    _run_safe(
-        list(prefix) + ["stop", "api"],
-        label="API writer stop",
-        environment=environment,
-    )
+    failures = 0
+    services = [("caddy", "public ingress stop"), ("api", "API writer stop")]
     if include_worker:
-        _run_safe(
-            list(prefix) + ["stop", "worker"],
-            label="worker stop",
-            environment=environment,
-        )
+        services.append(("worker", "worker stop"))
+    for service, label in services:
+        try:
+            _run_safe(
+                list(prefix) + ["stop", service],
+                label=label,
+                environment=environment,
+            )
+        except Exception:
+            failures += 1
+    if failures:
+        raise OperatorError("writer and ingress stop did not converge")
+
+
+def _reseal_after_upgrade_failure(
+    prefix: Sequence[str],
+    environment: Mapping[str, str],
+    *,
+    failure_message: str,
+) -> None:
+    """Attempt every safety action even when another cleanup action fails."""
+
+    failed = False
+    try:
+        _stop_writers(prefix, environment, include_worker=True)
+    except Exception:
+        failed = True
+    try:
+        _set_database_read_only(prefix, environment, enabled=True)
+    except Exception:
+        failed = True
+    if failed:
+        raise OperatorError(failure_message)
 
 
 def _start_private_application(
@@ -1368,18 +1718,26 @@ def _wait_for_quiescence(
         raise OperatorError("drain timeout is outside policy")
     deadline = time.monotonic() + timeout_seconds
     while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise OperatorError("worker drain timed out")
         ready, code = _maintenance_probe(
             prefix,
             ["backup-inventory"],
             environment=environment,
+            timeout_seconds=min(
+                remaining,
+                _ACTIVE_EXECUTION_LIMITS.command_timeout_seconds,
+            ),
         )
         if ready:
             return
         if code != "backup_not_quiescent":
             raise OperatorError("backup quiescence probe failed")
-        if time.monotonic() >= deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             raise OperatorError("worker drain timed out")
-        time.sleep(5)
+        time.sleep(min(5.0, remaining))
 
 
 def _database_dump(
@@ -1413,6 +1771,8 @@ def _database_dump(
                 label="PostgreSQL backup",
                 environment=environment,
                 stdout=stream,
+                transfer=True,
+                stdout_limit_bytes=MAX_BACKUP_DATABASE_BYTES,
             )
             stream.flush()
             os.fsync(stream.fileno())
@@ -1525,6 +1885,7 @@ def _backup_bundle(
             environment=environment,
             expected_keys=frozenset({"artifact_bytes", "artifacts", "inventory_sha256"}),
             host_backup=container_root,
+            transfer=True,
         )
         artifacts, artifact_bytes, inventory_sha256 = _validate_backup_result(result)
         exported = container_root / BACKUP_OBJECTS
@@ -2202,6 +2563,7 @@ def _restore_database(
             label="PostgreSQL restore",
             environment=environment,
             stdin=stream,
+            transfer=True,
         )
 
 
@@ -2255,6 +2617,7 @@ def _restore_bundle(
         ),
         host_backup=selected / BACKUP_OBJECTS,
         read_only=True,
+        transfer=True,
     )
     if (
         dry_run.get("dry_run") is not True
@@ -2273,6 +2636,7 @@ def _restore_bundle(
         ),
         host_backup=selected / BACKUP_OBJECTS,
         read_only=True,
+        transfer=True,
     )
     if (
         restored.get("dry_run") is not False
@@ -2326,6 +2690,7 @@ def _upgrade_from_verified_backup(
         + ["pull", "postgres", "redis", "database-init", "api", "worker", "caddy"],
         label="upgrade image pull",
         environment=environment,
+        transfer=True,
     )
     writable = False
     failure: Exception | None = None
@@ -2341,9 +2706,16 @@ def _upgrade_from_verified_backup(
         failure = exc
     if failure is not None:
         try:
-            _stop_writers(prefix, environment, include_worker=True)
             if writable:
-                _set_database_read_only(prefix, environment, enabled=True)
+                _reseal_after_upgrade_failure(
+                    prefix,
+                    environment,
+                    failure_message=(
+                        "upgrade failed and the quiesced database could not be resealed"
+                    ),
+                )
+            else:
+                _stop_writers(prefix, environment, include_worker=True)
         except Exception as reseal_exc:
             raise OperatorError(
                 "upgrade failed and the quiesced database could not be resealed"
@@ -2367,6 +2739,8 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
             "handoff-abort",
             "retention-preview",
             "retention-apply",
+            "orphan-discovery-preview",
+            "orphan-discovery-apply",
             "artifact-deletion-preview",
             "artifact-deletion-apply",
             "queue-rebuild-preview",
@@ -2382,15 +2756,66 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--compose-bin", default=os.environ.get("HBCB_COMPOSE_BIN"))
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--confirm", action="store_true")
+    parser.add_argument(
+        "--confirmation-token",
+        help="scope-bound acknowledgement required by orphan-discovery-apply",
+    )
     parser.add_argument("--confirm-empty-target", action="store_true")
     parser.add_argument("--leave-ingress-down", action="store_true")
     parser.add_argument("--backup", type=Path)
+    parser.add_argument(
+        "--limit",
+        type=_bounded_cli_integer(
+            "orphan discovery limit",
+            1,
+            MAX_ORPHAN_DISCOVERY_LIMIT,
+        ),
+        help="maximum orphan candidates to preview or queue",
+    )
+    parser.add_argument(
+        "--scan-limit",
+        type=_bounded_cli_integer(
+            "orphan discovery scan limit",
+            1,
+            MAX_ORPHAN_SCAN_LIMIT,
+        ),
+        help="maximum immutable object versions to inventory",
+    )
     parser.add_argument(
         "--drain-timeout-seconds",
         type=int,
         default=3600,
     )
+    parser.add_argument(
+        "--command-timeout-seconds",
+        type=int,
+        default=DEFAULT_COMMAND_TIMEOUT_SECONDS,
+        help="wall-clock limit for each lifecycle command",
+    )
+    parser.add_argument(
+        "--transfer-timeout-seconds",
+        type=int,
+        default=DEFAULT_TRANSFER_TIMEOUT_SECONDS,
+        help="wall-clock limit for each pull, backup, or restore transfer",
+    )
     return parser.parse_args(argv)
+
+
+def _execution_limits_from_args(args: argparse.Namespace) -> _ExecutionLimits:
+    for name in ("command_timeout_seconds", "transfer_timeout_seconds"):
+        value = getattr(args, name)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not MIN_COMMAND_TIMEOUT_SECONDS <= value <= MAX_COMMAND_TIMEOUT_SECONDS
+        ):
+            raise OperatorError(
+                f"--{name.replace('_', '-')} is outside policy"
+            )
+    return _ExecutionLimits(
+        command_timeout_seconds=args.command_timeout_seconds,
+        transfer_timeout_seconds=args.transfer_timeout_seconds,
+    )
 
 
 def _execute_operator_action(
@@ -2401,12 +2826,19 @@ def _execute_operator_action(
     config_path: Path,
     lock_path: Path,
 ) -> int:
+    orphan_actions = {"orphan-discovery-preview", "orphan-discovery-apply"}
     if args.offline and args.action != "down":
         raise OperatorError("mutating VPS actions cannot run with --offline")
     if args.leave_ingress_down and args.action != "backup":
         raise OperatorError("--leave-ingress-down is only valid for backup")
     if args.backup is not None and args.action not in ("restore", "upgrade", "rollback"):
         raise OperatorError("--backup is only valid for restore, upgrade, or rollback")
+    if (args.limit is not None or args.scan_limit is not None) and args.action not in orphan_actions:
+        raise OperatorError("--limit and --scan-limit are only valid for orphan discovery")
+    if args.confirmation_token is not None and args.action != "orphan-discovery-apply":
+        raise OperatorError(
+            "--confirmation-token is only valid for orphan-discovery-apply"
+        )
     if args.action in ("restore", "upgrade", "rollback") and args.backup is None:
         raise OperatorError(f"{args.action} requires --backup")
     selected_backup = (
@@ -2431,7 +2863,12 @@ def _execute_operator_action(
     if handoff is None and args.action in ("upgrade", "handoff-abort"):
         raise OperatorError(f"{args.action} requires an active upgrade handoff")
     if args.action == "up":
-        _run_safe(prefix + ["pull", "postgres", "redis", "database-init", "api", "worker", "caddy"], label="image pull", environment=environment)
+        _run_safe(
+            prefix + ["pull", "postgres", "redis", "database-init", "api", "worker", "caddy"],
+            label="image pull",
+            environment=environment,
+            transfer=True,
+        )
         _restart_live_application(
             prefix,
             environment,
@@ -2445,6 +2882,54 @@ def _execute_operator_action(
         if not args.confirm:
             raise OperatorError("retention apply requires --confirm")
         _run_safe(prefix + ["--profile", "maintenance", "run", "--rm", "--no-deps", "maintenance", "retain", "--apply"], label="retention apply", environment=environment)
+    elif args.action in orphan_actions:
+        limit = (
+            DEFAULT_ORPHAN_DISCOVERY_LIMIT if args.limit is None else args.limit
+        )
+        scan_limit = (
+            DEFAULT_ORPHAN_SCAN_LIMIT if args.scan_limit is None else args.scan_limit
+        )
+        apply = args.action == "orphan-discovery-apply"
+        expected_token = _orphan_discovery_confirmation_token(limit, scan_limit)
+        if apply and (not args.confirm or args.confirmation_token != expected_token):
+            raise OperatorError(
+                "orphan discovery apply requires --confirm and the scope-bound "
+                "--confirmation-token emitted by its preview"
+            )
+        arguments = [
+            "discover-orphans",
+            "--limit",
+            str(limit),
+            "--scan-limit",
+            str(scan_limit),
+        ]
+        if apply:
+            arguments.append("--apply")
+        result = _maintenance_result(
+            prefix,
+            arguments,
+            label=f"orphan discovery {'apply' if apply else 'preview'}",
+            environment=environment,
+            expected_keys=frozenset({"candidates", "dry_run", "queued", "scanned"}),
+        )
+        candidates, queued, scanned = _validated_orphan_discovery_result(
+            result,
+            apply=apply,
+            limit=limit,
+            scan_limit=scan_limit,
+        )
+        if apply:
+            print(
+                "VPS_ORPHAN_DISCOVERY_APPLY: PASS "
+                f"scanned={scanned} candidates={candidates} queued={queued}"
+            )
+        else:
+            print(
+                "VPS_ORPHAN_DISCOVERY_PREVIEW: PASS "
+                f"scanned={scanned} candidates={candidates} queued={queued} "
+                f"confirmation_token={expected_token}"
+            )
+        return 0
     elif args.action == "artifact-deletion-preview":
         _run_safe(
             _maintenance_command(prefix, ["delete-artifacts"]),
@@ -2550,16 +3035,33 @@ def _execute_operator_action(
         elif handoff.get("status") == "upgrading":
             # A crashed attempt may have left the database writable. Reseal it,
             # terminate sessions, then stop writers before validating a retry.
-            _set_database_read_only(prefix, environment, enabled=True)
-            _stop_writers(prefix, environment, include_worker=True)
-            _validate_upgrading_upgrade_handoff(
-                handoff,
-                selected_backup,
-                vps,
-                lock_path,
-                prefix,
-                environment,
-            )
+            try:
+                _set_database_read_only(prefix, environment, enabled=True)
+                _stop_writers(prefix, environment, include_worker=True)
+                _validate_upgrading_upgrade_handoff(
+                    handoff,
+                    selected_backup,
+                    vps,
+                    lock_path,
+                    prefix,
+                    environment,
+                )
+            except Exception as exc:
+                try:
+                    _reseal_after_upgrade_failure(
+                        prefix,
+                        environment,
+                        failure_message=(
+                            "upgrade retry validation failed and the database "
+                            "could not be resealed"
+                        ),
+                    )
+                except Exception as reseal_exc:
+                    raise OperatorError(
+                        "upgrade retry validation failed and the database "
+                        "could not be resealed"
+                    ) from reseal_exc
+                raise exc
         else:
             raise OperatorError("upgrade requires a completed quiesced handoff")
         try:
@@ -2579,8 +3081,13 @@ def _execute_operator_action(
             _remove_upgrade_handoff(state, handoff)
         except Exception as exc:
             try:
-                _stop_writers(prefix, environment, include_worker=True)
-                _set_database_read_only(prefix, environment, enabled=True)
+                _reseal_after_upgrade_failure(
+                    prefix,
+                    environment,
+                    failure_message=(
+                        "upgrade failed and its handoff could not be preserved safely"
+                    ),
+                )
             except Exception as reseal_exc:
                 raise OperatorError(
                     "upgrade failed and its handoff could not be preserved safely"
@@ -2628,8 +3135,13 @@ def _execute_operator_action(
             _remove_upgrade_handoff(state, handoff)
         except Exception as exc:
             try:
-                _stop_writers(prefix, environment, include_worker=True)
-                _set_database_read_only(prefix, environment, enabled=True)
+                _reseal_after_upgrade_failure(
+                    prefix,
+                    environment,
+                    failure_message=(
+                        "handoff abort failed and the source deployment could not be resealed"
+                    ),
+                )
             except Exception as reseal_exc:
                 raise OperatorError(
                     "handoff abort failed and the source deployment could not be resealed"
@@ -2639,8 +3151,7 @@ def _execute_operator_action(
     return 0
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = _parse_args(sys.argv[1:] if argv is None else argv)
+def _main_with_limits(args: argparse.Namespace) -> int:
     config_path = _absolute_cli_path(args.config, "VPS configuration")
     lock_path = _absolute_cli_path(args.release_lock, "release lock")
     root_trust = hasattr(os, "geteuid") and os.geteuid() == ROOT_OPERATOR_UID
@@ -2664,6 +3175,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             config_path,
             lock_path,
         )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    _require_python_runtime()
+    args = _parse_args(sys.argv[1:] if argv is None else argv)
+    limits = _execution_limits_from_args(args)
+    with _termination_signal_guard(), _using_execution_limits(limits):
+        return _main_with_limits(args)
 
 
 def cli() -> int:

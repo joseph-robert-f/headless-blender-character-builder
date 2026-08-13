@@ -52,7 +52,76 @@ At least one CODEOWNER/maintainer approval and passing required checks are
 expected before merge. While the project has only one maintainer, that
 maintainer may merge their own change only after recording the validation and
 security/licensing considerations that an independent reviewer would need.
-High-risk changes should wait for independent review whenever practical.
+High-risk changes should wait for independent review whenever practical. This
+temporary self-review exception ends when the one-review/no-bypass protection
+below is activated; under that protection, an independent approval is required.
+
+## Repository enforcement settings
+
+Repository files define policy and checks but cannot activate GitHub branch
+protection. An administrator must apply and periodically verify the following
+protection for `main`:
+
+- require a pull request and one approving review;
+- dismiss stale approvals, require CODEOWNER review, and require approval of
+  the most recent reviewable push by someone other than its author;
+- require conversation resolution and require the branch to be current;
+- require the exact checks `DCO sign-off`, `source`, `builder`, and `service`;
+- enforce the rules for administrators, disallow force pushes and deletion, and
+  permit neither user, team, nor app bypass;
+- keep linear history optional because reviewed merge commits are supported;
+- do not confuse DCO trailers with GitHub's separate cryptographic verified-
+  signature feature.
+
+The equivalent [GitHub branch-protection REST
+request](https://docs.github.com/en/rest/branches/branch-protection#update-branch-protection)
+body for `PUT /repos/{owner}/{repo}/branches/main/protection` is:
+
+```json
+{
+  "required_status_checks": {
+    "strict": true,
+    "contexts": [],
+    "checks": [
+      {"context": "DCO sign-off"},
+      {"context": "source"},
+      {"context": "builder"},
+      {"context": "service"}
+    ]
+  },
+  "enforce_admins": true,
+  "required_pull_request_reviews": {
+    "dismiss_stale_reviews": true,
+    "require_code_owner_reviews": true,
+    "require_last_push_approval": true,
+    "required_approving_review_count": 1,
+    "bypass_pull_request_allowances": {"users": [], "teams": [], "apps": []}
+  },
+  "restrictions": null,
+  "required_linear_history": false,
+  "allow_force_pushes": false,
+  "allow_deletions": false,
+  "block_creations": false,
+  "required_conversation_resolution": true,
+  "lock_branch": false,
+  "allow_fork_syncing": false
+}
+```
+
+This repository is personal-account-owned, so the request intentionally omits
+`dismissal_restrictions`; GitHub documents user/team dismissal restrictions as
+organization-only. `restrictions` remains `null` because personal repositories
+cannot configure user/team/app push restrictions. Empty legacy `contexts` are
+included with the preferred `checks` array for the current branch-protection
+request contract.
+
+Do not apply that request until the `DCO sign-off` job has completed once and
+GitHub exposes all four exact check names. The one-review/no-bypass policy also
+requires a second trusted reviewer: the lead maintainer cannot approve their
+own pull request. Staffing that role is a prerequisite, not a reason to claim
+the protection is active when it is not. Verify the effective configuration
+through `GET /repos/{owner}/{repo}/branches/main/protection`; never record a
+planned setting as enforced evidence.
 
 Maintainers may decline a change that is correct in isolation but exceeds the
 adopted scope, destabilizes a public contract, creates an unsupported operating

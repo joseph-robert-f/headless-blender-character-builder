@@ -13,7 +13,7 @@ x-hardened: &hardened
 
 services:
   postgres:
-    image: postgres:16.9-bookworm@sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94
+    image: postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8
     platform: linux/amd64
     restart: "no"
     environment:
@@ -34,7 +34,7 @@ services:
     cpus: 1.0
 
   redis:
-    image: redis:8.0.1-bookworm@sha256:b3ad79880c88e302deb5e0fed6cee3e90c0031eb90cd936b01ef2f83ff5b3ff2
+    image: redis:8.2.8-bookworm@sha256:2f7462b9e93e0a7ae2edf3a0a0babc8a4d29f8bfc50849b906b7caaef925edc1
     platform: linux/amd64
     restart: "no"
     environment:
@@ -45,7 +45,7 @@ services:
     command:
       - |
         umask 077
-        printf 'appendonly yes\nappendfsync everysec\nrequirepass %s\n' "$${REDIS_PASSWORD}" > /run/redis/redis.conf
+        printf 'appendonly yes\nappendfsync everysec\nauto-aof-rewrite-percentage 100\nauto-aof-rewrite-min-size 64mb\nmaxmemory 384mb\nmaxmemory-policy noeviction\nrequirepass %s\n' "$${REDIS_PASSWORD}" > /run/redis/redis.conf
         exec redis-server /run/redis/redis.conf
     healthcheck:
       test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli --no-auth-warning ping | grep -Fx PONG"]

@@ -7,6 +7,14 @@ Changelog, and releases use Semantic Versioning.
 
 ### Changed
 
+- Bound release-candidate builder, API, and worker tags and OCI labels to the
+  exact distribution version and audited commit, and added checksum-verified
+  Blender/project source assets with a machine-readable, image-bound scope
+  record to release evidence; public OCI readiness stays explicitly false until
+  complete actual-image copyleft/source review.
+- Bounded Redis queue and dead-letter storage, added fail-closed orphaned
+  object-version discovery with durable exact-version evidence, and advanced
+  the maintained PostgreSQL 16 and Redis 8 server pins.
 - Added caller-safe request validation details, bounded geometry-QA failure
   summaries, actionable Make preflight markers, and explicit documentation of
   GNU Make versus underlying builder exit statuses.

@@ -5,8 +5,10 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 from typing import Callable, Optional
 from uuid import UUID
@@ -269,6 +271,61 @@ class FreshSubprocessLauncherTests(unittest.TestCase):
                 self.assertNotIn("canary-secret", environment)
                 self.assertIn("HBCB_EXECUTION_MODE=container", environment)
                 launcher.cleanup(result.scratch_dir)
+
+    def test_post_spawn_failure_or_interrupt_reaps_child_before_scratch_cleanup(self) -> None:
+        for raised in (RuntimeError("reader start failed"), KeyboardInterrupt()):
+            with self.subTest(exception=type(raised).__name__), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                scratch_root = root / "scratch"
+                scratch_root.mkdir()
+                pid_file = root / "owned-child.pid"
+                pending_pid_file = root / "owned-child.pid.pending"
+                script = self._script(
+                    root,
+                    f'printf "%s\\n" "$$" > "{pending_pid_file}"\n'
+                    f'mv -- "{pending_pid_file}" "{pid_file}"\n'
+                    "trap '' TERM\n"
+                    "sleep 30\n",
+                )
+                launcher = SubprocessBuilderLauncher(
+                    builder_executable=script,
+                    scratch_root=scratch_root,
+                    image_reference="headless-blender-character-builder-supervisor:test",
+                    timeout_seconds=5,
+                    poll_seconds=0.05,
+                    system_path="/usr/bin:/bin",
+                )
+
+                def fail_after_child_owns_process() -> None:
+                    deadline = time.monotonic() + 2
+                    while time.monotonic() < deadline and not pid_file.exists():
+                        time.sleep(0.01)
+                    self.assertTrue(pid_file.exists(), "builder did not publish its test PID")
+                    raise raised
+
+                with mock.patch.object(threading.Thread, "start", side_effect=fail_after_child_owns_process):
+                    with self.assertRaises(type(raised)):
+                        launcher.execute(
+                            b"{}",
+                            UUID("44444444-4444-4444-8444-444444444444"),
+                            lambda: False,
+                        )
+
+                child_pid = int(pid_file.read_text(encoding="ascii"))
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    try:
+                        os.kill(child_pid, 0)
+                    except OSError:
+                        break
+                    time.sleep(0.02)
+                else:
+                    try:
+                        os.kill(child_pid, 9)
+                    except OSError:
+                        pass
+                    self.fail("builder survived post-spawn launcher failure")
+                self.assertEqual(list(scratch_root.iterdir()), [])
 
     @unittest.skipUnless(Path("/proc").is_dir(), "Linux /proc process-tree gate")
     def test_cancellation_terminates_nested_builder_group_and_cleanup_is_scoped(self) -> None:

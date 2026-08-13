@@ -83,7 +83,19 @@ at exec time. The worker has no host mount, Docker socket, device, SSH agent,
 or edge network; only its bounded tmpfs is writable. The supervisor can reach
 PostgreSQL, Redis, and the private S3 gateway, but it starts Blender with a
 scrubbed environment that contains no database, Redis, storage, or API
-credential.
+credential and with all nonstandard inherited descriptors closed. At startup
+the supervisor must mark itself non-dumpable—the Linux setting that prevents
+another process from inspecting it—and disable core dumps. The launcher
+verifies and reasserts that state before every child; startup fails closed if
+the kernel control is unavailable. Together with the dropped `CAP_SYS_PTRACE`,
+this prevents a same-UID Blender descendant from reading the supervisor's
+procfs environment or memory.
+
+Maintainers can exercise that boundary directly with
+`make worker-boundary-check`. The target builds the production worker stage,
+runs it as UID/GID `65532:65532` with no network or capabilities, and uses only
+a fixed synthetic canary—never `.env` credentials. It also confirms that
+nested-process cancellation still works after the process protection is set.
 
 ## Prerequisites
 
@@ -94,6 +106,9 @@ Bring all of the following before a live preflight:
   `!override` tags used by the overlay; see Docker's
   [Compose merge reference](https://docs.docker.com/reference/compose-file/merge/).
   The host must enforce its CPU, memory, PID, disk, and network controls.
+- Python 3.11 or newer as `python3`; the fail-closed `scripts/vps` operator
+  wrapper checks this before parsing configuration or contacting Docker. Verify
+  it with `python3 --version` before installing the release tree.
 - Capacity for the configured limits plus host overhead. The planning baseline
   is 8 vCPU and 32 GiB RAM for one ordinary worker.
 - A reviewed source release installed in a root-owned, non-writable release
@@ -254,6 +269,56 @@ Do not configure a generic lifecycle expiry on the live namespace: it can
 delete an exact version still referenced by PostgreSQL. Provider cleanup of
 incomplete multipart uploads is acceptable.
 
+The maintenance identity inventories object versions only under the canonical
+`<namespace>/v1/builds/` prefix. On a VPS, preview old versions which are absent
+from PostgreSQL through the operator wrapper so the inventory participates in
+the host mutex and command deadline:
+
+```sh
+sudo ./scripts/vps orphan-discovery-preview \
+  --config /etc/hbcb/vps.env \
+  --release-lock /etc/hbcb/release.lock.env \
+  --limit 100 \
+  --scan-limit 100000
+```
+
+The preview prints bounded counts and a scope-bound token such as
+`discover-orphans:100:100000`. Only after reviewing those counts, queue the
+same bounded scope by supplying both acknowledgements:
+
+```sh
+sudo ./scripts/vps orphan-discovery-apply \
+  --config /etc/hbcb/vps.env \
+  --release-lock /etc/hbcb/release.lock.env \
+  --limit 100 \
+  --scan-limit 100000 \
+  --confirm \
+  --confirmation-token discover-orphans:100:100000
+```
+
+Changing either bound changes the required token and requires a new preview.
+The accepted range is 1–1,000 candidates and 1–100,000 scanned versions.
+Apply records exact bucket, key, version ID, digest, byte size, object
+timestamp, and discovery origin in PostgreSQL; it does not delete storage. Run
+`artifact-deletion-preview` separately, then run `artifact-deletion-apply`
+with `--confirm` to claim and delete exact versions. The deletion queue applies
+the configured grace period again from discovery time, so a newly queued
+candidate normally will not appear in deletion preview immediately. This
+second review window is intentional. Both phases are bounded. Fresh versions,
+versions referenced by `hbcb.artifacts`, and versions owned by active builds
+are never selected. A delete marker, unversioned object, noncanonical key,
+missing digest/version/timestamp, changing listing, duplicate, incomplete
+listing, or exceeded scan ceiling stops the whole discovery without queuing
+partial results.
+
+Redis contains wake-ups, not authoritative build state. Settled entries are
+removed from the main Stream after group acknowledgement, and the dead-letter
+Stream keeps at most the newest 10,000 build IDs. The server uses AOF with
+`appendfsync everysec`, automatic AOF rewrite, a 384 MiB dataset ceiling, and
+`noeviction`; this caps the dataset and reclaims settled AOF history over time
+without silently evicting coordination state. Capacity alerts must still cover
+the Redis data volume, pending-entry count, and AOF rewrite failures.
+
 ## DNS, TLS, and the public edge
 
 Before `up`:
@@ -377,6 +442,21 @@ artifact deletion, queue reconstruction, backups, upgrades, and lifecycle
 commands must all use this wrapper so they participate in the same exclusion
 boundary.
 
+Every Docker/Compose child command has a fail-closed wall-clock deadline. The
+default is 900 seconds for lifecycle and health commands and 14,400 seconds for
+image pulls, database dumps/restores, and object transfers. An authorized
+operator may select a value from 30 through 86,400 seconds with
+`--command-timeout-seconds SECONDS` or `--transfer-timeout-seconds SECONDS`.
+The wrapper streams large backup/restore payloads directly to their protected
+file or container input, bounds all captured stdout/stderr, and never includes
+captured command output in its error messages. At a deadline or output-limit
+failure it terminates the command's entire process group, waits a short grace,
+then kills any survivors before cleanup proceeds. The host mutex remains held
+through that teardown and recovery path. `Ctrl-C`/`SIGINT`, `SIGTERM`, and `SIGHUP` use the same
+child-tree teardown before the wrapper unwinds and releases the mutex; a
+terminated operation still fails closed and may require the documented
+recovery or retry procedure.
+
 ## Logs and observability
 
 All production containers use Docker's `json-file` driver with `max-size=10m`
@@ -481,7 +561,13 @@ sudo ./scripts/vps backup \
 
 The worker drain timeout defaults to 3,600 seconds. To choose another value in
 the enforced 30-to-86,400-second range, add
-`--drain-timeout-seconds SECONDS`.
+`--drain-timeout-seconds SECONDS`. This is one total drain deadline, not a
+per-poll timeout: every quiescence probe receives only the remaining time.
+Timing out during an ordinary backup removes the unpublished partial bundle
+and attempts to reconverge the original live service set. Timing out after an
+upgrade handoff has begun keeps ingress stopped and the database resealed
+read-only; the durable handoff remains for exact-target retry or documented
+empty-target rollback.
 
 The wrapper performs this sequence:
 

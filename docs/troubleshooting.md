@@ -59,6 +59,8 @@ QA fails, it removes its stage and must not leave a partial named result.
 | `HBCB_MAKE: FAIL[output_missing]` | `make verify` cannot find a regular, non-symlink output directory | Run `make build` first with the same `REQUEST` and `OUTPUT_NAME`, or correct the name; verification deliberately refuses an output-directory symlink |
 | `output must not already exist` / `BUILDER: FAIL[4]` | A direct builder invocation reached the same no-clobber guard | Choose a new output path, or move the complete old output aside |
 | `manifest request provenance mismatch` / `BUILDER: FAIL[11]` | Verification used a different JSON request than the build | Verify with the exact request that produced the manifest; compare its recorded request hash |
+| `manifest baked provenance mismatch`, `manifest image provenance mismatch`, or `manifest source provenance mismatch` / `BUILDER: FAIL[11]` | The verifier is running from different project source or a different container image than the one that built the output | Keep the old output unchanged for inspection. Build and verify a new output name from the current checkout; advanced operators may instead retain and use the exact prior image recorded by the old manifest |
+| `manifest Blender binary provenance mismatch` / `BUILDER: FAIL[11]` | Native verification selected a different Blender executable, or the exact container binary no longer matches the build record | Verify with the exact Blender binary used for the build, or build and verify a new output with the current exact Blender 4.5.12 binary |
 | `BuildRequest was rejected` / `BUILDER: FAIL[3]` | JSON, field, enum, size, or runtime contract violation | Run `make validate REQUEST=/absolute/path/request.json`; compare with the [character guide](character-spec.md) |
 | `needs_review` / `BUILDER: FAIL[11]` with no output | Mandatory geometry evidence was unknown or below policy | Read the preceding `BLENDER_BUILDER: FAIL[11]` line after `safe diagnostics:` for the bounded reason, then adjust the recipe and use a new output name; do not manufacture a success manifest |
 | Native Blender exits during Metal initialization | Host Blender/backend incompatibility occurred before project code | Prefer the Docker path; native macOS is best effort even with exact Blender 4.5.12 |
@@ -221,17 +223,23 @@ a global prune as a repair step.
 ## Release and deployment checks
 
 `make release-static` is the fast, offline publication-policy check. The full
-`make release-check` builds images, runs real Blender and service gates,
+`HBCB_RELEASE_RUN_ID=<unique-safe-id> make release-check` builds images, runs real Blender and service gates,
 exercises recovery, and packages sanitized evidence. It requires Docker,
 Python 3.11+, Compose 2.24.4+, substantial time/disk, and a clean intended Git
 index.
 
-Evidence is no-clobber. Choose a unique lowercase run ID if the default already
-exists:
+Evidence is no-clobber. A run ID is mandatory; choose a new unique lowercase
+value for every run:
 
 ```sh
 HBCB_RELEASE_RUN_ID=public-check-2 make release-check
 ```
+
+Only one full release check may use a Docker daemon at a time. If it reports an
+existing `hbcb-release-check-claim` volume, inspect that volume and confirm
+whether an earlier release process is active. Do not delete or take over the
+claim without maintainer approval; the wrapper deliberately leaves a foreign or
+ambiguous claim untouched.
 
 Do not operate the VPS reference until publisher-supplied image digests, source
 metadata, and a usable release lock exist. The checked-in example lock contains

@@ -197,12 +197,12 @@ hbcb_service_settings() {
   HBCB_STORAGE_PUBLIC_ENDPOINT=localhost:$hbcb_service_storage_port
 
   if [ "$hbcb_service_project" = hbcb-local ]; then
-    HBCB_MINIO_IMAGE=hbcb-minio-local:RELEASE.2025-10-15T17-29-55Z
+    HBCB_MINIO_IMAGE=hbcb-minio-local:final-community-20260212-hbcb.1
     HBCB_SERVICE_API_IMAGE=hbcb-service-api:dev
     HBCB_SERVICE_WORKER_IMAGE=hbcb-service-worker:dev
     HBCB_SERVICE_TEST_IMAGE=hbcb-service-test:dev
   else
-    HBCB_MINIO_IMAGE=$hbcb_service_project-minio:RELEASE.2025-10-15T17-29-55Z
+    HBCB_MINIO_IMAGE=$hbcb_service_project-minio:final-community-20260212-hbcb.1
     HBCB_SERVICE_API_IMAGE=$hbcb_service_project-api:dev
     HBCB_SERVICE_WORKER_IMAGE=$hbcb_service_project-worker:dev
     HBCB_SERVICE_TEST_IMAGE=$hbcb_service_project-test:dev

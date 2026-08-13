@@ -19,7 +19,7 @@ Compose, an AI key, or a provider account for one-shot builds.
 | [Docker without Make](#docker-without-make) | Equivalent manual path | Git, Docker, a POSIX shell, `id`, and `mkdir` |
 | [Native Blender](#native-blender-best-effort) | Best-effort contributor path | Git, Python 3.11+, exact Blender 4.5.12 LTS |
 | [Local asynchronous service](#local-asynchronous-service) | Local integration path | Local Docker daemon/context, Docker Compose 2.24.4+, Python 3.11+, curl, 8 GiB Docker memory, 20 GB free disk, and the container requirements |
-| [VPS reference](deployment.md) | Production-oriented design; not yet published for deployment | Linux `amd64`, Compose 2.24.4+, domain/TLS, private storage networking, external versioned S3, role secrets, and a future release lock/image set |
+| [VPS reference](deployment.md) | Production-oriented design; not yet published for deployment | Linux `amd64`, Python 3.11+, Compose 2.24.4+, domain/TLS, private storage networking, external versioned S3, role secrets, and a future release lock/image set |
 
 The container runtime limit is four CPUs, 4 GB RAM, 512 PIDs, and 2 GB of
 scratch. Allow about four CPU cores, 8 GB of host RAM, and 10 GB of free disk
@@ -58,7 +58,7 @@ not required.
 For the optional local service, Docker Desktop supplies the Compose plugin.
 Install Python 3.11+ from python.org, keep the system-provided `curl` current,
 and allocate at least 8 GiB to Docker Desktop (12 GiB for `service-smoke`). The
-service doctor verifies Python, Compose, curl's required flag, and the current
+service doctor verifies Python, Compose, curl's required flags, and the current
 Docker allocation before any service build.
 
 ### Linux
@@ -214,7 +214,8 @@ make build REQUEST="$PWD/build/requests/my-character.json" OUTPUT_NAME=my-charac
 make verify REQUEST="$PWD/build/requests/my-character.json" OUTPUT_NAME=my-character
 ```
 
-`make validate` checks the bounded JSON contract without starting Blender or
+`make validate` rebuilds the current checkout's builder (normally from Docker's
+cache), then checks the bounded JSON contract without starting Blender or
 writing output. See the [request examples](../examples/README.md),
 [configuration reference](configuration.md), and
 [character contract](character-spec.md) before editing fields.
@@ -348,9 +349,12 @@ other Blender versions can change rendering, import/export, or Python behavior.
 No third-party Python package is required for a normal native builder run.
 
 Set the Blender binary for your platform and run the native doctor. For a
-standard macOS application install:
+standard macOS application install, select the supported interpreter first;
+for example, after installing Python 3.11 when the system `python3` is older:
 
 ```sh
+export PYTHON=python3.11
+"$PYTHON" --version
 BLENDER=/Applications/Blender.app/Contents/MacOS/Blender \
   ./scripts/doctor --native
 ```
@@ -362,19 +366,20 @@ root:
 ```sh
 mkdir -p build
 HBCB_BLENDER_BINARY=/absolute/path/to/blender \
-  python3 -m builder_cli build \
+  "$PYTHON" -m builder_cli build \
   --request "$PWD/examples/requests/facet-bot.json" \
   --output "$PWD/build/facet-bot-native"
 
 HBCB_BLENDER_BINARY=/absolute/path/to/blender \
-  python3 -m builder_cli verify \
+  "$PYTHON" -m builder_cli verify \
   --request "$PWD/examples/requests/facet-bot.json" \
   --output "$PWD/build/facet-bot-native"
 ```
 
-The existing `make demo-native BLENDER=/absolute/path/to/blender` and
-`make verify-demo-native BLENDER=/absolute/path/to/blender` aliases use
-`build/demo/`.
+The exported `PYTHON` selector also reaches the existing
+`make demo-native BLENDER=/absolute/path/to/blender` and
+`make verify-demo-native BLENDER=/absolute/path/to/blender` aliases; they use
+`build/demo/`. Keep the same selector for the complete native session.
 
 ## Local asynchronous service
 
@@ -428,7 +433,11 @@ supported bind address remains loopback. The steady stack's configured ceilings 
 CPUs; initialization can briefly total about 7.375 GiB and 8.25 CPUs. Begin with
 at least 8 GiB allocated to Docker and 20 GB free disk. `make service-smoke` is a maintainer
 integration gate, not a required startup step: its additional direct-builder
-workload can add 4 GiB, so allocate at least 12 GiB to Docker.
+workload can add 4 GiB, so allocate at least 12 GiB to Docker. Release and CI
+validation then run `make orphan-minio-check` separately. That destructive test
+uses a newly generated, internal-only Compose project with fresh PostgreSQL and
+MinIO volumes; it never targets the persistent local-service volumes and
+verifies that its disposable containers, network, and volumes are removed.
 
 `make init-env` records `HBCB_COMPOSE_PROJECT_NAME`, a safe checkout-specific
 Compose identity. Moving a checkout together with its ignored `.env` preserves

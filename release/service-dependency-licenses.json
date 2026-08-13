@@ -22,13 +22,13 @@
     },
     "argon2-cffi-bindings": {
       "license": "MIT",
-      "source_url": "https://pypi.org/project/argon2-cffi-bindings/21.2.0/",
-      "version": "21.2.0"
+      "source_url": "https://pypi.org/project/argon2-cffi-bindings/25.1.0/",
+      "version": "25.1.0"
     },
     "async-timeout": {
       "license": "Apache-2.0",
-      "source_url": "https://pypi.org/project/async-timeout/4.0.3/",
-      "version": "4.0.3"
+      "source_url": "https://pypi.org/project/async-timeout/5.0.1/",
+      "version": "5.0.1"
     },
     "certifi": {
       "license": "MPL-2.0",
@@ -36,9 +36,9 @@
       "version": "2026.7.22"
     },
     "cffi": {
-      "license": "MIT",
-      "source_url": "https://pypi.org/project/cffi/2.1.0/",
-      "version": "2.1.0"
+      "license": "MIT-0",
+      "source_url": "https://pypi.org/project/cffi/2.1.1/",
+      "version": "2.1.1"
     },
     "click": {
       "license": "BSD-3-Clause",
@@ -47,8 +47,8 @@
     },
     "fastapi": {
       "license": "MIT",
-      "source_url": "https://pypi.org/project/fastapi/0.139.2/",
-      "version": "0.139.2"
+      "source_url": "https://pypi.org/project/fastapi/0.141.1/",
+      "version": "0.141.1"
     },
     "h11": {
       "license": "MIT",
@@ -97,13 +97,13 @@
     },
     "redis": {
       "license": "MIT",
-      "source_url": "https://pypi.org/project/redis/8.0.1/",
-      "version": "8.0.1"
+      "source_url": "https://pypi.org/project/redis/8.1.0/",
+      "version": "8.1.0"
     },
     "starlette": {
       "license": "BSD-3-Clause",
-      "source_url": "https://pypi.org/project/starlette/1.3.1/",
-      "version": "1.3.1"
+      "source_url": "https://pypi.org/project/starlette/1.6.0/",
+      "version": "1.6.0"
     },
     "typing-extensions": {
       "license": "PSF-2.0",
@@ -112,8 +112,8 @@
     },
     "typing-inspection": {
       "license": "MIT",
-      "source_url": "https://pypi.org/project/typing-inspection/0.4.2/",
-      "version": "0.4.2"
+      "source_url": "https://pypi.org/project/typing-inspection/0.4.4/",
+      "version": "0.4.4"
     },
     "urllib3": {
       "license": "MIT",
@@ -122,11 +122,11 @@
     },
     "uvicorn": {
       "license": "BSD-3-Clause",
-      "source_url": "https://pypi.org/project/uvicorn/0.51.0/",
-      "version": "0.51.0"
+      "source_url": "https://pypi.org/project/uvicorn/0.52.1/",
+      "version": "0.52.1"
     }
   },
   "format": "hbcb-service-license-inventory/v1",
   "requirements_lock": "docker/service-requirements.lock",
-  "requirements_sha256": "723149d693609efdc164dde9c2487c7a1daf46a8f5717d3a9ec93022ecfdbb2b"
+  "requirements_sha256": "bd5ab7dc17c8eda15669272e1d963688399460d7cdd3ac4d5e63ae1bd134a5bb"
 }

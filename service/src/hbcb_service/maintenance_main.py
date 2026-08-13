@@ -6,12 +6,14 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from typing import Any, Callable, Mapping, Optional, Sequence, TextIO
 
 from .config import WorkerConfig
 from .errors import ServiceError
 from .maintenance import (
     MAX_MAINTENANCE_BATCH,
+    MAX_ORPHAN_SCAN_VERSIONS,
     MAX_RETENTION_DAYS,
     MaintenanceError,
     MaintenanceService,
@@ -81,6 +83,31 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
     )
     deletion.add_argument("--worker-id", default="maintenance-v1")
+
+    orphan = commands.add_parser(
+        "discover-orphans",
+        help="preview or durably queue old unreferenced immutable object versions",
+    )
+    orphan.add_argument(
+        "--apply",
+        action="store_true",
+        help="queue exact orphan evidence for later delete-artifacts processing",
+    )
+    orphan.add_argument(
+        "--limit",
+        type=_bounded_cli_integer("orphan limit", 1, MAX_MAINTENANCE_BATCH),
+        default=100,
+    )
+    orphan.add_argument(
+        "--scan-limit",
+        type=_bounded_cli_integer("orphan scan limit", 1, MAX_ORPHAN_SCAN_VERSIONS),
+        default=MAX_ORPHAN_SCAN_VERSIONS,
+    )
+    orphan.add_argument(
+        "--orphan-grace-days",
+        type=_bounded_cli_integer("orphan grace days", 1, MAX_RETENTION_DAYS),
+        default=None,
+    )
 
     reconstruct = commands.add_parser(
         "reconstruct-redis",
@@ -234,7 +261,15 @@ def run(
     service_factory: ServiceFactory = service_from_environment,
     stdout: TextIO = sys.stdout,
     stderr: TextIO = sys.stderr,
+    now: Optional[datetime] = None,
 ) -> int:
+    """Run one maintenance command.
+
+    ``now`` is a Python-only dependency-injection seam for deterministic tests.
+    It is intentionally absent from the command-line parser, so operators
+    cannot move destructive grace-period decisions forward from the CLI.
+    """
+
     parser = build_parser()
     arguments = parser.parse_args(argv)
     selected_environment = os.environ if environment is None else environment
@@ -245,6 +280,7 @@ def run(
                 policy=_policy(arguments, selected_environment),
                 apply=arguments.apply,
                 limit=arguments.limit,
+                now=now,
             )
             _write_json(
                 stdout,
@@ -265,6 +301,7 @@ def run(
                 worker_id=arguments.worker_id,
                 apply=arguments.apply,
                 limit=arguments.limit,
+                now=now,
             )
             _write_json(
                 stdout,
@@ -273,6 +310,27 @@ def run(
                     "deleted": result.deleted,
                     "dry_run": result.dry_run,
                     "failed": result.failed,
+                },
+            )
+        elif arguments.command == "discover-orphans":
+            result = service.discover_orphan_versions(
+                policy=_policy(
+                    arguments,
+                    selected_environment,
+                    deletion_only=True,
+                ),
+                apply=arguments.apply,
+                limit=arguments.limit,
+                scan_limit=arguments.scan_limit,
+                now=now,
+            )
+            _write_json(
+                stdout,
+                {
+                    "candidates": result.candidates,
+                    "dry_run": result.dry_run,
+                    "queued": result.queued,
+                    "scanned": result.scanned,
                 },
             )
         elif arguments.command == "reconstruct-redis":

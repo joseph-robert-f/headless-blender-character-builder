@@ -44,6 +44,10 @@ EXPECTED_MANUAL_REVIEW_FILES = {
         "docker/BLENDER_SOURCE_NOTICE.md",
         "docker/blender-download.sha256",
         "docker/builder.Dockerfile",
+        "release/corresponding-source-policy.json",
+        "scripts/fetch-corresponding-source",
+        "scripts/release-artifacts",
+        "scripts/release-check",
     },
     "dockerfile-frontend": {
         "docker/builder.Dockerfile",
@@ -59,12 +63,14 @@ EXPECTED_MANUAL_REVIEW_FILES = {
         "THIRD_PARTY_NOTICES.md",
         "docker/minio.Dockerfile",
         "scripts/g8-recovery-drill",
+        "scripts/minio-recipe-id",
         "scripts/service-compose",
     },
     "osv-scanner": {
         ".github/workflows/dependency-audit.yml",
         "docs/dependency-maintenance.md",
         "docs/threat-model.md",
+        "release/vulnerability-policy.json",
         "scripts/dependency-scan",
     },
     "python-build-backend": {

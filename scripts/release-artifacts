@@ -23,8 +23,10 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 ROOT = Path(__file__).resolve().parents[1]
 MAX_FILE_BYTES = 256 * 1024 * 1024
 MAX_SOURCE_BYTES = 5 * 1024 * 1024
+MAX_CORRESPONDING_SOURCE_BYTES = 128 * 1024 * 1024
 SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+MD5 = re.compile(r"^[0-9a-f]{32}$")
 GIT_OID = re.compile(r"^[0-9a-f]{40,64}$")
 REQUIRED_SUPPLEMENTS = (
     "api.spdx.json",
@@ -36,6 +38,14 @@ IMAGE_ROLES = ("api", "builder", "worker")
 IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_DIGEST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:+-]*@sha256:[0-9a-f]{64}$")
 IMAGE_REFERENCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:+-]{0,254}$")
+SOURCE_POLICY_PATH = "release/corresponding-source-policy.json"
+CANONICAL_SOURCE_URL = "https://github.com/joseph-robert-f/headless-blender-character-builder"
+OFFICIAL_BLENDER_SOURCE_PREFIX = "https://download.blender.org/source/"
+EXPECTED_IMAGE_TAGS = {
+    "api": "headless-blender-character-builder-api",
+    "builder": "headless-blender-character-builder",
+    "worker": "headless-blender-character-builder-worker",
+}
 SAMPLE_ARTIFACTS = (
     "diagnostics/back.png",
     "diagnostics/front.png",
@@ -116,7 +126,7 @@ def _load_audit(payload: bytes) -> Dict[str, object]:
     if not isinstance(report.get("source_tree_sha256"), str) or SHA256.fullmatch(report["source_tree_sha256"]) is None:  # type: ignore[arg-type]
         raise PackagingFailure("invalid_audit_report", "release audit tree digest is invalid")
     head = report.get("git_head")
-    if head is not None and (not isinstance(head, str) or GIT_OID.fullmatch(head) is None):
+    if not isinstance(head, str) or GIT_OID.fullmatch(head) is None:
         raise PackagingFailure("invalid_audit_report", "release audit Git revision is invalid")
     files = report.get("files")
     if not isinstance(files, list) or not files:
@@ -147,6 +157,81 @@ def _load_audit(payload: bytes) -> Dict[str, object]:
     if report.get("file_count") != len(files) or report.get("total_bytes") != total:
         raise PackagingFailure("invalid_audit_report", "release audit totals are inconsistent")
     return report
+
+
+def _load_corresponding_source_policy(payload: bytes) -> Dict[str, object]:
+    try:
+        document = json.loads(payload.decode("utf-8", "strict"))
+    except (UnicodeDecodeError, ValueError):
+        raise PackagingFailure(
+            "invalid_source_policy", "corresponding-source policy is invalid JSON"
+        ) from None
+    if not isinstance(document, dict) or set(document) != {"blender", "format"}:
+        raise PackagingFailure(
+            "invalid_source_policy", "corresponding-source policy has unsupported fields"
+        )
+    if document.get("format") != "hbcb-corresponding-source-policy/v1":
+        raise PackagingFailure(
+            "invalid_source_policy", "corresponding-source policy format is unsupported"
+        )
+    blender = document.get("blender")
+    expected = {
+        "archive",
+        "bytes",
+        "license",
+        "official_md5",
+        "sha256",
+        "source_url",
+        "version",
+    }
+    if not isinstance(blender, dict) or set(blender) != expected:
+        raise PackagingFailure(
+            "invalid_source_policy", "Blender source policy has unsupported fields"
+        )
+    version = blender.get("version")
+    archive = blender.get("archive")
+    size = blender.get("bytes")
+    digest = blender.get("sha256")
+    official_md5 = blender.get("official_md5")
+    if (
+        not isinstance(version, str)
+        or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None
+        or archive != "blender-" + version + ".tar.xz"
+        or blender.get("source_url") != OFFICIAL_BLENDER_SOURCE_PREFIX + str(archive)
+        or blender.get("license") != "GPL-3.0-or-later"
+        or not isinstance(size, int)
+        or size < 1
+        or size > MAX_CORRESPONDING_SOURCE_BYTES
+        or not isinstance(digest, str)
+        or SHA256.fullmatch(digest) is None
+        or not isinstance(official_md5, str)
+        or MD5.fullmatch(official_md5) is None
+    ):
+        raise PackagingFailure(
+            "invalid_source_policy", "Blender source policy values violate release policy"
+        )
+    return blender
+
+
+def _validate_source_notice(payload: bytes, policy: Mapping[str, object]) -> None:
+    try:
+        notice = payload.decode("utf-8", "strict")
+    except UnicodeDecodeError:
+        raise PackagingFailure(
+            "invalid_source_notice", "Blender source notice is not valid UTF-8"
+        ) from None
+    required = (
+        "Corresponding source archive: <%s>" % policy["source_url"],
+        "Corresponding source bytes: `%s`" % policy["bytes"],
+        "Corresponding source SHA-256: `%s`" % policy["sha256"],
+        "Upstream-published corresponding source MD5: `%s`"
+        % policy["official_md5"],
+    )
+    if any(marker not in notice for marker in required):
+        raise PackagingFailure(
+            "invalid_source_notice",
+            "Blender source notice does not match corresponding-source policy",
+        )
 
 
 def _tree_paths(root: Path) -> List[str]:
@@ -248,7 +333,12 @@ def _validate_spdx(payload: bytes, expected_name: str) -> None:
         raise PackagingFailure("invalid_supplement", "release SPDX supplement describes the wrong component: " + expected_name)
 
 
-def _normalize_image_inspect(role: str, payload: bytes) -> Dict[str, object]:
+def _normalize_image_inspect(
+    role: str,
+    payload: bytes,
+    expected_version: str,
+    expected_revision: str,
+) -> Dict[str, object]:
     try:
         decoded = json.loads(payload.decode("utf-8", "strict"))
     except (UnicodeDecodeError, ValueError):
@@ -287,6 +377,7 @@ def _normalize_image_inspect(role: str, payload: bytes) -> Dict[str, object]:
         raise PackagingFailure("invalid_image_metadata", "release image labels are missing: " + role)
     required_labels = (
         "org.opencontainers.image.licenses",
+        "org.opencontainers.image.revision",
         "org.opencontainers.image.source",
         "org.opencontainers.image.version",
     )
@@ -294,10 +385,25 @@ def _normalize_image_inspect(role: str, payload: bytes) -> Dict[str, object]:
         raise PackagingFailure("invalid_image_metadata", "release image labels are incomplete: " + role)
     if (
         labels["org.opencontainers.image.licenses"] != "GPL-3.0-or-later"
-        or not labels["org.opencontainers.image.source"].startswith("https://")
-        or SEMVER.fullmatch(labels["org.opencontainers.image.version"]) is None
+        or labels["org.opencontainers.image.source"] != CANONICAL_SOURCE_URL
+        or labels["org.opencontainers.image.version"] != expected_version
+        or labels["org.opencontainers.image.revision"] != expected_revision
     ):
         raise PackagingFailure("invalid_image_metadata", "release image labels violate policy: " + role)
+    expected_tag = EXPECTED_IMAGE_TAGS[role] + ":" + expected_version
+    if expected_tag not in tags:
+        raise PackagingFailure(
+            "invalid_image_metadata", "release image tag does not match distribution identity: " + role
+        )
+    if role in {"builder", "worker"}:
+        if (
+            labels.get("org.blender.version") != "4.5.12 LTS"
+            or labels.get("org.blender.download.sha256")
+            != "95e3a2dfedba3bd32ca54fc355eac6b15a11986954ccb02815a07535d0120a25"
+        ):
+            raise PackagingFailure(
+                "invalid_image_metadata", "release Blender identity is invalid: " + role
+            )
     selected_labels = {
         key: labels[key]
         for key in sorted(labels)
@@ -337,21 +443,30 @@ def _normalize_image_inspect(role: str, payload: bytes) -> Dict[str, object]:
     }
 
 
-def _image_evidence(paths: Mapping[str, Path]) -> Dict[str, object]:
+def _image_evidence(
+    paths: Mapping[str, Path],
+    expected_version: str,
+    expected_revision: str,
+) -> Dict[str, object]:
     if set(paths) != set(IMAGE_ROLES):
         raise PackagingFailure("image_evidence_incomplete", "builder, API, and worker image inspect inputs are required")
     images = {}
     for role in IMAGE_ROLES:
         images[role] = _normalize_image_inspect(
-            role, _read_regular(paths[role].resolve(), MAX_FILE_BYTES)
+            role,
+            _read_regular(paths[role].resolve(), MAX_FILE_BYTES),
+            expected_version,
+            expected_revision,
         )
     ids = [images[role]["image_id"] for role in IMAGE_ROLES]
     if len(set(ids)) != len(ids):
         raise PackagingFailure("image_evidence_invalid", "builder, API, and worker image IDs must be distinct")
     return {
-        "format": "hbcb-image-evidence/v1",
+        "distribution_version": expected_version,
+        "format": "hbcb-image-evidence/v2",
         "images": images,
         "platform": "linux/amd64",
+        "source_revision": expected_revision,
     }
 
 
@@ -421,6 +536,106 @@ def _supplements(root: Path) -> Dict[str, bytes]:
     if "Lock SHA-256:" not in notice or "License:" not in notice:
         raise PackagingFailure("invalid_supplement", "service notices are incomplete")
     return result
+
+
+def _corresponding_source(root: Path, policy: Mapping[str, object]) -> Tuple[str, bytes]:
+    try:
+        metadata = root.lstat()
+    except OSError:
+        raise PackagingFailure(
+            "corresponding_source_unavailable", "corresponding-source directory is unavailable"
+        ) from None
+    if root.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+        raise PackagingFailure(
+            "unsafe_corresponding_source", "corresponding-source input must be a real directory"
+        )
+    archive = policy["archive"]
+    expected_size = policy["bytes"]
+    expected_sha256 = policy["sha256"]
+    assert isinstance(archive, str)
+    assert isinstance(expected_size, int)
+    assert isinstance(expected_sha256, str)
+    try:
+        names = sorted(path.name for path in root.iterdir())
+    except OSError:
+        raise PackagingFailure(
+            "corresponding_source_unreadable", "corresponding-source directory cannot be read"
+        ) from None
+    if names != [archive]:
+        raise PackagingFailure(
+            "corresponding_source_set_mismatch",
+            "corresponding-source directory must contain exactly the pinned Blender archive",
+        )
+    payload = _read_regular(root / archive, MAX_CORRESPONDING_SOURCE_BYTES)
+    if len(payload) != expected_size or hashlib.sha256(payload).hexdigest() != expected_sha256:
+        raise PackagingFailure(
+            "corresponding_source_mismatch",
+            "Blender corresponding-source archive does not match pinned bytes and SHA-256",
+        )
+    return archive, payload
+
+
+def _corresponding_source_inventory(
+    version: str,
+    revision: str,
+    project_archive: str,
+    project_payload: bytes,
+    blender_archive: str,
+    blender_payload: bytes,
+    policy: Mapping[str, object],
+    image_records: Mapping[str, object],
+) -> Dict[str, object]:
+    materials = {
+        "blender-source": {
+            "artifact": blender_archive,
+            "bytes": len(blender_payload),
+            "license": policy["license"],
+            "origin": policy["source_url"],
+            "sha256": hashlib.sha256(blender_payload).hexdigest(),
+            "version": policy["version"],
+        },
+        "project-source": {
+            "artifact": project_archive,
+            "bytes": len(project_payload),
+            "license": "GPL-3.0-or-later",
+            "origin": CANONICAL_SOURCE_URL,
+            "sha256": hashlib.sha256(project_payload).hexdigest(),
+            "version": version,
+        },
+    }
+    role_materials = {
+        "api": ["project-source"],
+        "builder": ["blender-source", "project-source"],
+        "worker": ["blender-source", "project-source"],
+    }
+    images = {}
+    for role in IMAGE_ROLES:
+        record = image_records[role]
+        assert isinstance(record, dict)
+        images[role] = {
+            "image_id": record["image_id"],
+            "materials": role_materials[role],
+            "notices": (
+                ["BLENDER_SOURCE_NOTICE.md"]
+                if role == "builder"
+                else ["BLENDER_SOURCE_NOTICE.md", "SERVICE_THIRD_PARTY_NOTICES.txt"]
+                if role == "worker"
+                else ["SERVICE_THIRD_PARTY_NOTICES.txt"]
+            ),
+            "sbom": role + ".spdx.json",
+        }
+    return {
+        "delivery_method": "co-published-release-assets",
+        "distribution_version": version,
+        "format": "hbcb-corresponding-source-inventory/v1",
+        "images": images,
+        "materials": materials,
+        "public_oci_ready": False,
+        "publication_gate": "blocked-pending-complete-copyleft-source-review",
+        "retention": "retain-with-each-public-image-version-for-its-public-lifetime",
+        "scope": "project-and-blender-source-only",
+        "source_revision": revision,
+    }
 
 
 def _timestamp(epoch: int) -> str:
@@ -493,6 +708,7 @@ def package(
     source: Path,
     audit_report: Path,
     supplements_dir: Path,
+    corresponding_source_dir: Path,
     demo_artifacts: Path,
     image_inspects: Mapping[str, Path],
     output_dir: Path,
@@ -517,8 +733,26 @@ def package(
     audit_payload = _read_regular(audit_report.resolve(), MAX_FILE_BYTES)
     report = _load_audit(audit_payload)
     files = _verify_source(source, report)
+    source_payloads = {path: payload for path, _mode, payload in files}
+    if SOURCE_POLICY_PATH not in source_payloads:
+        raise PackagingFailure(
+            "source_policy_missing", "audited source omits the corresponding-source policy"
+        )
+    if "docker/BLENDER_SOURCE_NOTICE.md" not in source_payloads:
+        raise PackagingFailure(
+            "source_notice_missing", "audited source omits the Blender source notice"
+        )
+    source_policy = _load_corresponding_source_policy(source_payloads[SOURCE_POLICY_PATH])
+    _validate_source_notice(
+        source_payloads["docker/BLENDER_SOURCE_NOTICE.md"], source_policy
+    )
+    blender_archive, blender_source_payload = _corresponding_source(
+        corresponding_source_dir, source_policy
+    )
     supplements = _supplements(supplements_dir.resolve())
-    image_evidence = _image_evidence(image_inspects)
+    revision = report["git_head"]
+    assert isinstance(revision, str)
+    image_evidence = _image_evidence(image_inspects, version, revision)
     image_records = image_evidence["images"]
     assert isinstance(image_records, dict)
     builder_record = image_records["builder"]
@@ -534,7 +768,36 @@ def package(
         archive_path = temporary / archive_name
         _tar_bytes(archive_path, prefix, files, source_date_epoch)
         archive_path.chmod(0o644)
+        project_source_payload = _read_regular(archive_path, MAX_FILE_BYTES)
+        sample_archive_name = prefix + "-sample.tar.gz"
+        sample_archive_path = temporary / sample_archive_name
+        _tar_bytes(
+            sample_archive_path,
+            "sample",
+            [
+                (name, "100644", payload)
+                for name, payload in sorted(samples.items())
+            ],
+            source_date_epoch,
+        )
+        sample_archive_path.chmod(0o644)
+        source_inventory = _corresponding_source_inventory(
+            version,
+            revision,
+            archive_name,
+            project_source_payload,
+            blender_archive,
+            blender_source_payload,
+            source_policy,
+            image_records,
+        )
+        source_inventory_payload = _json_bytes(source_inventory)
         payloads: Dict[str, bytes] = {
+            "BLENDER_SOURCE_NOTICE.md": source_payloads[
+                "docker/BLENDER_SOURCE_NOTICE.md"
+            ],
+            blender_archive: blender_source_payload,
+            "corresponding-source.json": source_inventory_payload,
             "image-metadata.json": _json_bytes(image_evidence),
             "source-audit.json": _json_bytes(report),
         }
@@ -548,7 +811,7 @@ def package(
                 current.chmod(0o755)
                 current = current.parent
             _write_file(temporary / name, payload)
-        described_names = [archive_name] + sorted(payloads)
+        described_names = [archive_name, sample_archive_name] + sorted(payloads)
         described = []
         for name in described_names:
             payload = _read_regular(temporary / name, MAX_FILE_BYTES)
@@ -561,8 +824,11 @@ def package(
             )
         metadata = {
             "artifacts": described,
+            "corresponding_source_inventory_sha256": hashlib.sha256(
+                source_inventory_payload
+            ).hexdigest(),
             "created": created,
-            "format": "hbcb-release-metadata/v1",
+            "format": "hbcb-release-metadata/v2",
             "git_head": report["git_head"],
             "git_index_sha256": report["git_index_sha256"],
             "image_ids": {
@@ -599,6 +865,12 @@ def _arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--source", type=Path, required=True, help="audited checkout-index export")
     parser.add_argument("--audit-report", type=Path, required=True, help="JSON from scripts/release-audit")
     parser.add_argument("--supplements-dir", type=Path, required=True, help="output from scripts/service-sbom")
+    parser.add_argument(
+        "--corresponding-source-dir",
+        type=Path,
+        required=True,
+        help="verified output from scripts/fetch-corresponding-source",
+    )
     parser.add_argument("--demo-artifacts", type=Path, required=True, help="verified build/demo artifact tree")
     parser.add_argument(
         "--image-inspect",
@@ -635,6 +907,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             arguments.source,
             arguments.audit_report,
             arguments.supplements_dir,
+            arguments.corresponding_source_dir,
             arguments.demo_artifacts,
             image_inspects,
             arguments.output_dir,

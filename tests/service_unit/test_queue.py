@@ -11,24 +11,6 @@ class ResponseError(Exception):
     pass
 
 
-class FakePipeline:
-    def __init__(self, client: "FakeRedis") -> None:
-        self.client = client
-        self.commands = []
-
-    def xadd(self, stream: str, fields: dict[str, str]) -> "FakePipeline":
-        self.commands.append(("xadd", stream, fields))
-        return self
-
-    def xack(self, stream: str, group: str, receipt: str) -> "FakePipeline":
-        self.commands.append(("xack", stream, group, receipt))
-        return self
-
-    def execute(self) -> list[object]:
-        self.client.pipeline_commands = list(self.commands)
-        return [b"9-0", 1]
-
-
 class FakeRedis:
     def __init__(self) -> None:
         self.group_calls = []
@@ -36,8 +18,8 @@ class FakeRedis:
         self.read_response = []
         self.autoclaim_response = [b"0-0", [], []]
         self.autoclaim_calls = []
-        self.ack_result = 1
-        self.pipeline_commands = []
+        self.eval_calls = []
+        self.eval_results = [[1, 1], [b"9-0", 1, 1], [b"10-0", 1, 1]]
         self.raise_group = None
 
     def xgroup_create(self, *args: object, **kwargs: object) -> None:
@@ -57,13 +39,9 @@ class FakeRedis:
         self.autoclaim_calls.append((args, kwargs))
         return self.autoclaim_response
 
-    def xack(self, *args: object) -> int:
-        self.ack_arguments = args
-        return self.ack_result
-
-    def pipeline(self, *, transaction: bool) -> FakePipeline:
-        self.pipeline_transaction = transaction
-        return FakePipeline(self)
+    def eval(self, *args: object) -> object:
+        self.eval_calls.append(args)
+        return self.eval_results.pop(0)
 
 
 class RedisQueueContractTests(unittest.TestCase):
@@ -167,21 +145,17 @@ class RedisQueueContractTests(unittest.TestCase):
     def test_acknowledge_requeue_and_dead_letter_use_fixed_transaction(self) -> None:
         message = QueueMessage(self.build_id, "7-1")
         self.queue.acknowledge(message)
-        self.assertEqual(
-            self.client.ack_arguments,
-            (self.queue.stream, "workers-v1", "7-1"),
-        )
+        self.assertEqual(self.client.eval_calls[0][1:], (1, self.queue.stream, "workers-v1", "7-1"))
         self.assertEqual(self.queue.requeue(message), "9-0")
-        self.assertEqual(
-            self.client.pipeline_commands,
-            [
-                ("xadd", self.queue.stream, {"build_id": str(self.build_id)}),
-                ("xack", self.queue.stream, "workers-v1", "7-1"),
-            ],
-        )
-        self.assertEqual(self.queue.dead_letter(message), "9-0")
-        self.assertEqual(self.client.pipeline_commands[0][1], self.queue.dead_stream)
-        self.assertTrue(self.client.pipeline_transaction)
+        self.assertEqual(self.queue.dead_letter(message), "10-0")
+        requeue = self.client.eval_calls[1]
+        dead = self.client.eval_calls[2]
+        self.assertEqual(requeue[1:4], (2, self.queue.stream, self.queue.stream))
+        self.assertEqual(requeue[-1], "0")
+        self.assertEqual(dead[1:4], (2, self.queue.stream, self.queue.dead_stream))
+        self.assertEqual(dead[-1], "10000")
+        self.assertIn("XDEL", str(requeue[0]))
+        self.assertIn("MAXLEN", str(dead[0]))
 
     def test_timeout_consumer_and_namespace_limits_fail_before_redis(self) -> None:
         for consumer, timeout in (("bad consumer", 1), ("worker", -1), ("worker", 60_001)):
@@ -190,6 +164,9 @@ class RedisQueueContractTests(unittest.TestCase):
         for namespace in ("", "UPPER", "../escape", "a" * 33):
             with self.assertRaises(QueueError):
                 RedisStreamsQueue(self.client, namespace)
+        for limit in (True, 0, 1_000_001, "100"):
+            with self.assertRaises(QueueError):
+                RedisStreamsQueue(self.client, "local", dead_letter_max_entries=limit)  # type: ignore[arg-type]
 
 
 class InMemoryQueueTests(unittest.TestCase):
@@ -205,3 +182,13 @@ class InMemoryQueueTests(unittest.TestCase):
         queue.dead_letter(replay)
         self.assertEqual(queue.dead_messages[0].build_id, build_id)
         self.assertIsNone(queue.claim("worker-1", block_ms=0))
+
+    def test_reference_dead_letter_retention_is_exactly_bounded(self) -> None:
+        queue = InMemoryBuildQueue(dead_letter_max_entries=2)
+        build_ids = [uuid4() for _ in range(3)]
+        for build_id in build_ids:
+            queue.enqueue(build_id)
+            claimed = queue.claim("worker-1", block_ms=0)
+            assert claimed is not None
+            queue.dead_letter(claimed)
+        self.assertEqual([item.build_id for item in queue.dead_messages], build_ids[-2:])

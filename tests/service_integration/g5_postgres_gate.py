@@ -27,6 +27,8 @@ def main() -> int:
         if first.applied != (
             "0001_g5_foundation",
             "0002_g6_outbox_counter",
+            "0003_g8_retention",
+            "0004_p1_durable_lifecycle",
         ) or not second.already_current:
             raise RuntimeError("migration application was not forward-only and idempotent")
         with connection.cursor() as cursor:
@@ -39,7 +41,7 @@ def main() -> int:
                 WHERE table_schema = 'hbcb'
                 """
             )
-            if cursor.fetchone()[0] != 7:
+            if cursor.fetchone()[0] != 10:
                 raise RuntimeError("unexpected durable table inventory")
             cursor.execute(
                 """
@@ -57,6 +59,8 @@ def main() -> int:
                 "events_status_check",
                 "artifacts_attempt_owner_fk",
                 "artifacts_content_type_check",
+                "deletion_queue_evidence_origin_check",
+                "deletion_queue_object_time_check",
             }
             if not required_constraints <= constraints:
                 raise RuntimeError("required PostgreSQL constraints are missing")

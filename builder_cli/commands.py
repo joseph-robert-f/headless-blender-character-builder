@@ -10,6 +10,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -27,6 +28,10 @@ PUBLISHED_VERIFIER = ROOT / "blender" / "published_verifier.py"
 CONTAINER_BLENDER = Path("/opt/blender/blender")
 PROVENANCE_ROOT = Path("/opt/builder/provenance")
 BUILD_TIMEOUT_SECONDS = 15 * 60
+PROCESS_TERM_GRACE_SECONDS = 5.0
+PROCESS_KILL_GRACE_SECONDS = 5.0
+PROCESS_GROUP_POLL_SECONDS = 0.02
+PROCESS_SIGNAL_POLL_SECONDS = 0.1
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 MAX_VERIFIER_RESULT_BYTES = 64 * 1024
 PUBLISHED_VERIFICATION_VERSION = "published-artifact-verifier/v1"
@@ -73,6 +78,15 @@ REQUEST_REJECTION_REASONS = {
     "unsupported_contract_value": "value does not match the supported build contract",
     "unsupported_version": "value does not match the supported character-spec version",
 }
+_TERMINATION_SIGNALS = tuple(
+    item
+    for item in (
+        signal.SIGINT,
+        getattr(signal, "SIGHUP", None),
+        signal.SIGTERM,
+    )
+    if isinstance(item, int)
+)
 
 
 class BuilderCliFailure(RuntimeError):
@@ -80,6 +94,63 @@ class BuilderCliFailure(RuntimeError):
         super().__init__(message)
         self.exit_code = int(exit_code)
         self.message = message
+
+
+class _TerminationSignal(SystemExit):
+    """Preserve the conventional shell status for a recorded TERM or HUP."""
+
+    def __init__(self, signum: int) -> None:
+        self.signum = signum
+        super().__init__(128 + signum)
+
+
+class _TerminationGuard:
+    """Defer CLI-default termination signals until an owned child is published."""
+
+    def __init__(self) -> None:
+        self.received: int | None = None
+        self.previous: dict[int, Any] = {}
+        self.installed: set[int] = set()
+
+    def _record(self, signum: int, _frame: object) -> None:
+        if self.received is None:
+            self.received = int(signum)
+
+    def __enter__(self) -> _TerminationGuard:
+        try:
+            for signum in _TERMINATION_SIGNALS:
+                previous = signal.getsignal(signum)
+                self.previous[signum] = previous
+                # An embedding process owns explicit custom/ignored behavior.
+                # Python's usual SIGINT handler is the interactive CLI default.
+                if previous == signal.SIG_DFL or (
+                    signum == signal.SIGINT
+                    and previous == signal.default_int_handler
+                ):
+                    signal.signal(signum, self._record)
+                    self.installed.add(signum)
+        except (OSError, RuntimeError, ValueError) as exc:
+            for installed in self.installed:
+                signal.signal(installed, self.previous[installed])
+            raise BuilderCliFailure(
+                int(ExitCode.INTERNAL),
+                "could not establish signal-safe Blender execution",
+            ) from exc
+        return self
+
+    def __exit__(self, exception_type: object, _value: object, _traceback: object) -> None:
+        for signum in self.installed:
+            signal.signal(signum, self.previous[signum])
+        # A first signal may arrive while teardown is handling an unrelated
+        # failure. Preserve the operator-requested signal status in that case.
+        self.raise_if_pending()
+
+    def raise_if_pending(self) -> None:
+        if self.received is None:
+            return
+        if self.received == signal.SIGINT:
+            raise KeyboardInterrupt
+        raise _TerminationSignal(self.received)
 
 
 def _request_rejection(exc: ContractValidationError) -> str:
@@ -258,42 +329,142 @@ def _blender_binary() -> Path:
     return resolved
 
 
-def _terminate(process: subprocess.Popen[Any]) -> None:
+def _process_group_exists(process_group: int) -> bool:
     try:
-        if os.name == "nt":
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return False
+    except (OSError, PermissionError):
+        # An unexpected failure cannot prove that all descendants are gone.
+        return True
+    return True
+
+
+def _signal_process_group(process: subprocess.Popen[Any], selected_signal: int) -> None:
+    try:
+        os.killpg(process.pid, selected_signal)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        # Retain a direct-child fallback, while group polling below remains
+        # fail-closed when a POSIX descendant is still alive.
+        try:
+            if selected_signal == signal.SIGKILL:
+                process.kill()
+            else:
+                process.terminate()
+        except OSError:
+            pass
+
+
+def _wait_for_process_group_exit(
+    process: subprocess.Popen[Any],
+    deadline: float,
+) -> bool:
+    while True:
+        try:
+            process.poll()
+        except OSError:
+            pass
+        if not _process_group_exists(process.pid):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(PROCESS_GROUP_POLL_SECONDS, remaining))
+
+
+def _terminate(process: subprocess.Popen[Any]) -> None:
+    """Boundedly stop the complete new-session child tree and reap its leader."""
+
+    if os.name == "nt":
+        try:
             process.terminate()
-        else:
-            os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=5)
+            process.wait(timeout=PROCESS_TERM_GRACE_SECONDS)
+            return
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        try:
+            process.kill()
+            process.wait(timeout=PROCESS_KILL_GRACE_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
         return
+
+    _signal_process_group(process, signal.SIGTERM)
+    group_gone = _wait_for_process_group_exit(
+        process,
+        time.monotonic() + PROCESS_TERM_GRACE_SECONDS,
+    )
+    if not group_gone:
+        _signal_process_group(process, signal.SIGKILL)
+        _wait_for_process_group_exit(
+            process,
+            time.monotonic() + PROCESS_KILL_GRACE_SECONDS,
+        )
+    try:
+        if process.poll() is None:
+            process.wait(timeout=PROCESS_KILL_GRACE_SECONDS)
     except (OSError, subprocess.TimeoutExpired):
         pass
-    try:
-        if os.name == "nt":
-            process.kill()
-        else:
-            os.killpg(process.pid, signal.SIGKILL)
-        process.wait(timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
-        return
 
 
 def _run(command: Sequence[str], environment: Mapping[str, str]) -> int:
-    try:
-        process = subprocess.Popen(
-            list(command),
-            cwd=str(ROOT),
-            env=dict(environment),
-            stdin=subprocess.DEVNULL,
-            start_new_session=os.name != "nt",
-        )
-    except OSError as exc:
-        raise BuilderCliFailure(int(ExitCode.INTERNAL), "could not start Blender") from exc
-    try:
-        return_code = process.wait(timeout=BUILD_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired as exc:
-        _terminate(process)
-        raise BuilderCliFailure(int(ExitCode.TIMEOUT), "controlled wall-clock timeout") from exc
+    process: subprocess.Popen[Any] | None = None
+    with _TerminationGuard() as termination:
+        try:
+            termination.raise_if_pending()
+            spawn_failure: OSError | None = None
+            try:
+                process = subprocess.Popen(
+                    list(command),
+                    cwd=str(ROOT),
+                    env=dict(environment),
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=os.name != "nt",
+                )
+            except OSError as exc:
+                spawn_failure = exc
+
+            # The installed handlers never raise from inside Popen. A signal
+            # delivered during spawn is recorded, Popen publishes its process
+            # object, and only this ownership-safe checkpoint may unwind.
+            termination.raise_if_pending()
+            if spawn_failure is not None:
+                raise BuilderCliFailure(
+                    int(ExitCode.INTERNAL), "could not start Blender"
+                ) from spawn_failure
+            if process is None:
+                raise BuilderCliFailure(
+                    int(ExitCode.INTERNAL), "could not start Blender"
+                )
+
+            deadline = time.monotonic() + BUILD_TIMEOUT_SECONDS
+            while True:
+                termination.raise_if_pending()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise BuilderCliFailure(
+                        int(ExitCode.TIMEOUT), "controlled wall-clock timeout"
+                    )
+                try:
+                    return_code = process.wait(
+                        timeout=min(PROCESS_SIGNAL_POLL_SECONDS, remaining)
+                    )
+                except subprocess.TimeoutExpired:
+                    continue
+                termination.raise_if_pending()
+                break
+            if os.name != "nt" and _process_group_exists(process.pid):
+                _terminate(process)
+            termination.raise_if_pending()
+        except BaseException:
+            # Keep the record-only handlers installed until the complete
+            # child group has been stopped and reaped. Repeated termination
+            # signals therefore cannot interrupt teardown and orphan Blender.
+            if process is not None:
+                _terminate(process)
+            raise
     return 128 + abs(return_code) if return_code < 0 else return_code
 
 

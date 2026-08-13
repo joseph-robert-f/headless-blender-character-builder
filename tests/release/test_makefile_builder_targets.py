@@ -147,6 +147,42 @@ class MakefileBuilderTargetTests(unittest.TestCase):
             )
             self.assertEqual(run[-2:], ["--output", "/output/custom-model"])
 
+    def test_repository_relative_request_is_normalized_for_docker_mounts(self) -> None:
+        environment = os.environ.copy()
+        environment.pop("OUTPUT_NAME", None)
+        with tempfile.TemporaryDirectory(
+            prefix=".hbcb-relative-request-", dir=ROOT
+        ) as temporary:
+            root = Path(temporary)
+            docker = root / "docker"
+            docker_log = root / "docker.log"
+            request = root / "request.json"
+            build_parent = root / "artifacts"
+            write_executable(docker, FAKE_DOCKER)
+            request.write_bytes(
+                (ROOT / "examples" / "requests" / "facet-bot.json").read_bytes()
+            )
+            environment.update(
+                {"FAKE_DOCKER_LOG": str(docker_log), "FAKE_IMAGE_ID": IMAGE_ID}
+            )
+            relative_request = request.relative_to(ROOT)
+            built = self.run_make(
+                "build",
+                environment=environment,
+                docker=docker,
+                request=relative_request,
+                build_parent=build_parent,
+                output_name="relative-model",
+            )
+            self.assertEqual(built.returncode, 0, built.stdout)
+            run = docker_log.read_text(encoding="utf-8").splitlines()[-1].split("\t")
+            self.assertIn(
+                "type=bind,source="
+                + str(ROOT / relative_request)
+                + ",target=/input/request.json,readonly",
+                run,
+            )
+
     def test_demo_targets_remain_aliases_for_demo_output(self) -> None:
         with tempfile.TemporaryDirectory(prefix="hbcb-make-demo-") as temporary:
             environment, docker, docker_log, request, build_parent = self.fixture(
@@ -388,7 +424,7 @@ class MakefileBuilderTargetTests(unittest.TestCase):
                 line.split("\t")
                 for line in docker_log.read_text(encoding="utf-8").splitlines()
             ]
-            self.assertEqual([record[0] for record in records], ["image", "run"])
+            self.assertEqual([record[0] for record in records], ["build", "run"])
             run = records[-1]
             self.assertEqual(run[-3:], ["validate", "--request", "/input/request.json"])
             self.assertEqual(

@@ -81,15 +81,20 @@
         "docker/builder.Dockerfile",
         "docker/blender-download.sha256",
         "docker/BLENDER_SOURCE_NOTICE.md",
+        "release/corresponding-source-policy.json",
+        "scripts/fetch-corresponding-source",
+        "scripts/release-artifacts",
+        "scripts/release-check",
         "THIRD_PARTY_NOTICES.md"
       ],
       "id": "blender",
       "name": "Blender binary and corresponding source",
-      "reason": "Confirm the selected LTS release, archive checksum, runtime compatibility, notices, and corresponding-source offer together."
+      "reason": "Confirm the selected LTS release, binary and source archive checksums, runtime compatibility, notices, image mapping, and corresponding-source delivery gate together."
     },
     {
       "files": [
         "docker/minio.Dockerfile",
+        "scripts/minio-recipe-id",
         "scripts/service-compose",
         "scripts/g8-recovery-drill",
         "THIRD_PARTY_NOTICES.md"
@@ -113,6 +118,7 @@
         ".github/workflows/dependency-audit.yml",
         "docs/dependency-maintenance.md",
         "docs/threat-model.md",
+        "release/vulnerability-policy.json",
         "scripts/dependency-scan"
       ],
       "id": "osv-scanner",

@@ -34,9 +34,15 @@ FIXTURE_FILES = (
     "docs/threat-model.md",
     "pyproject.toml",
     "release/dependency-policy.json",
+    "release/corresponding-source-policy.json",
     "release/service-dependency-licenses.json",
+    "release/vulnerability-policy.json",
+    "scripts/fetch-corresponding-source",
     "scripts/g8-recovery-drill",
     "scripts/dependency-scan",
+    "scripts/minio-recipe-id",
+    "scripts/release-artifacts",
+    "scripts/release-check",
     "scripts/service-compose",
     "service/pyproject.toml",
     "tests/deployment/g8_recovery_compose.yaml",
@@ -186,12 +192,12 @@ class DependencyAuditTests(unittest.TestCase):
     def test_notice_versions_are_matched_as_complete_tokens(self) -> None:
         self.assertFalse(
             audit_tool.table_row_has_version(
-                "| redis-py | 18.0.1 | MIT |", "redis-py", "8.0.1"
+                "| redis-py | 18.1.0 | MIT |", "redis-py", "8.1.0"
             )
         )
         self.assertFalse(
             audit_tool.table_row_has_version(
-                "| redis-py | 8.0.10 | MIT |", "redis-py", "8.0.1"
+                "| redis-py | 8.1.00 | MIT |", "redis-py", "8.1.0"
             )
         )
 
@@ -224,19 +230,46 @@ class DependencyAuditTests(unittest.TestCase):
             scan_tool.final_status([{"status": "pass"}], ["network"]),
             "incomplete",
         )
+        timed_out = mock.Mock(pid=12345)
+        timed_out.poll.return_value = 0
+
+        def process_group_signal(_process_group, selected_signal):
+            if selected_signal == 0:
+                raise ProcessLookupError
+
         with mock.patch.object(
             scan_tool.subprocess,
-            "run",
-            side_effect=scan_tool.subprocess.TimeoutExpired(["scan"], 1),
-        ):
-            self.assertEqual(scan_tool.run(["scan"], timeout=1), 124)
-        with mock.patch.object(scan_tool.subprocess, "run", side_effect=OSError):
+            "Popen",
+            return_value=timed_out,
+        ), mock.patch.object(
+            scan_tool.os,
+            "killpg",
+            side_effect=process_group_signal,
+        ) as kill_group:
+            self.assertEqual(scan_tool.run(["scan"], timeout=0), 124)
+        self.assertEqual(
+            kill_group.call_args_list,
+            [
+                mock.call(12345, scan_tool.signal.SIGTERM),
+                mock.call(12345, 0),
+            ],
+        )
+        with mock.patch.object(scan_tool.subprocess, "Popen", side_effect=OSError):
             self.assertEqual(scan_tool.run(["scan"]), 127)
 
         with tempfile.TemporaryDirectory() as temporary:
             report = Path(temporary) / "osv.json"
             report.write_text(
-                json.dumps({"results": [{"source": str(ROOT / "docker")}]}),
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "packages": [],
+                                "source": str(ROOT / "docker"),
+                            }
+                        ]
+                    }
+                ),
                 encoding="utf-8",
             )
             code, name = scan_tool.validate_scan_report(report, 0)
@@ -283,8 +316,8 @@ class DependencyAuditTests(unittest.TestCase):
             replace_once(
                 root,
                 "service/pyproject.toml",
-                '"fastapi==0.139.2"',
-                '"fastapi==0.139.3"',
+                '"fastapi==0.141.1"',
+                '"fastapi==0.141.2"',
             )
             report = audit_tool.run_audit(root, online=False)
             self.assert_check_failure(report, "python-service-runtime", "fastapi")
@@ -316,7 +349,7 @@ class DependencyAuditTests(unittest.TestCase):
             replace_once(
                 root,
                 "docker/service-test-requirements.lock",
-                "httpcore2==2.7.0",
+                "httpcore2==2.10.0",
                 "httpcore2==9.9.9",
             )
             report = audit_tool.run_audit(root, online=False)

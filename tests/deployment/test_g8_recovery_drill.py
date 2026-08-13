@@ -218,15 +218,22 @@ class RecoveryDrillTests(unittest.TestCase):
         self.assertNotIn("\n    build:", text)
         self.assertIn("  recovery:\n    internal: true", text)
         self.assertIn(
-            "postgres:16.9-bookworm@sha256:"
-            "253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94",
+            "postgres:16.14-bookworm@sha256:"
+            "64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8",
             text,
         )
         self.assertIn(
-            "redis:8.0.1-bookworm@sha256:"
-            "b3ad79880c88e302deb5e0fed6cee3e90c0031eb90cd936b01ef2f83ff5b3ff2",
+            "redis:8.2.8-bookworm@sha256:"
+            "2f7462b9e93e0a7ae2edf3a0a0babc8a4d29f8bfc50849b906b7caaef925edc1",
             text,
         )
+        for policy in (
+            "auto-aof-rewrite-percentage 100",
+            "auto-aof-rewrite-min-size 64mb",
+            "maxmemory 384mb",
+            "maxmemory-policy noeviction",
+        ):
+            self.assertIn(policy, text)
         self.assertIn("HBCB_G8_STORAGE_MAINTENANCE_ACCESS_KEY", text)
         self.assertIn("./compose/minio-maintenance-policy.json:/policies/minio-maintenance-policy.json:ro", text)
 

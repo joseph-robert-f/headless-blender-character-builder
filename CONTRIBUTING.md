@@ -14,20 +14,52 @@ boundary, release gate, or completed design decision.
 
 ## Development setup
 
-Docker is the release-blocking path. From a source checkout:
+Docker is the release-blocking path. For a code change, start with the normal
+working-tree-friendly baseline while you edit:
 
 ```sh
 ./scripts/doctor
-make release-static
 make test-unit
 ```
+
+For a documentation-only change, run `./scripts/doctor` and go directly to the
+Markdown/policy row in the matrix below; the large Docker unit images are not a
+prerequisite for fixing prose. Every change still needs the applicable focused
+checks and a final staged `make release-static` review.
+
+Contributor and release tooling requires Python 3.11+. If `python3` is older
+(including the system Python on some macOS versions), install a current Python
+and select it for Make commands, for example:
+
+```sh
+export PYTHON=python3.11
+"$PYTHON" --version
+```
+
+`make release-static` intentionally audits the exact Git index rather than
+unstaged working-tree bytes. Before that check, review and stage only the files
+you intend to submit, then run it against that staged snapshot:
+
+```sh
+git diff --check
+git diff --cached --check
+git add path/to/reviewed-file
+git diff --cached
+make release-static
+```
+
+Repeat `git add` and the staged diff review after later edits. Do not use
+`git add -A` blindly in a checkout that may contain generated or unrelated
+files.
 
 `make test-unit` runs the root and separately packaged service tests in pinned
 containers. A focused root-only host environment is also useful for quick
 contract edits:
 
 ```sh
-python3.11 -m venv .venv
+PYTHON=${PYTHON:-python3}
+"$PYTHON" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'
+"$PYTHON" -m venv .venv
 .venv/bin/python -m pip install -e '.[test]'
 .venv/bin/python -m unittest \
   tests.unit.test_request_contract \
@@ -47,17 +79,36 @@ Apple Silicon.
 
 | Change | Minimum focused checks before review |
 |---|---|
-| Markdown, examples, or policy prose | `make release-static` and the documented command/link checks affected |
+| Markdown, examples, or policy prose | Documented command/link checks while editing, then `make release-static` on the reviewed staged snapshot |
 | Request/schema/model code | Focused unit/contract tests, `make test-unit`, and compatibility tests |
 | Generator, export, render, or geometry QA | `make test-unit` and `make test-blender` |
 | Builder image or launcher | `make test-unit`, `make test-blender`, and a fresh `make demo && make verify-demo` |
 | API, worker, storage, or local Compose | `make test-unit`, `make service-smoke`, then `make service-down` |
+| Artifact lifecycle, maintenance deletion, or versioned storage | The service row plus `make orphan-minio-check`; this uses only a random internal disposable project and must remove its exact volumes before returning |
 | VPS, recovery, or operator tooling | `make g8-static` plus the affected deployment gate; full `make g8-gate` when Docker state is involved |
-| Dependencies, CI, release, trust, or publication | `make dependency-check`, `make release-static`, and the complete `make release-check` on the intended clean index |
+| Dependencies, CI, release, trust, or publication | `make dependency-check`, `make release-static`, and the complete `HBCB_RELEASE_RUN_ID=<unique-safe-id> make release-check` on the intended clean index |
 
 Run the smallest useful checks while iterating, then the full applicable row
 before requesting review. Record exact commands and summarized results; never
 claim a check that did not run.
+
+## Submit a pull request
+
+1. Fork the repository if you do not have branch access, clone your fork, and
+   create a focused branch from current `main`.
+2. Make the change, run the applicable checks above, and review both
+   `git diff` and the files you intend to stage.
+3. Stage only those files, review `git diff --cached`, and run
+   `make release-static` on that exact staged snapshot.
+4. Commit with DCO sign-off—for example,
+   `git commit -s -m "Describe the focused change"`—then push the branch.
+5. Open a pull request against `main`, complete the template with the exact
+   checks actually run, and leave any unrun or blocked gate explicit. Wait for
+   required CI and review rather than merging around a failed check.
+
+If you update the branch after review, repeat the relevant checks and staged
+diff review. Do not include generated evidence, local secrets, or unrelated
+workspace files just to make the working tree look clean.
 
 ## Before opening a change
 
@@ -84,6 +135,27 @@ it using your configured identity:
 ```text
 Signed-off-by: Your Name <your-email@example.com>
 ```
+
+The value must exactly match either that commit's author identity or its
+committer identity, including name and email spelling. The key must be written
+as `Signed-off-by`, and the line must be in Git's terminal trailer block rather
+than copied into the message body. At least one matching trailer is required on
+every commit unique to the pull-request head, including merge commits; a
+pull-request description or later aggregate sign-off does not replace it.
+
+Run the same check locally after fetching the target branch:
+
+```sh
+dco_base=$(git merge-base origin/main HEAD)
+dco_head=$(git rev-parse HEAD)
+./scripts/dco-check "$dco_base" "$dco_head"
+```
+
+The checker accepts only exact lowercase 40-character commit IDs, examines at
+most 500 commits, rejects commit objects larger than 1 MiB, never fetches a
+remote, and reports only a bounded commit ID when a sign-off fails. If the most
+recent commit needs repair, review it and run `git commit --amend --signoff`;
+coordinate before rewriting any branch other contributors use.
 
 By signing off, you certify that you have the right to submit the contribution
 under the project's applicable license. Sign-off is not copyright assignment.

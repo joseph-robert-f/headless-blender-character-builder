@@ -1,6 +1,8 @@
 x-hardened-service: &hardened-service
   init: true
   read_only: true
+  labels:
+    io.hbcb.release-service-owner: ${HBCB_RELEASE_OWNER:-local}
   cap_drop:
     - ALL
   security_opt:
@@ -14,9 +16,11 @@ x-service-build: &service-build
 
 services:
   postgres:
-    image: postgres:16.9-bookworm@sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94
+    image: postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8
     platform: linux/amd64
     restart: unless-stopped
+    labels:
+      io.hbcb.release-service-owner: ${HBCB_RELEASE_OWNER:-local}
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -36,9 +40,11 @@ services:
     cpus: 1.0
 
   redis:
-    image: redis:8.0.1-bookworm@sha256:b3ad79880c88e302deb5e0fed6cee3e90c0031eb90cd936b01ef2f83ff5b3ff2
+    image: redis:8.2.8-bookworm@sha256:2f7462b9e93e0a7ae2edf3a0a0babc8a4d29f8bfc50849b906b7caaef925edc1
     platform: linux/amd64
     restart: unless-stopped
+    labels:
+      io.hbcb.release-service-owner: ${HBCB_RELEASE_OWNER:-local}
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     entrypoint: ["/bin/sh", "-ec"]
@@ -46,7 +52,7 @@ services:
     command:
       - |
         umask 077
-        printf 'appendonly yes\nappendfsync everysec\nrequirepass %s\n' "$${REDIS_PASSWORD}" > /run/redis/redis.conf
+        printf 'appendonly yes\nappendfsync everysec\nauto-aof-rewrite-percentage 100\nauto-aof-rewrite-min-size 64mb\nmaxmemory 384mb\nmaxmemory-policy noeviction\nrequirepass %s\n' "$${REDIS_PASSWORD}" > /run/redis/redis.conf
         exec redis-server /run/redis/redis.conf
     healthcheck:
       test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli --no-auth-warning ping | grep -Fx PONG"]
@@ -76,7 +82,7 @@ services:
       target: minio
       args:
         HBCB_MINIO_RECIPE_ID: ${HBCB_MINIO_RECIPE_ID:-unmeasured}
-    image: ${HBCB_MINIO_IMAGE:-hbcb-minio-local:RELEASE.2025-10-15T17-29-55Z}
+    image: ${HBCB_MINIO_IMAGE:-hbcb-minio-local:final-community-20260212-hbcb.1}
     platform: linux/amd64
     restart: unless-stopped
     environment:
@@ -107,7 +113,7 @@ services:
     cpus: 1.0
 
   minio-init:
-    image: ${HBCB_MINIO_IMAGE:-hbcb-minio-local:RELEASE.2025-10-15T17-29-55Z}
+    image: ${HBCB_MINIO_IMAGE:-hbcb-minio-local:final-community-20260212-hbcb.1}
     platform: linux/amd64
     depends_on:
       minio:
@@ -306,6 +312,9 @@ services:
       HBCB_IAM_DATABASE_API_URL: postgresql://${HBCB_DATABASE_API_USER}:${HBCB_DATABASE_API_PASSWORD}@postgres:5432/${POSTGRES_DB}
       HBCB_IAM_DATABASE_WORKER_URL: postgresql://${HBCB_DATABASE_WORKER_USER}:${HBCB_DATABASE_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
       HBCB_IAM_DATABASE_MAINTENANCE_URL: postgresql://${HBCB_DATABASE_MAINTENANCE_USER}:${HBCB_DATABASE_MAINTENANCE_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      HBCB_G8_POSTGRES_ADMIN_DSN: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      HBCB_G8_POSTGRES_DSN: postgresql://${HBCB_DATABASE_MAINTENANCE_USER}:${HBCB_DATABASE_MAINTENANCE_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      HBCB_LIFECYCLE_DESTRUCTIVE_DISPOSABLE: "1"
       HBCB_STORAGE_INTERNAL_ENDPOINT: ${HBCB_STORAGE_INTERNAL_ENDPOINT}
       HBCB_STORAGE_API_ACCESS_KEY: ${HBCB_STORAGE_API_ACCESS_KEY}
       HBCB_STORAGE_API_SECRET_KEY: ${HBCB_STORAGE_API_SECRET_KEY}
@@ -328,10 +337,20 @@ services:
 networks:
   service-internal:
     internal: true
+    labels:
+      io.hbcb.release-service-owner: ${HBCB_RELEASE_OWNER:-local}
   host-ingress:
     driver: bridge
+    labels:
+      io.hbcb.release-service-owner: ${HBCB_RELEASE_OWNER:-local}
 
 volumes:
   minio-data:
+    labels:
+      io.hbcb.release-service-owner: ${HBCB_RELEASE_OWNER:-local}
   postgres-data:
+    labels:
+      io.hbcb.release-service-owner: ${HBCB_RELEASE_OWNER:-local}
   redis-data:
+    labels:
+      io.hbcb.release-service-owner: ${HBCB_RELEASE_OWNER:-local}

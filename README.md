@@ -132,8 +132,8 @@ supports, or physical testing.
 | Build without Make | [Direct Docker commands](docs/installation.md#docker-without-make) | Git and Docker |
 | Develop against host Blender | [Native path](docs/installation.md#native-blender-best-effort) | Python 3.11+ and exact Blender 4.5.12 LTS |
 | Exercise the local HTTP API | [Asynchronous service](#optional-asynchronous-service) | Docker Compose 2.24.4+, Python 3.11+, curl, 8 GiB Docker memory, and 20 GB free disk |
-| Review a future self-hosted deployment | [VPS runbook](docs/deployment.md) | Linux `amd64`, Compose 2.24.4+, domain/TLS, external S3, secrets, and a future published release/lock |
-| Contribute | [Contribution guide](CONTRIBUTING.md) | A scoped issue, tests, and DCO sign-off |
+| Review a future self-hosted deployment | [VPS runbook](docs/deployment.md) | Linux `amd64`, Python 3.11+, Compose 2.24.4+, domain/TLS, external S3, secrets, and a future published release/lock |
+| Contribute | [Contribution guide](CONTRIBUTING.md) | A focused change (issue where required), applicable tests, and DCO sign-off |
 
 The release reference is `linux/amd64`. Docker Desktop on Apple Silicon uses
 emulation and is suitable for evaluation; Linux `arm64` is best effort, and
@@ -223,10 +223,11 @@ make dependency-check   # verify synchronized dependency pins offline
 make dependency-audit   # report upstream version/image status without mutation
 make dependency-scan    # vulnerability-scan locks and release images
 make release-static     # audit tracked source, policies, licenses, docs, and CI
-make release-check      # run the complete clean-index release-candidate gate
+HBCB_RELEASE_RUN_ID=review-1 make release-check  # complete clean-index gate
 ```
 
-`make release-check` builds local evidence and versioned image tags from a
+The release run ID is mandatory and must be unique among checkouts sharing a
+Docker daemon. `make release-check` builds local evidence and versioned image tags from a
 clean export of the Git index. It never pushes images, creates a Git tag or
 Release, deploys infrastructure, or reads registry credentials. See the
 [release process](docs/release-process.md) and
