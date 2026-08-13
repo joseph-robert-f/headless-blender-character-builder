@@ -136,7 +136,7 @@ New generator versions belong behind the existing registry and must add a
 schema, bounded implementation, structural evidence, QA policy, two materially
 different examples where appropriate, and fresh-process tests. Storage, queue,
 and state implementations remain behind service interfaces. Optional prompt
-planning and MCP are post-v0.1 adapters over the public JSON/API contract—not
+planning and MCP are post-v0.1 adapters over the versioned JSON/API contract—not
 alternate Blender execution engines.
 
 ## Repository map

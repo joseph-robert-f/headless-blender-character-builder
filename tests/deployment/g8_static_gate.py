@@ -73,6 +73,7 @@ def _fixture_environment(root: Path) -> Path:
         "worker": "2" * 64,
         "caddy": "3" * 64,
         "builder": "4" * 64,
+        "postgres": "5" * 64,
     }
     values = {
         "HBCB_DEPLOYMENT_NAMESPACE": "production",
@@ -110,6 +111,10 @@ def _fixture_environment(root: Path) -> Path:
             f"ghcr.io/example/hbcb-worker@sha256:{digest['worker']}"
         ),
         "HBCB_CADDY_IMAGE": f"caddy:2.10.2@sha256:{digest['caddy']}",
+        "HBCB_POSTGRES_IMAGE": (
+            "ghcr.io/example/headless-blender-character-builder-postgres"
+            f"@sha256:{digest['postgres']}"
+        ),
         "HBCB_BUILDER_IMAGE": (
             f"ghcr.io/example/hbcb-builder@sha256:{digest['builder']}"
         ),
