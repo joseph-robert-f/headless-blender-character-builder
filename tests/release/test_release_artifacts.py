@@ -1197,6 +1197,53 @@ class ReleaseArtifactsTests(unittest.TestCase):
             for item, handler in previous.items():
                 self.assertIs(signal.getsignal(item), handler)
 
+    def test_nested_finalization_guards_delegate_signal_delivery(self) -> None:
+        previous = {
+            item: signal.getsignal(item)
+            for item in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+        }
+        with preflight._FinalizationSignalGuard() as outer:
+            self.assertIsNone(outer.delegate)
+            with preflight._FinalizationSignalGuard() as inner:
+                self.assertIs(inner.delegate, outer)
+                os.kill(os.getpid(), signal.SIGTERM)
+                with self.assertRaises(preflight._FinalizationInterrupted) as raised:
+                    inner.raise_if_pending()
+                self.assertEqual(raised.exception.signum, signal.SIGTERM)
+                # Drain the signal recorded on the guard that actually
+                # installed the handler (the outer, non-delegating guard) so
+                # both context managers can close normally without
+                # re-raising; the re-raise-on-exit path is covered below.
+                outer.received = None
+        for item, handler in previous.items():
+            self.assertIs(signal.getsignal(item), handler)
+
+    def test_delegating_inner_finalization_guard_exit_raises_pending_signal(self) -> None:
+        previous = {
+            item: signal.getsignal(item)
+            for item in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+        }
+        with self.assertRaises(preflight._FinalizationInterrupted) as raised:
+            with preflight._FinalizationSignalGuard():
+                with preflight._FinalizationSignalGuard():
+                    os.kill(os.getpid(), signal.SIGTERM)
+        self.assertEqual(raised.exception.signum, signal.SIGTERM)
+        for item, handler in previous.items():
+            self.assertIs(signal.getsignal(item), handler)
+
+    def test_delegating_inner_finalization_guard_does_not_mask_in_flight_exception(self) -> None:
+        previous = {
+            item: signal.getsignal(item)
+            for item in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+        }
+        with self.assertRaisesRegex(RuntimeError, "canary failure"):
+            with preflight._FinalizationSignalGuard():
+                with preflight._FinalizationSignalGuard():
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    raise RuntimeError("canary failure")
+        for item, handler in previous.items():
+            self.assertIs(signal.getsignal(item), handler)
+
     def test_publication_main_finalization_is_one_policy_bound_transaction(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

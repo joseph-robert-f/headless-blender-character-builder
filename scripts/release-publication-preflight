@@ -202,17 +202,26 @@ class _FinalizationInterrupted(BaseException):
         super().__init__("interrupted")
 
 
+_ACTIVE_FINALIZATION_GUARD: Optional["_FinalizationSignalGuard"] = None
+
+
 class _FinalizationSignalGuard:
     def __init__(self) -> None:
         self.received: Optional[int] = None
         self.previous: Dict[int, object] = {}
         self.installed = set()
+        self.delegate: Optional["_FinalizationSignalGuard"] = None
 
     def _record(self, signum: int, _frame: object) -> None:
         if self.received is None:
             self.received = int(signum)
 
     def __enter__(self) -> "_FinalizationSignalGuard":
+        global _ACTIVE_FINALIZATION_GUARD
+        if _ACTIVE_FINALIZATION_GUARD is not None:
+            self.delegate = _ACTIVE_FINALIZATION_GUARD
+            return self
+        _ACTIVE_FINALIZATION_GUARD = self
         for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
             previous = signal.getsignal(signum)
             self.previous[signum] = previous
@@ -224,12 +233,20 @@ class _FinalizationSignalGuard:
         return self
 
     def raise_if_pending(self) -> None:
-        if self.received is not None:
-            raise _FinalizationInterrupted(self.received)
+        received = self.delegate.received if self.delegate is not None else self.received
+        if received is not None:
+            raise _FinalizationInterrupted(received)
 
     def __exit__(self, kind: object, _value: object, _traceback: object) -> None:
+        global _ACTIVE_FINALIZATION_GUARD
+        if self.delegate is not None:
+            if kind is None:
+                self.raise_if_pending()
+            return
         for signum in self.installed:
             signal.signal(signum, self.previous[signum])
+        if _ACTIVE_FINALIZATION_GUARD is self:
+            _ACTIVE_FINALIZATION_GUARD = None
         if kind is None:
             self.raise_if_pending()
 
