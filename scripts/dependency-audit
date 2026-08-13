@@ -48,6 +48,7 @@ EXPECTED_MANUAL_REVIEW_FILES = {
         "scripts/fetch-corresponding-source",
         "scripts/release-artifacts",
         "scripts/release-check",
+        "scripts/release-publication-preflight",
     },
     "dockerfile-frontend": {
         "docker/builder.Dockerfile",
@@ -89,6 +90,24 @@ EXPECTED_MANUAL_REVIEW_NAMES = {
 EXPECTED_DOCKERFILE_FRONTEND_FILES = {
     "docker/minio.Dockerfile",
     "docker/service.Dockerfile",
+}
+EXPECTED_COMPOSE_IMAGE_FILES = {
+    "postgres": {
+        "compose.yaml",
+        "tests/deployment/g8_recovery_compose.yaml",
+        "tests/service_integration/g8_orphan_minio_compose.yaml",
+    },
+    "redis-server": {
+        "compose.yaml",
+        "tests/deployment/g8_recovery_compose.yaml",
+    },
+}
+EXPECTED_COMPOSE_ASSERTION_FILES = {
+    "postgres": {
+        "tests/deployment/test_g8_recovery_drill.py",
+        "tests/security/postgres_fixture_gate.py",
+    },
+    "redis-server": {"tests/deployment/test_g8_recovery_drill.py"},
 }
 EXACT_FRONTEND_TAG = re.compile(r"^[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
 POLICY_ID = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
@@ -898,6 +917,14 @@ def audit_compose(root: Path, policy: Mapping[str, object], report: Dict[str, ob
     entries = policy.get("compose_images")
     if not isinstance(entries, list) or not entries:
         raise AuditInputError("dependency policy has no Compose images")
+    identifiers = {
+        str(item.get("id")) for item in entries if isinstance(item, dict)
+    }
+    if (
+        identifiers != set(EXPECTED_COMPOSE_IMAGE_FILES)
+        or identifiers != set(EXPECTED_COMPOSE_ASSERTION_FILES)
+    ):
+        raise AuditInputError("Compose image policy has an unexpected inventory")
     notices = read_text(root, "THIRD_PARTY_NOTICES.md")
     images: List[Dict[str, str]] = []
     for raw in entries:
@@ -909,20 +936,36 @@ def audit_compose(root: Path, policy: Mapping[str, object], report: Dict[str, ob
         assertions = raw.get("assertion_files")
         if not isinstance(files, list) or len(files) < 2 or not isinstance(assertions, list):
             raise AuditInputError("Compose image policy paths are invalid: " + identifier)
-        references = [compose_service_image(read_text(root, str(path)), service) for path in files]
+        normalized_files = [str(path) for path in files]
+        normalized_assertions = [str(path) for path in assertions]
         failures: List[str] = []
+        if (
+            len(normalized_files) != len(set(normalized_files))
+            or set(normalized_files) != EXPECTED_COMPOSE_IMAGE_FILES[identifier]
+        ):
+            failures.append("Compose image files do not match the expected inventory")
+        if (
+            len(normalized_assertions) != len(set(normalized_assertions))
+            or set(normalized_assertions)
+            != EXPECTED_COMPOSE_ASSERTION_FILES[identifier]
+        ):
+            failures.append("Compose assertion files do not match the expected inventory")
+        references = [
+            compose_service_image(read_text(root, relative), service)
+            for relative in normalized_files
+        ]
         if len(set(references)) != 1:
-            failures.append("Compose image differs across: " + ", ".join(str(path) for path in files))
+            failures.append("Compose image differs across: " + ", ".join(normalized_files))
         reference = references[0]
         try:
             parsed = parse_image_reference(reference)
         except AuditInputError as failure:
             failures.append(str(failure))
             parsed = {"digest": "", "repository": "", "tag": ""}
-        for relative in assertions:
-            constants = python_string_constants(read_text(root, str(relative)), str(relative))
+        for relative in normalized_assertions:
+            constants = python_string_constants(read_text(root, relative), relative)
             if reference not in constants:
-                failures.append(str(relative) + " lacks the exact image assertion")
+                failures.append(relative + " lacks the exact image assertion")
         tag_reference = str(parsed["repository"]) + ":" + str(parsed["tag"])
         notice_label = str(raw.get("notice_label", ""))
         if not table_row_has_version(notices, notice_label, tag_reference):

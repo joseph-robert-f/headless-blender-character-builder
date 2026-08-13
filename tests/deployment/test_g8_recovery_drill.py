@@ -5,10 +5,12 @@ import importlib.util
 import ast
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -66,6 +68,190 @@ def inventory(version: str) -> dict[str, object]:
 
 
 class RecoveryDrillTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "POSIX signal semantics required")
+    def test_each_termination_signal_is_deferred_until_cleanup_finishes(self) -> None:
+        for selected in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+            completed_cleanup: list[int] = []
+            with self.subTest(signal=selected):
+                with self.assertRaises(recovery.GateInterrupted) as raised:
+                    with recovery._TerminationGuard():
+                        with recovery._CleanupGuard():
+                            os.kill(os.getpid(), selected)
+                            completed_cleanup.append(selected)
+                self.assertEqual(raised.exception.signum, selected)
+                self.assertEqual(completed_cleanup, [selected])
+                self.assertEqual(recovery._TERMINATION.cleanup_depth, 0)
+                self.assertIsNone(recovery._TERMINATION.active)
+
+    @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
+    def test_command_runner_timeout_reaps_term_resistant_child_group(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            started = Path(temporary) / "started"
+            survived = Path(temporary) / "survived"
+            descendant = (
+                "import pathlib,signal,time;"
+                "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+                f"pathlib.Path({str(started)!r}).write_text('1');"
+                "time.sleep(1);"
+                f"pathlib.Path({str(survived)!r}).write_text('unsafe')"
+            )
+            command = (
+                sys.executable,
+                "-c",
+                "import signal,subprocess,sys,time;"
+                "signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+                f"subprocess.Popen([sys.executable,'-c',{descendant!r}]);"
+                "time.sleep(60)",
+            )
+            with (
+                mock.patch.object(recovery, "TERMINATION_GRACE_SECONDS", 0.05),
+                self.assertRaisesRegex(recovery.GateError, "probe_unavailable"),
+            ):
+                recovery.CommandRunner().run(command, label="probe", timeout=0.3)
+            self.assertTrue(started.exists())
+            time.sleep(1.1)
+            self.assertFalse(survived.exists())
+            self.assertIsNone(recovery._TERMINATION.active)
+
+    @unittest.skipUnless(
+        hasattr(signal, "pthread_sigmask") and hasattr(os, "killpg"),
+        "requires POSIX signal masks and process groups",
+    )
+    def test_command_runner_reaps_child_when_pending_signal_fires_during_unmask(
+        self,
+    ) -> None:
+        real_pthread_sigmask = signal.pthread_sigmask
+        spawned: list[subprocess.Popen[bytes]] = []
+        unmask_returned: list[bool] = []
+
+        def inject_pending_signal(how: int, mask: object) -> object:
+            if how == signal.SIG_SETMASK:
+                process = recovery._TERMINATION.active
+                self.assertIsNotNone(process)
+                spawned.append(process)
+                os.kill(os.getpid(), signal.SIGINT)
+                result = real_pthread_sigmask(how, mask)
+                unmask_returned.append(True)
+                return result
+            return real_pthread_sigmask(how, mask)
+
+        command = (
+            sys.executable,
+            "-c",
+            "import signal,time;"
+            "signal.pthread_sigmask(signal.SIG_UNBLOCK,"
+            "(signal.SIGHUP,signal.SIGINT,signal.SIGTERM));"
+            "time.sleep(60)",
+        )
+        try:
+            with (
+                mock.patch.object(recovery, "TERMINATION_GRACE_SECONDS", 0.05),
+                mock.patch.object(
+                    recovery.signal,
+                    "pthread_sigmask",
+                    side_effect=inject_pending_signal,
+                ),
+                self.assertRaises(recovery.GateInterrupted) as raised,
+            ):
+                with recovery._TerminationGuard():
+                    recovery.CommandRunner().run(command, label="probe")
+            self.assertEqual(raised.exception.signum, signal.SIGINT)
+            self.assertEqual(unmask_returned, [])
+            self.assertEqual(len(spawned), 1)
+            process = spawned[0]
+            self.assertIsNotNone(process.returncode)
+            self.assertFalse(recovery._process_group_exists(process.pid))
+            self.assertIsNone(recovery._TERMINATION.active)
+        finally:
+            for process in spawned:
+                if process.returncode is None:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait(timeout=5)
+                for stream in (process.stdout, process.stderr):
+                    if stream is not None and not stream.closed:
+                        stream.close()
+                if recovery._TERMINATION.active is process:
+                    recovery._TERMINATION.active = None
+
+    def test_interrupted_source_stop_is_always_treated_as_restart_obligation(self) -> None:
+        calls: list[tuple[str, ...]] = []
+
+        def source_compose(*arguments: str, **_kwargs: object) -> object:
+            calls.append(tuple(arguments))
+            if arguments[0] == "stop":
+                raise recovery.GateInterrupted(signal.SIGTERM)
+            return recovery.CommandResult(b"")
+
+        context = SimpleNamespace(
+            source_compose=source_compose,
+            target_compose=lambda *_args, **_kwargs: recovery.CommandResult(b""),
+            work_root=Path("/fixture/work"),
+        )
+        running = lambda _context, service: service in {"postgres", "redis", "minio", "api"}
+        with (
+            mock.patch.object(recovery, "_validate_target_topology"),
+            mock.patch.object(recovery, "_source_container_running", side_effect=running),
+            mock.patch.object(recovery, "_source_network", return_value="source-network"),
+            mock.patch.object(recovery, "_source_maintenance_environment"),
+            mock.patch.object(recovery, "_wait_source_service") as wait_source,
+            mock.patch.object(recovery, "_remove_work_root"),
+            self.assertRaises(recovery.GateInterrupted),
+        ):
+            recovery.execute_drill(context)
+        self.assertIn(("start", "api"), calls)
+        wait_source.assert_called_once_with(context, "api", healthy=True)
+
+    def test_interrupted_target_start_always_runs_exact_target_teardown(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            backup_root = root / "backups"
+            source_objects = backup_root / "source-objects"
+            source_objects.mkdir(parents=True)
+            source_inventory = inventory("source-version")
+            payload = json.dumps(source_inventory, sort_keys=True).encode("utf-8")
+            (source_objects / "inventory.json").write_bytes(payload)
+            calls: list[tuple[str, ...]] = []
+
+            def target_compose(*arguments: str, **_kwargs: object) -> object:
+                calls.append(tuple(arguments))
+                if "up" in arguments:
+                    raise recovery.GateInterrupted(signal.SIGHUP)
+                return recovery.CommandResult(b"")
+
+            context = SimpleNamespace(
+                source_compose=lambda *_args, **_kwargs: recovery.CommandResult(b""),
+                target_compose=target_compose,
+                backup_root=backup_root,
+                work_root=root,
+            )
+            maintenance_result = {
+                "artifacts": 1,
+                "inventory_sha256": recovery.hashlib.sha256(payload).hexdigest(),
+            }
+            running = lambda _context, service: service in {"postgres", "redis", "minio"}
+            with (
+                mock.patch.object(recovery, "_validate_target_topology"),
+                mock.patch.object(recovery, "_source_container_running", side_effect=running),
+                mock.patch.object(recovery, "_source_network", return_value="source-network"),
+                mock.patch.object(
+                    recovery, "_source_maintenance_environment", return_value=root / "source.env"
+                ),
+                mock.patch.object(recovery, "_snapshot", return_value="a" * 64),
+                mock.patch.object(recovery, "_source_maintenance", return_value=maintenance_result),
+                mock.patch.object(recovery, "_validate_private_tree"),
+                mock.patch.object(recovery, "_load_inventory", return_value=source_inventory),
+                mock.patch.object(recovery, "_database_backup", return_value=(10, "b" * 64)),
+                mock.patch.object(recovery, "_verify_target_removed") as verify_removed,
+                mock.patch.object(recovery, "_remove_work_root"),
+                self.assertRaises(recovery.GateInterrupted),
+            ):
+                recovery.execute_drill(context)
+            self.assertTrue(any("down" in call for call in calls))
+            verify_removed.assert_called_once_with(context)
+
     def test_image_identity_uses_legacy_compatible_inspection_and_checks_platform(self) -> None:
         image_id = "sha256:" + "a" * 64
         calls: list[tuple[object, object, object]] = []
@@ -218,13 +404,17 @@ class RecoveryDrillTests(unittest.TestCase):
         self.assertNotIn("\n    build:", text)
         self.assertIn("  recovery:\n    internal: true", text)
         self.assertIn(
-            "postgres:16.14-bookworm@sha256:"
-            "64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8",
+            "postgres:16.14-alpine3.24@sha256:"
+            "57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
             text,
         )
+        self.assertRegex(
+            text,
+            r"(?ms)^  postgres:\n.*?^    user: \"70:70\"$",
+        )
         self.assertIn(
-            "redis:8.2.8-bookworm@sha256:"
-            "2f7462b9e93e0a7ae2edf3a0a0babc8a4d29f8bfc50849b906b7caaef925edc1",
+            "redis:8.2.8-alpine3.22@sha256:"
+            "a7859ed111db3c1f5404a973a4747505d559fb5ca32d37e447afc0ef845a2103",
             text,
         )
         for policy in (

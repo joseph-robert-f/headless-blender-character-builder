@@ -15,7 +15,7 @@ offering has been published.
 | GNU Make | Any maintained version that can run the project Makefile | Required for the recommended interface; [direct Docker commands](installation.md#docker-without-make) are available |
 | Docker Compose | 2.24.4 or newer | Required by the current service doctor and the VPS/G8/full-release path; the VPS overlay uses Compose `!reset` and `!override` tags |
 | Python | 3.11 or newer | Required for native use, service smoke/recovery, VPS operations, and release tooling; not required for one-shot Docker builds |
-| curl | Supports `--fail-with-body` and `--noproxy` | Required only for the documented local API client journey; the service doctor checks both capabilities without making a network request |
+| curl | Supports `--fail-with-body` and `--noproxy` | Optional; used only by the manual API protocol example. The stdlib lightweight client does not need it, and the service doctor reports curl limitations as notes. |
 | GPU | None | Release paths use CPU-compatible headless rendering; Cycles/GPU orchestration is not included |
 
 Run `./scripts/doctor` for the one-shot Docker path,

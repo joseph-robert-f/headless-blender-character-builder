@@ -43,11 +43,14 @@ FIXTURE_FILES = (
     "scripts/minio-recipe-id",
     "scripts/release-artifacts",
     "scripts/release-check",
+    "scripts/release-publication-preflight",
     "scripts/service-compose",
     "service/pyproject.toml",
     "tests/deployment/g8_recovery_compose.yaml",
     "tests/deployment/g8_caddy_gate.py",
     "tests/deployment/test_g8_recovery_drill.py",
+    "tests/security/postgres_fixture_gate.py",
+    "tests/service_integration/g8_orphan_minio_compose.yaml",
 )
 
 
@@ -817,6 +820,56 @@ class DependencyAuditTests(unittest.TestCase):
             report = audit_tool.run_audit(root, online=False)
             self.assert_check_failure(
                 report, "compose-postgres", "Compose image differs"
+            )
+
+        with self.subTest(surface="orphan Compose"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            compose = (root / "compose.yaml").read_text(encoding="utf-8")
+            reference = audit_tool.compose_service_image(compose, "postgres")
+            changed = reference[:-64] + "e" * 64
+            replace_once(
+                root,
+                "tests/service_integration/g8_orphan_minio_compose.yaml",
+                reference,
+                changed,
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "compose-postgres", "Compose image differs"
+            )
+
+        with self.subTest(surface="PostgreSQL runtime gate"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            compose = (root / "compose.yaml").read_text(encoding="utf-8")
+            reference = audit_tool.compose_service_image(compose, "postgres")
+            replace_once(
+                root,
+                "tests/security/postgres_fixture_gate.py",
+                reference[-64:],
+                "d" * 64,
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "compose-postgres", "lacks the exact image assertion"
+            )
+
+        with self.subTest(surface="Compose policy inventory"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            policy_path = root / "release" / "dependency-policy.json"
+            document = json.loads(policy_path.read_text(encoding="utf-8"))
+            postgres = next(
+                item for item in document["compose_images"] if item["id"] == "postgres"
+            )
+            postgres["assertion_files"].remove(
+                "tests/security/postgres_fixture_gate.py"
+            )
+            policy_path.write_text(
+                json.dumps(document, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "compose-postgres", "expected inventory"
             )
 
         with self.subTest(surface="builder OCI provenance"), tempfile.TemporaryDirectory() as temporary:

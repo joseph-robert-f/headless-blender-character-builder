@@ -8,5 +8,12 @@
     "source_url": "https://download.blender.org/source/blender-4.5.12.tar.xz",
     "version": "4.5.12"
   },
-  "format": "hbcb-corresponding-source-policy/v1"
+  "format": "hbcb-corresponding-source-policy/v1",
+  "publication": {
+    "delivery_method": "co-published-release-assets",
+    "public_oci_ready": false,
+    "publication_gate": "blocked-pending-complete-copyleft-source-review",
+    "retention": "retain-with-each-public-image-version-for-its-public-lifetime",
+    "scope": "project-and-blender-source-only"
+  }
 }

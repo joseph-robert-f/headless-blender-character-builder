@@ -388,6 +388,12 @@ sudo ./scripts/vps preflight \
   --release-lock /etc/hbcb/release.lock.env
 ```
 
+If this stops with `private storage network is unavailable`, create the
+configured Docker-internal network and attach the private S3 gateway described
+in [External storage and network contract](#external-storage-and-network-contract), then rerun live
+preflight. The wrapper deliberately omits the configured network name and
+captured Docker output from this error.
+
 `config` performs the same safe, quiet validation and prints only a pass/fail
 marker. Do not run raw `docker compose config`: resolved service configuration
 can contain credentials from role env files.
@@ -787,7 +793,7 @@ an older image to start.
 | Symptom | Safe response |
 |---|---|
 | Preflight rejects a file, digest, or permission | Correct the named input. Do not bypass the wrapper or relax a mode. |
-| Storage network validation fails | Recreate/repair the external `Internal=true` network and gateway. Do not attach API or worker to a default-egress network. |
+| `private storage network is unavailable` | Create or repair the configured external `Internal=true` network and attach the private S3 gateway before rerunning live preflight. Do not attach API or worker to a default-egress network. |
 | API is healthy but not ready internally | Check PostgreSQL, Redis, migration catalog, bucket versioning, private TLS/DNS, and scoped storage IAM. Do not expose `/readyz`. |
 | Caddy cannot obtain a certificate | Verify DNS, host time, TCP 80/443, ACME email, and UID-1000 Caddy state ownership. Keep the API unexposed. |
 | Worker exits during a build | Preserve PostgreSQL and Redis. Restart the single worker; lease expiry and at-least-once delivery permit recovery. Do not publish scratch output manually. |

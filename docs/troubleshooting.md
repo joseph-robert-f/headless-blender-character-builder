@@ -49,14 +49,19 @@ QA fails, it removes its stage and must not leave a partial named result.
 | Failure while downloading Blender/Debian inputs | The **image build** needs outbound HTTPS/DNS access to pinned sources | Check proxy/DNS/firewall settings and retry `make image`; do not weaken checksum or digest verification |
 | BuildKit/frontend error | Docker is too old or BuildKit/Buildx is unavailable | Upgrade Docker; `docker build` must support `--platform` and the pinned Dockerfile frontend |
 | `linux/amd64` platform or emulation error | The release image is amd64 and emulation is unavailable | Enable Docker Desktop's amd64 emulation or use an amd64 Linux host |
+| `linux/amd64` error on Linux `arm64` | The host has no working amd64 emulation; no checksum-pinned native arm64 Blender archive is accepted for v0.1 | Configure the host's maintained Docker/binfmt emulation and confirm a simple `linux/amd64` container runs, or use an amd64 Linux host. This remains a best-effort path, not release support. |
 | Very slow first build on Apple Silicon | Blender and its base image run through amd64 emulation | Allow extra time; later builds reuse verified local layers |
 | Builder code / Make `Error 137`, or daemon reports OOM | Docker killed Blender under memory pressure | Close heavy workloads, give Docker at least 4 GiB for the one-shot path, and retry with a fresh output name |
 | `no space left on device` | Image layers, build cache, or outputs filled Docker/host storage | Inspect `docker system df` and host free space; remove only independently identified disposable data—never blindly prune service volumes |
 | Bind mount/file-sharing error on macOS | The checkout is outside Docker Desktop's shared paths | Move/share the repository path in Docker Desktop, then rerun the doctor |
+| `docker: command not found` inside WSL2, or the WSL shell cannot reach Docker | Docker Desktop integration is disabled for that distribution, Docker Desktop is stopped, or Engine was installed only on Windows | Enable Docker Desktop WSL integration for the selected distribution or install Engine inside that distribution; make `docker info` succeed from the same WSL shell before rerunning the doctor. WSL2 remains experimental. |
+| WSL2 bind mounts are very slow or produce Windows ownership/permission surprises | The checkout is under `/mnt/c/...` rather than the WSL filesystem | Move the checkout below the WSL home directory (for example `~/headless-blender-character-builder`) and run every project command from that WSL shell. |
+| Native Windows shell or path errors | Native Windows without WSL2 has not been validated against the POSIX shell, path, and permission contracts | Use the documented experimental WSL2 path or an amd64 Linux host; do not translate commands ad hoc and assume release parity. |
 | Output files are inaccessible | A prior root-run or unusual Docker mapping owns them | Do not rerun the builder as root; inspect ownership and move the old result aside before a new named build |
 | `HBCB_MAKE: FAIL[request_missing]` | `REQUEST` does not name an existing regular file | Set `REQUEST=/absolute/path/to/request.json`; Make checks this before building or inspecting an image |
 | `HBCB_MAKE: FAIL[output_exists]` | The selected build output already exists and publication is intentionally no-clobber | Choose a new safe `OUTPUT_NAME`, or move the complete old output aside |
 | `HBCB_MAKE: FAIL[output_missing]` | `make verify` cannot find a regular, non-symlink output directory | Run `make build` first with the same `REQUEST` and `OUTPUT_NAME`, or correct the name; verification deliberately refuses an output-directory symlink |
+| `HBCB_MAKE: FAIL[manifest_missing]` | `make inspect` cannot find the selected regular, non-symlink `manifest.json` | Confirm `OUTPUT_NAME`, then complete `make build` and `make verify`; do not substitute a manifest from another output |
 | `output must not already exist` / `BUILDER: FAIL[4]` | A direct builder invocation reached the same no-clobber guard | Choose a new output path, or move the complete old output aside |
 | `manifest request provenance mismatch` / `BUILDER: FAIL[11]` | Verification used a different JSON request than the build | Verify with the exact request that produced the manifest; compare its recorded request hash |
 | `manifest baked provenance mismatch`, `manifest image provenance mismatch`, or `manifest source provenance mismatch` / `BUILDER: FAIL[11]` | The verifier is running from different project source or a different container image than the one that built the output | Keep the old output unchanged for inspection. Build and verify a new output name from the current checkout; advanced operators may instead retain and use the exact prior image recorded by the old manifest |
@@ -80,6 +85,16 @@ make verify REQUEST="$PWD/examples/requests/facet-bot.json" OUTPUT_NAME=facet-bo
 characters. Paths, slashes, `.`/`..`, spaces, shell syntax, and uppercase names
 are rejected. Published output is immutable by design; the builder has no
 overwrite switch.
+
+To read a bounded provenance and QA summary without printing artifact paths,
+image references, or signed URLs, inspect the selected success manifest:
+
+```sh
+make inspect OUTPUT_NAME=facet-bot
+```
+
+This is read-only and does not reopen the Blender, GLB, or STL artifacts;
+`make verify` remains the independent artifact check.
 
 ## Builder codes versus Make's exit status
 
@@ -125,7 +140,7 @@ make init-env
 make service-config
 ```
 
-The local stack needs Python 3.11+, curl, Docker Compose 2.24.4+, at least 8 GiB
+The local stack needs Python 3.11+, Docker Compose 2.24.4+, at least 8 GiB
 allocated to Docker, 20 GB free disk, and two free loopback ports. The defaults are `8080`
 (API) and `9000` (artifact fixture). If `python3` is older, use the same explicit
 selection for every command, beginning with:
@@ -199,7 +214,14 @@ Common service cases:
   resources. The maintainer smoke adds a separate 4 GiB builder workload and is
   best run with at least 12 GiB allocated to Docker.
 
-A successful end-to-end check ends with:
+A successful lightweight client run ends with:
+
+```text
+verified model and evidence saved in .../build/service-client/<build-id>/artifacts
+```
+
+That directory contains the nine verified builder artifacts plus `build.json`.
+For the slower maintainer integration check, success ends with:
 
 ```text
 SERVICE_SMOKE: PASS project=<checkout-project> evidence=.../build/service-smoke/run.XXXXXX
@@ -208,17 +230,29 @@ SERVICE_SMOKE: PASS project=<checkout-project> evidence=.../build/service-smoke/
 This is the optional maintainer/integration confidence gate: it performs direct
 and service builds, restart, cancellation, artifact, Redis, and IAM checks and
 retains evidence under `build/service-smoke/`. It is not required to start or
-try the API. The repository has no lightweight custom-request service client
-yet; use [HTTP API v1](api.md) for the copy-paste first-evaluation path.
+try the API. Use `make service-client REQUEST=/absolute/path/to/request.json`
+for the supported first-evaluation path; the [HTTP API guide](api.md) also
+retains a longer manual protocol example for integrators.
 
-For cleanup, `make service-down` stops this checkout's containers but preserves
-its database, queue, and artifact volumes. Keep `.env` with those volumes. The
-ignored `build/service-smoke/run.*` evidence and locally built service images
-also remain until you deliberately identify and remove them. There is no broad
-one-command reset because deleting the matched volumes is irreversible. Compose
-labels resources with the exact project name printed by the wrappers; use that
-identity in the active Docker context for any deliberate cleanup and never use
-a global prune as a repair step.
+For exact image cleanup, stop the stack, list the selected service project's
+five tags, review them, and then remove only that list:
+
+```sh
+make service-down
+make service-images
+make service-image-cleanup
+```
+
+The last command fails if Docker cannot prove whether a tag exists. It also
+refuses the legacy shared `hbcb-local` identity; in that case inspect the list
+and remove exact tags manually only after confirming every older checkout that
+could share them is stopped. Named PostgreSQL, Redis, and MinIO volumes and
+`.env` are retained. Shared Docker/BuildKit cache is retained because Docker
+does not expose a trustworthy checkout owner for every cache record. Inspect
+space with `docker system df`, but never run a global image, builder, volume, or
+system prune as a repair or cleanup shortcut. Ignored
+`build/service-smoke/run.*` evidence is ordinary local output and is not
+removed by the image helper.
 
 ## Release and deployment checks
 

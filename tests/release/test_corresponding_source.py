@@ -53,6 +53,13 @@ class CorrespondingSourceTests(unittest.TestCase):
         policy = {
             "blender": blender,
             "format": "hbcb-corresponding-source-policy/v1",
+            "publication": {
+                "delivery_method": "co-published-release-assets",
+                "public_oci_ready": False,
+                "publication_gate": "blocked-pending-complete-copyleft-source-review",
+                "retention": "retain-with-each-public-image-version-for-its-public-lifetime",
+                "scope": "project-and-blender-source-only",
+            },
         }
         path = root / "policy.json"
         write(

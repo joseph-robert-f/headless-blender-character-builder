@@ -1423,7 +1423,10 @@ def _validate_private_storage_network(name: str, environment: Mapping[str, str])
         stderr_limit_bytes=4096,
     )
     if result.returncode != 0:
-        raise OperatorError("private storage network is unavailable")
+        raise OperatorError(
+            "private storage network is unavailable; create the configured "
+            "Docker-internal network and attach the private S3 gateway before live preflight"
+        )
     if result.stdout.strip() != b"true":
         raise OperatorError(
             "storage network must be Docker-internal; attach an operator-managed private S3 gateway"

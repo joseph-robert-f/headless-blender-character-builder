@@ -162,72 +162,102 @@ def _validate_image(document: Mapping[str, object]) -> str:
     return image_id
 
 
-def _runtime_version(docker: str, image: str, entrypoint: str) -> str:
-    result = _run(
+def _container_identity(prefix: str) -> tuple[str, str]:
+    name = prefix + uuid.uuid4().hex[:16]
+    owner_label = "io.hbcb.minio-fixture-owner=" + uuid.uuid4().hex
+    return name, owner_label
+
+
+def _owned_container_ids(docker: str, name: str, owner_label: str) -> list[str]:
+    discovered = _run(
         (
             docker,
-            "run",
-            "--rm",
-            "--platform",
-            "linux/amd64",
-            "--network",
-            "none",
-            "--read-only",
-            "--cap-drop",
-            "ALL",
-            "--security-opt",
-            "no-new-privileges:true",
-            "--pids-limit",
-            "32",
-            "--entrypoint",
-            entrypoint,
-            image,
-            "--version",
-        )
+            "container",
+            "ls",
+            "--all",
+            "--no-trunc",
+            "--quiet",
+            "--filter",
+            f"name=^/{name}$",
+            "--filter",
+            f"label={owner_label}",
+        ),
+        timeout=30,
+        check=False,
     )
+    if discovered.returncode != 0:
+        raise GateError("the isolated MinIO fixture ownership could not be inspected")
     try:
-        return result.stdout.decode("utf-8", "strict")
+        identifiers = discovered.stdout.decode("ascii", "strict").splitlines()
     except UnicodeError as failure:
-        raise GateError("a MinIO fixture binary returned invalid text") from failure
+        raise GateError("the isolated MinIO fixture ownership is invalid") from failure
+    if (
+        any(CONTAINER_ID.fullmatch(identifier) is None for identifier in identifiers)
+        or len(identifiers) != len(set(identifiers))
+        or len(identifiers) > 1
+    ):
+        raise GateError("the isolated MinIO fixture ownership is ambiguous")
+    return identifiers
 
 
-def _feature_config(docker: str, image: str) -> tuple[str, str]:
-    name = "hbcb-minio-security-" + uuid.uuid4().hex[:16]
-    owner = uuid.uuid4().hex
-    owner_label = f"io.hbcb.minio-fixture-owner={owner}"
-
-    def owned_container_ids() -> list[str]:
-        discovered = _run(
-            (
-                docker,
-                "container",
-                "ls",
-                "--all",
-                "--no-trunc",
-                "--quiet",
-                "--filter",
-                f"name=^/{name}$",
-                "--filter",
-                f"label={owner_label}",
-            ),
+def _remove_owned_container(docker: str, name: str, owner_label: str) -> None:
+    owned = _owned_container_ids(docker, name, owner_label)
+    if owned:
+        cleanup = _run(
+            (docker, "rm", "--force", owned[0]),
             timeout=30,
             check=False,
         )
-        if discovered.returncode != 0:
-            raise GateError("the isolated MinIO fixture ownership could not be inspected")
+        remaining = _owned_container_ids(docker, name, owner_label)
+        if cleanup.returncode != 0 and remaining:
+            raise GateError("the isolated MinIO fixture could not be removed")
+        if remaining:
+            raise GateError("the isolated MinIO fixture could not be removed")
+
+
+def _runtime_version(docker: str, image: str, entrypoint: str) -> str:
+    name, owner_label = _container_identity("hbcb-minio-version-")
+    with _TerminationGuard() as termination_guard:
         try:
-            identifiers = discovered.stdout.decode("ascii", "strict").splitlines()
-        except UnicodeError as failure:
-            raise GateError(
-                "the isolated MinIO fixture ownership is invalid"
-            ) from failure
-        if (
-            any(CONTAINER_ID.fullmatch(identifier) is None for identifier in identifiers)
-            or len(identifiers) != len(set(identifiers))
-            or len(identifiers) > 1
-        ):
-            raise GateError("the isolated MinIO fixture ownership is ambiguous")
-        return identifiers
+            result = _run(
+                (
+                    docker,
+                    "run",
+                    "--rm",
+                    "--name",
+                    name,
+                    "--label",
+                    owner_label,
+                    "--platform",
+                    "linux/amd64",
+                    "--network",
+                    "none",
+                    "--read-only",
+                    "--cap-drop",
+                    "ALL",
+                    "--security-opt",
+                    "no-new-privileges:true",
+                    "--pids-limit",
+                    "32",
+                    "--entrypoint",
+                    entrypoint,
+                    image,
+                    "--version",
+                )
+            )
+            termination_guard.raise_if_pending()
+            if _owned_container_ids(docker, name, owner_label):
+                raise GateError("the MinIO version probe did not remove its container")
+            try:
+                return result.stdout.decode("utf-8", "strict")
+            except UnicodeError as failure:
+                raise GateError("a MinIO fixture binary returned invalid text") from failure
+        finally:
+            _remove_owned_container(docker, name, owner_label)
+
+
+def _feature_config(docker: str, image: str) -> tuple[str, str]:
+    name, owner_label = _container_identity("hbcb-minio-security-")
 
     with _TerminationGuard() as termination_guard:
         try:
@@ -283,7 +313,7 @@ def _feature_config(docker: str, image: str) -> tuple[str, str]:
                 raise GateError("the MinIO fixture container ID is invalid") from failure
             if CONTAINER_ID.fullmatch(container_id) is None:
                 raise GateError("the MinIO fixture container ID is invalid")
-            if owned_container_ids() != [container_id]:
+            if _owned_container_ids(docker, name, owner_label) != [container_id]:
                 raise GateError("the MinIO fixture container ownership is invalid")
             ready_script = (
                 'mc alias set audit http://127.0.0.1:9000 "$MINIO_ROOT_USER" '
@@ -322,19 +352,7 @@ def _feature_config(docker: str, image: str) -> tuple[str, str]:
                     raise GateError("the MinIO feature configuration is invalid") from failure
             return outputs[0], outputs[1]
         finally:
-            owned = owned_container_ids()
-            if owned:
-                owned_container_id = owned[0]
-                cleanup = _run(
-                    (docker, "rm", "--force", owned_container_id),
-                    timeout=30,
-                    check=False,
-                )
-                remaining = owned_container_ids()
-                if cleanup.returncode != 0 and remaining:
-                    raise GateError("the isolated MinIO fixture could not be removed")
-                if remaining:
-                    raise GateError("the isolated MinIO fixture could not be removed")
+            _remove_owned_container(docker, name, owner_label)
 
 
 def execute(docker: str, image: str) -> int:

@@ -59,6 +59,10 @@ artifact that fits your next step:
 | `qa.json` | Read the measured geometry checks and terminal QA status. |
 | `manifest.json` | Audit request, generator, Blender, execution, size, and SHA-256 provenance for the other eight artifacts. |
 
+Run `make inspect OUTPUT_NAME=facet-bot` for a bounded, path-free manifest and
+QA summary. This is a convenient read-only view; `make verify` remains the
+independent artifact check.
+
 The builder refuses to overwrite an existing output. Keep a result by moving
 it aside, or choose a new output name:
 
@@ -131,7 +135,7 @@ supports, or physical testing.
 | Build one model locally | [Container quickstart](docs/installation.md#container-path-recommended) | Git, Docker, GNU Make |
 | Build without Make | [Direct Docker commands](docs/installation.md#docker-without-make) | Git and Docker |
 | Develop against host Blender | [Native path](docs/installation.md#native-blender-best-effort) | Python 3.11+ and exact Blender 4.5.12 LTS |
-| Exercise the local HTTP API | [Asynchronous service](#optional-asynchronous-service) | Docker Compose 2.24.4+, Python 3.11+, curl, 8 GiB Docker memory, and 20 GB free disk |
+| Exercise the local HTTP API | [Asynchronous service](#optional-asynchronous-service) | Docker Compose 2.24.4+, Python 3.11+, 8 GiB Docker memory, and 20 GB free disk |
 | Review a future self-hosted deployment | [VPS runbook](docs/deployment.md) | Linux `amd64`, Python 3.11+, Compose 2.24.4+, domain/TLS, external S3, secrets, and a future published release/lock |
 | Contribute | [Contribution guide](CONTRIBUTING.md) | A focused change (issue where required), applicable tests, and DCO sign-off |
 
@@ -159,7 +163,13 @@ make service-ps
 
 `service-ps` should show `api`, `worker`, PostgreSQL, Redis, and MinIO running;
 the one-shot `database-init` and `minio-init` rows should say `Exited (0)`. Now
-follow the copy-paste API journey linked below. When finished, stop this
+submit the bundled request and save one verified result:
+
+```sh
+make service-client REQUEST="$PWD/examples/requests/facet-bot.json"
+```
+
+When finished, stop this
 checkout's stack with `make service-down`.
 
 `make init-env` creates an ignored mode-`0600` `.env` once and refuses to
@@ -176,13 +186,13 @@ namespace—it is not separately network-isolated.
 
 The local MinIO image is a pinned compatibility fixture, not a production
 object-store recommendation. Do not expose this stack publicly. Read
-the [copy-paste HTTP API journey](docs/api.md#copy-paste-local-client-journey),
+the [lightweight HTTP API client](docs/api.md#lightweight-local-client),
 [troubleshooting](docs/troubleshooting.md), [architecture](docs/architecture.md),
 and the [VPS availability note](docs/deployment.md#availability) before
 integrating or operating it.
 
-The repository does not yet include a lightweight custom-request service
-client. Use the API journey for first evaluation. `make service-smoke` is the
+`make service-client` is the supported first-evaluation and custom-request
+path. `make service-smoke` is the
 slower maintainer/integration confidence gate: it performs direct and service
 builds, restarts the API, tests cancellation and IAM, and retains evidence. It
 can add another 4 GiB builder workload, so allocate at least 12 GiB to Docker

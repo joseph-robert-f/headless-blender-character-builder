@@ -70,11 +70,12 @@ def load_policy(path: Path) -> Mapping[str, object]:
         document = json.loads(payload.decode("utf-8", "strict"))
     except (UnicodeDecodeError, ValueError):
         raise SourceFailure("invalid_policy", "corresponding-source policy is invalid JSON") from None
-    if not isinstance(document, dict) or set(document) != {"blender", "format"}:
+    if not isinstance(document, dict) or set(document) != {"blender", "format", "publication"}:
         raise SourceFailure("invalid_policy", "corresponding-source policy has unsupported fields")
     if document.get("format") != "hbcb-corresponding-source-policy/v1":
         raise SourceFailure("invalid_policy", "corresponding-source policy format is unsupported")
     blender = document.get("blender")
+    publication = document.get("publication")
     expected = {
         "archive",
         "bytes",
@@ -86,6 +87,33 @@ def load_policy(path: Path) -> Mapping[str, object]:
     }
     if not isinstance(blender, dict) or set(blender) != expected:
         raise SourceFailure("invalid_policy", "Blender source policy has unsupported fields")
+    if (
+        not isinstance(publication, dict)
+        or set(publication)
+        != {
+            "delivery_method",
+            "public_oci_ready",
+            "publication_gate",
+            "retention",
+            "scope",
+        }
+        or publication.get("delivery_method") != "co-published-release-assets"
+        or type(publication.get("public_oci_ready")) is not bool
+        or publication.get("publication_gate")
+        not in {
+            "blocked-pending-complete-copyleft-source-review",
+            "reviewed-complete-source-delivery",
+        }
+        or publication.get("public_oci_ready")
+        != (publication.get("publication_gate") == "reviewed-complete-source-delivery")
+        or publication.get("retention")
+        != "retain-with-each-public-image-version-for-its-public-lifetime"
+        or publication.get("scope")
+        not in {"project-and-blender-source-only", "complete-reviewed-image-source"}
+        or publication.get("public_oci_ready")
+        != (publication.get("scope") == "complete-reviewed-image-source")
+    ):
+        raise SourceFailure("invalid_policy", "publication source policy has unsupported fields")
     version = blender.get("version")
     archive = blender.get("archive")
     source_url = blender.get("source_url")

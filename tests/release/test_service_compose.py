@@ -245,12 +245,16 @@ class ServiceComposeTests(unittest.TestCase):
             "HBCB_STORAGE_PUBLIC_ENDPOINT:-localhost:9000", compose
         )
         for maintained_server in (
-            "postgres:16.14-bookworm@sha256:"
-            "64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8",
-            "redis:8.2.8-bookworm@sha256:"
-            "2f7462b9e93e0a7ae2edf3a0a0babc8a4d29f8bfc50849b906b7caaef925edc1",
+            "postgres:16.14-alpine3.24@sha256:"
+            "57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
+            "redis:8.2.8-alpine3.22@sha256:"
+            "a7859ed111db3c1f5404a973a4747505d559fb5ca32d37e447afc0ef845a2103",
         ):
             self.assertIn(maintained_server, compose)
+        self.assertRegex(
+            compose,
+            r"(?ms)^  postgres:\n.*?^    user: \"70:70\"$",
+        )
         for redis_policy in (
             "appendonly yes",
             "appendfsync everysec",

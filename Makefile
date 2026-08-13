@@ -19,20 +19,24 @@ OUTPUT_NAME ?= demo
 DEMO_OUTPUT := $(BUILD_PARENT)/demo
 export REQUEST BUILD_PARENT OUTPUT_NAME
 
-.PHONY: help image ensure-image test-image service-test-image worker-boundary-image worker-boundary-check minio-security-check orphan-minio-check validate build verify demo verify-demo demo-native verify-demo-native _validate-output-name init-env service-up service-smoke service-down service-config service-ps service-logs g8-static g8-caddy g8-recovery g8-gate operator-smoke lint test-unit test-blender dependency-check dependency-audit dependency-scan security-check release-static release-check check
+.PHONY: help image ensure-image test-image service-test-image worker-boundary-image worker-boundary-check minio-security-check postgres-security-check orphan-minio-check validate build verify inspect demo verify-demo demo-native verify-demo-native _validate-output-name init-env service-client service-up service-smoke service-down service-config service-ps service-logs service-images service-image-cleanup g8-static g8-caddy g8-recovery g8-gate operator-smoke lint test-unit test-blender dependency-check dependency-audit dependency-scan security-check release-static release-check check
 
 help:
 	@echo "Headless Blender Character Builder"
 	@echo "  make validate      Validate REQUEST without starting Blender"
 	@echo "  make build         Build REQUEST under build/OUTPUT_NAME"
 	@echo "  make verify        Reopen and verify build/OUTPUT_NAME"
+	@echo "  make inspect       Print a safe summary of build/OUTPUT_NAME/manifest.json"
 	@echo "  make demo          Build the keyless Docker demo"
 	@echo "  make verify-demo   Reopen and verify the published artifacts"
 	@echo "  make init-env      Generate ignored local-service credentials"
+	@echo "  make service-client Submit REQUEST and save one verified service result"
 	@echo "  make service-config Validate the local service configuration"
 	@echo "  make service-up    Start the local asynchronous Compose service"
 	@echo "  make service-ps    Show this checkout's local service status"
 	@echo "  make service-logs  Show bounded API and worker diagnostic logs"
+	@echo "  make service-images List the selected service project's exact image tags"
+	@echo "  make service-image-cleanup Remove only those exact tags; keep volumes/cache"
 	@echo "  make service-smoke Run the maintainer service integration gate"
 	@echo "  make orphan-minio-check Prove orphan cleanup in disposable storage"
 	@echo "  make service-down  Stop services while preserving durable volumes"
@@ -41,6 +45,7 @@ help:
 	@echo "  make test-unit     Run unit/contract/security tests in Docker"
 	@echo "  make worker-boundary-check Test child credential isolation in the worker image"
 	@echo "  make minio-security-check Prove the local storage fixture identity and disabled auth features"
+	@echo "  make postgres-security-check Prove fresh-volume startup at UID 70 without gosu"
 	@echo "  make test-blender  Run Blender integration gates in Docker"
 	@echo "  make dependency-check Validate synchronized dependency pins offline"
 	@echo "  make dependency-audit Report upstream version/tag status without mutation"
@@ -93,6 +98,9 @@ worker-boundary-check: worker-boundary-image
 
 minio-security-check:
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/security/minio_fixture_gate.py --docker "$(DOCKER)" --image "$(MINIO_IMAGE)"
+
+postgres-security-check:
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/security/postgres_fixture_gate.py --docker "$(DOCKER)"
 
 validate:
 	@set -eu; \
@@ -221,6 +229,39 @@ verify: _validate-output-name
 	    "$(BUILDER_IMAGE)" \
 	    verify --request /input/request.json --output "/output/$$output_name"
 
+inspect: _validate-output-name
+	@set -eu; \
+	  output_path=$$BUILD_PARENT/$$OUTPUT_NAME; \
+	  manifest_path=$$output_path/manifest.json; \
+	  if test -L "$$output_path" || ! test -d "$$output_path"; then \
+	    echo "HBCB_MAKE: FAIL[output_missing]: the selected build output is not an existing non-symlink directory; run make build with the same OUTPUT_NAME first" >&2; \
+	    exit 2; \
+	  fi; \
+	  if test -L "$$manifest_path" || ! test -f "$$manifest_path"; then \
+	    echo "HBCB_MAKE: FAIL[manifest_missing]: the selected build has no regular non-symlink manifest.json" >&2; \
+	    exit 2; \
+	  fi; \
+	  $(MAKE) image; \
+	  runtime_uid=`id -u`; runtime_gid=`id -g`; \
+	  if test "$$runtime_uid" = 0; then runtime_uid=65532; fi; \
+	  if test "$$runtime_gid" = 0; then runtime_gid=65532; fi; \
+	  $(DOCKER) run \
+	    --rm \
+	    --init \
+	    --platform "$(PLATFORM)" \
+	    --network none \
+	    --read-only \
+	    --cap-drop ALL \
+	    --security-opt no-new-privileges:true \
+	    --pids-limit 64 \
+	    --cpus 1 \
+	    --memory 512m \
+	    --user "$$runtime_uid:$$runtime_gid" \
+	    --tmpfs /work:rw,nosuid,nodev,noexec,size=64m,mode=1777 \
+	    --mount "type=bind,source=$$manifest_path,target=/input/manifest.json,readonly" \
+	    "$(BUILDER_IMAGE)" \
+	    inspect-manifest --manifest /input/manifest.json
+
 demo verify-demo: override OUTPUT_NAME := demo
 
 demo: build
@@ -257,6 +298,9 @@ verify-demo-native:
 init-env:
 	./scripts/init-env
 
+service-client:
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) ./scripts/service-client --request "$(REQUEST)"
+
 service-up:
 	DOCKER="$(DOCKER)" PYTHON="$(PYTHON)" BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose up
 
@@ -277,6 +321,12 @@ service-ps:
 
 service-logs:
 	DOCKER="$(DOCKER)" PYTHON="$(PYTHON)" BUILDER_IMAGE="$(BUILDER_IMAGE)" ./scripts/service-compose logs
+
+service-images:
+	DOCKER="$(DOCKER)" ./scripts/service-images list
+
+service-image-cleanup:
+	DOCKER="$(DOCKER)" ./scripts/service-images remove
 
 g8-static:
 	env -u HBCB_COMPOSE_BIN DOCKER="$(DOCKER)" PYTHONPATH=.:service/src PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m unittest discover -s tests/deployment -p 'test_*.py' -v

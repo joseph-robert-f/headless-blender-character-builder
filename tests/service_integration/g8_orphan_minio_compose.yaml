@@ -10,9 +10,12 @@ x-hardened: &hardened
 
 services:
   postgres:
-    image: postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8
+    image: postgres:16.14-alpine3.24@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     platform: linux/amd64
+    user: "70:70"
     restart: "no"
+    labels:
+      io.hbcb.orphan-owner: ${HBCB_ORPHAN_OWNER_TOKEN:?set disposable owner token}
     environment:
       POSTGRES_DB: hbcb
       POSTGRES_USER: hbcb_orphan_admin
@@ -34,6 +37,8 @@ services:
     image: ${HBCB_ORPHAN_MINIO_IMAGE_ID:?set exact local MinIO image ID}
     platform: linux/amd64
     restart: "no"
+    labels:
+      io.hbcb.orphan-owner: ${HBCB_ORPHAN_OWNER_TOKEN:?set disposable owner token}
     environment:
       MINIO_ROOT_USER: hbcb_orphan_root
       MINIO_ROOT_PASSWORD: ${HBCB_ORPHAN_MINIO_ROOT_PASSWORD:?set disposable MinIO root password}
@@ -64,6 +69,8 @@ services:
       minio:
         condition: service_healthy
     restart: "no"
+    labels:
+      io.hbcb.orphan-owner: ${HBCB_ORPHAN_OWNER_TOKEN:?set disposable owner token}
     entrypoint: ["/bin/sh", "/opt/hbcb/minio-init.sh"]
     environment:
       MINIO_ROOT_USER: hbcb_orphan_root
@@ -98,6 +105,8 @@ services:
       postgres:
         condition: service_healthy
     restart: "no"
+    labels:
+      io.hbcb.orphan-owner: ${HBCB_ORPHAN_OWNER_TOKEN:?set disposable owner token}
     environment:
       HBCB_DEPLOYMENT_NAMESPACE: local
       POSTGRES_DB: hbcb
@@ -128,6 +137,8 @@ services:
       minio-init:
         condition: service_completed_successfully
     restart: "no"
+    labels:
+      io.hbcb.orphan-owner: ${HBCB_ORPHAN_OWNER_TOKEN:?set disposable owner token}
     entrypoint: ["/usr/bin/python3"]
     command: ["tests/service_integration/g8_orphan_minio_gate.py"]
     environment:
@@ -155,7 +166,13 @@ services:
 networks:
   orphan-gate:
     internal: true
+    labels:
+      io.hbcb.orphan-owner: ${HBCB_ORPHAN_OWNER_TOKEN:?set disposable owner token}
 
 volumes:
   minio-data:
+    labels:
+      io.hbcb.orphan-owner: ${HBCB_ORPHAN_OWNER_TOKEN:?set disposable owner token}
   postgres-data:
+    labels:
+      io.hbcb.orphan-owner: ${HBCB_ORPHAN_OWNER_TOKEN:?set disposable owner token}

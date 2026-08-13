@@ -92,7 +92,10 @@ class JsonSchemaContractTests(unittest.TestCase):
         outer_fields = set(build["properties"])
         spec_fields = set(character["properties"])
         examples = sorted((ROOT / "examples" / "requests").glob("*.json"))
-        self.assertEqual([path.name for path in examples], ["facet-bot.json", "moss-hopper.json"])
+        self.assertEqual(
+            [path.name for path in examples],
+            ["facet-bot-tidepool.json", "facet-bot.json", "moss-hopper.json"],
+        )
         for path in examples:
             raw = json.loads(path.read_text(encoding="utf-8"))
             self.assertLessEqual(set(raw), outer_fields)

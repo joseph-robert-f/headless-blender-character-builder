@@ -26,21 +26,58 @@ separate command; it stops this checkout's stack while preserving its data.
 `make init-env` creates a private local bearer token, a checkout-specific Compose
 project identity, and other scoped credentials in ignored `.env`; it prints no
 secret and refuses to overwrite an existing file. The API binds to loopback,
-using host port `8080` by default. The repository does not yet include a
-lightweight custom-request service client, so the copy-paste journey below is
-the supported first evaluation. `make service-smoke` is a separate, slower
+using host port `8080` by default. The lightweight client below is the supported
+first evaluation. `make service-smoke` is a separate, slower
 maintainer/integration confidence gate that builds directly and through the
 service, restarts the API, tests cancellation and IAM, downloads all artifacts,
 and independently verifies them. The local stack is for loopback evaluation
 only; do not publish its ports or treat it as the G8 production deployment.
 
-## Copy-paste local client journey
+## Lightweight local client
 
-Run the block below from the repository root after `make service-up`. Paste the
-whole block at once. It runs in a subshell, so a failure stops only this client
-run—not your interactive shell. It removes private scratch data on every exit
-and publishes nothing until the complete nine-file artifact set has passed its
-declared byte counts and SHA-256 hashes.
+Run one command from the repository root after `make service-up`:
+
+```sh
+make service-client REQUEST="$PWD/examples/requests/facet-bot.json"
+```
+
+The client submits the selected request, prints bounded status updates, and
+saves a complete verified result below `build/service-client/<build-id>/`.
+It reads the local bearer token and stored port selectors from the private
+`.env` without sourcing that file. Shell `HBCB_API_HOST_PORT` and
+`HBCB_STORAGE_HOST_PORT` selections take precedence, matching the service
+wrappers. If `python3` is older than 3.11, use the same explicit selector as the
+service commands:
+
+```sh
+PYTHON=python3.11 make service-client \
+  REQUEST="$PWD/examples/requests/facet-bot-tidepool.json"
+```
+
+The client has no third-party Python dependencies. It disables proxies, rejects
+redirects, accepts downloads only from the selected loopback storage port,
+bounds polling and response sizes, checks every declared byte count and SHA-256
+hash, refuses to overwrite an existing build-ID result, and sends one bounded
+best-effort cancellation request if a known nonterminal build fails or is
+interrupted. A submission failure may leave the build ID unknown, and an API
+or network failure can prevent cancellation confirmation. It removes private
+scratch and signed URLs before returning.
+
+Open the exact directory printed after `verified model and evidence saved in`.
+It contains `model.blend`, `model.glb`, `model.stl`, the preview and three
+diagnostic renders, `qa.json`, `manifest.json`, and one final `build.json` API
+record. When finished, run `make service-down`; named service data volumes are
+preserved.
+
+## Manual protocol example
+
+The longer block below is retained for integrators who need to see every HTTP
+step. New users should use `make service-client` above. Run this manual example
+from the repository root after `make service-up`; paste the whole block at once.
+It runs in a subshell, so a failure stops only this client run—not your
+interactive shell. It removes private scratch data on every exit and publishes
+nothing until the complete nine-file artifact set has passed its declared byte
+counts and SHA-256 hashes.
 
 Set `HBCB_REQUEST` to a schema-valid custom JSON file first if desired; the
 default is Facet Bot. For example, this selects the checked-in request by its

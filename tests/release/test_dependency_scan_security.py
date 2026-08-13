@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import io
 import json
@@ -11,6 +12,7 @@ import tarfile
 import tempfile
 import time
 import unittest
+from collections import Counter
 from datetime import date
 from pathlib import Path
 from unittest import mock
@@ -203,7 +205,42 @@ class DependencyScanSecurityTests(unittest.TestCase):
         policy = scan_tool.load_vulnerability_policy()
         self.assertEqual(policy["format"], "hbcb-vulnerability-policy/v1")
         self.assertEqual(policy["default_action"], "deny")
-        self.assertEqual(policy["dispositions"], [])
+        dispositions = policy["dispositions"]
+        self.assertEqual(len(dispositions), 194)
+        self.assertEqual(
+            Counter(
+                (item["target"], item["disposition"])
+                for item in dispositions
+            ),
+            Counter(
+                {
+                    ("osv-image-api", "accepted-risk"): 40,
+                    ("osv-image-builder", "accepted-risk"): 32,
+                    ("osv-image-caddy", "accepted-risk"): 13,
+                    ("osv-image-caddy", "not-affected"): 3,
+                    ("osv-image-docker-base", "accepted-risk"): 27,
+                    ("osv-image-minio", "mitigated"): 2,
+                    ("osv-image-minio", "not-affected"): 6,
+                    ("osv-image-postgres", "not-affected"): 39,
+                    ("osv-image-worker", "accepted-risk"): 32,
+                }
+            ),
+        )
+        expected_evidence = [
+            {
+                "path": "docs/security/vulnerability-review-2026-08-12.md",
+                "sha256": "d85cd5a3c439f25d91dcb5cdeadafde9a5d854276591f309d6e6e0dae40d269b",
+            }
+        ]
+        self.assertTrue(
+            all(
+                item["reviewed_on"] == "2026-08-12"
+                and item["expires_on"] == "2026-09-11"
+                and item["evidence"] == expected_evidence
+                and item["image_identity"] is not None
+                for item in dispositions
+            )
+        )
 
     def test_vulnerability_policy_rejects_symlink_oversize_and_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -244,6 +281,177 @@ class DependencyScanSecurityTests(unittest.TestCase):
             set(expected), {"caddy", "docker-base", "postgres", "redis-server"}
         )
         self.assertTrue(all(scan_tool.SAFE_ID.fullmatch(item) for item in expected))
+
+    def test_disposition_context_identity_binds_every_reviewed_runtime_control(self) -> None:
+        expected = {
+            "api": (
+                "compose.yaml",
+                "deploy/vps/Caddyfile",
+                "deploy/vps/compose.yaml",
+            ),
+            "caddy": (
+                "deploy/vps/Caddyfile",
+                "deploy/vps/compose.yaml",
+            ),
+            "minio": (
+                "compose.yaml",
+                "deploy/vps/compose.yaml",
+                "tests/deployment/g8_recovery_compose.yaml",
+                "tests/security/minio_fixture_gate.py",
+                "tests/service_integration/g8_orphan_minio_compose.yaml",
+            ),
+            "postgres": (
+                "compose.yaml",
+                "deploy/vps/compose.yaml",
+                "tests/deployment/g8_recovery_compose.yaml",
+                "tests/security/postgres_fixture_gate.py",
+                "tests/service_integration/g8_orphan_minio_compose.yaml",
+            ),
+            "worker": (
+                "compose.yaml",
+                "deploy/vps/Caddyfile",
+                "deploy/vps/compose.yaml",
+            ),
+        }
+        self.assertEqual(scan_tool.DISPOSITION_CONTEXT_FILES, expected)
+        image_identity = {"policy_digest": "sha256:" + "a" * 64}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for relative in sorted(
+                {path for paths in expected.values() for path in paths}
+            ):
+                candidate = root / relative
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                candidate.write_text("reviewed " + relative + "\n", encoding="utf-8")
+
+            for identifier, paths in expected.items():
+                with self.subTest(identifier=identifier):
+                    baseline = scan_tool._bind_disposition_context(
+                        identifier,
+                        image_identity,
+                        root,
+                    )
+                    self.assertEqual(
+                        baseline["image_policy_digest"],
+                        image_identity["policy_digest"],
+                    )
+                    self.assertEqual(
+                        baseline["disposition_context_files"],
+                        list(paths),
+                    )
+                    self.assertRegex(
+                        baseline["disposition_context_digest"],
+                        r"^sha256:[0-9a-f]{64}$",
+                    )
+                    self.assertRegex(
+                        baseline["policy_digest"],
+                        r"^sha256:[0-9a-f]{64}$",
+                    )
+                    for relative in paths:
+                        candidate = root / relative
+                        original = candidate.read_bytes()
+                        candidate.write_bytes(original + b"changed\n")
+                        changed = scan_tool._bind_disposition_context(
+                            identifier,
+                            image_identity,
+                            root,
+                        )
+                        self.assertNotEqual(
+                            changed["disposition_context_digest"],
+                            baseline["disposition_context_digest"],
+                        )
+                        self.assertNotEqual(
+                            changed["policy_digest"],
+                            baseline["policy_digest"],
+                        )
+                        candidate.write_bytes(original)
+
+            self.assertEqual(
+                scan_tool._bind_disposition_context(
+                    "builder",
+                    image_identity,
+                    root,
+                ),
+                image_identity,
+            )
+            linked = root / "deploy" / "vps" / "Caddyfile"
+            linked.unlink()
+            linked.symlink_to(root / "compose.yaml")
+            with self.assertRaises(scan_tool.ScanError):
+                scan_tool._bind_disposition_context(
+                    "caddy",
+                    image_identity,
+                    root,
+                )
+
+    def test_disposition_context_rejects_same_size_in_place_rewrite(self) -> None:
+        image_identity = {"policy_digest": "sha256:" + "a" * 64}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for relative in scan_tool.DISPOSITION_CONTEXT_FILES["caddy"]:
+                candidate = root / relative
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                candidate.write_text("reviewed control\n", encoding="utf-8")
+
+            candidate = root / "deploy" / "vps" / "Caddyfile"
+            replacement = b"rewritten control"
+            self.assertEqual(len(replacement), candidate.stat().st_size)
+            real_fstat = os.fstat
+            first_call = True
+
+            def rewrite_after_open(descriptor: int):
+                nonlocal first_call
+                metadata = real_fstat(descriptor)
+                if first_call:
+                    first_call = False
+                    candidate.write_bytes(replacement)
+                    os.utime(
+                        candidate,
+                        ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 1_000_000_000),
+                    )
+                return metadata
+
+            with mock.patch.object(
+                scan_tool.os,
+                "fstat",
+                side_effect=rewrite_after_open,
+            ), self.assertRaisesRegex(scan_tool.ScanError, "changed while being read"):
+                scan_tool._bind_disposition_context(
+                    "caddy",
+                    image_identity,
+                    root,
+                )
+
+    def test_disposition_context_rejects_missing_empty_and_oversized_inputs(self) -> None:
+        image_identity = {"policy_digest": "sha256:" + "a" * 64}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = scan_tool.DISPOSITION_CONTEXT_FILES["caddy"]
+            for relative in paths:
+                candidate = root / relative
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                candidate.write_text("reviewed control\n", encoding="utf-8")
+
+            caddyfile = root / paths[0]
+            caddyfile.unlink()
+            with self.assertRaisesRegex(scan_tool.ScanError, "unavailable"):
+                scan_tool._bind_disposition_context("caddy", image_identity, root)
+            caddyfile.write_bytes(b"")
+            with self.assertRaisesRegex(scan_tool.ScanError, "unsafe"):
+                scan_tool._bind_disposition_context("caddy", image_identity, root)
+            caddyfile.write_text("reviewed control\n", encoding="utf-8")
+            with mock.patch.object(
+                scan_tool,
+                "MAX_DISPOSITION_CONTEXT_BYTES",
+                caddyfile.stat().st_size - 1,
+            ), self.assertRaisesRegex(scan_tool.ScanError, "unsafe"):
+                scan_tool._bind_disposition_context("caddy", image_identity, root)
+            with mock.patch.object(
+                scan_tool,
+                "MAX_DISPOSITION_CONTEXT_BYTES",
+                caddyfile.stat().st_size + 1,
+            ), self.assertRaisesRegex(scan_tool.ScanError, "exceeded its size limit"):
+                scan_tool._bind_disposition_context("caddy", image_identity, root)
 
     def test_external_inventory_rejects_unsafe_duplicate_mutable_or_partial_items(self) -> None:
         expected = ("docker-base", "postgres")
@@ -396,7 +604,10 @@ class DependencyScanSecurityTests(unittest.TestCase):
             scan_tool,
             "prepare_external_image_archive",
             side_effect=prepare,
-        ), mock.patch.object(scan_tool, "run", side_effect=scan):
+        ), mock.patch.object(scan_tool, "run", side_effect=scan), mock.patch.object(
+            scan_tool,
+            "run_postgres_runtime_gate",
+        ) as runtime_gate:
             root = Path(temporary)
             records: list[dict[str, object]] = []
             scan_tool.scan_external_image(
@@ -413,10 +624,14 @@ class DependencyScanSecurityTests(unittest.TestCase):
                 },
             )
             self.assertFalse((root / "external-image-postgres.tar").exists())
+            runtime_gate.assert_called_once_with(reference, records)
         self.assertEqual(len(commands), 1)
         self.assertIn("--archive", commands[0])
         self.assertNotIn(reference, commands[0])
-        self.assertEqual(records[0]["image_identity"], identity)
+        self.assertEqual(
+            records[0]["image_identity"],
+            scan_tool._bind_disposition_context("postgres", identity),
+        )
         with tempfile.TemporaryDirectory() as temporary, self.assertRaisesRegex(
             scan_tool.ScanError,
             "archive is invalid",
@@ -1113,9 +1328,56 @@ class DependencyScanSecurityTests(unittest.TestCase):
                 "osv-image-minio",
                 "osv-image-postgres",
                 "osv-image-worker",
+                "postgres-runtime-security",
             },
         )
         self.assertTrue(all(item["status"] == "incomplete" for item in records))
+        self.assertEqual(scan_tool.final_status(records, []), "incomplete")
+
+    def test_postgres_runtime_gate_is_exact_and_fails_closed(self) -> None:
+        reference = "postgres:16@sha256:" + "a" * 64
+        records: list[dict[str, object]] = []
+        commands: list[tuple[list[str], int, float]] = []
+
+        def passed(command, **kwargs):
+            commands.append(
+                (
+                    list(command),
+                    kwargs["timeout"],
+                    kwargs["termination_grace_seconds"],
+                )
+            )
+            return 0
+
+        with mock.patch.object(scan_tool, "run", side_effect=passed):
+            scan_tool.run_postgres_runtime_gate(reference, records)
+        self.assertEqual(
+            commands,
+            [
+                (
+                    [
+                        sys.executable,
+                        str(
+                            scan_tool.ROOT
+                            / "tests/security/postgres_fixture_gate.py"
+                        ),
+                        "--docker",
+                        "docker",
+                        "--image",
+                        reference,
+                    ],
+                    900,
+                    scan_tool.POSTGRES_GATE_TERM_GRACE_SECONDS,
+                )
+            ],
+        )
+        self.assertEqual(records[0]["status"], "pass")
+        self.assertEqual(records[0]["type"], "runtime-security-gate")
+
+        records = []
+        with mock.patch.object(scan_tool, "run", return_value=1):
+            scan_tool.run_postgres_runtime_gate(reference, records)
+        self.assertEqual(records[0]["status"], "incomplete")
         self.assertEqual(scan_tool.final_status(records, []), "incomplete")
 
     def test_advisory_alias_family_is_one_blocking_high_finding(self) -> None:
@@ -1144,7 +1406,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
         self.assertEqual(assessment["blocking"], 1)
         self.assertEqual(assessment["severity"]["HIGH"], 1)
 
-    def test_debian_urgency_never_downgrades_the_group_cvss_score(self) -> None:
+    def test_generic_urgency_never_downgrades_the_group_cvss_score(self) -> None:
         report = advisory_report("8.1")
         affected = report["results"][0]["packages"][0]["vulnerabilities"][0][
             "affected"
@@ -1156,6 +1418,125 @@ class DependencyScanSecurityTests(unittest.TestCase):
         )
         self.assertEqual(normalized[0]["score"], "8.1")
         self.assertEqual(normalized[0]["severity"], "HIGH")
+
+    def test_exact_debian_unimportant_vendor_analysis_overrides_generic_cvss(self) -> None:
+        report = {
+            "results": [
+                {
+                    "packages": [
+                        {
+                            "groups": [
+                                {
+                                    "aliases": ["CVE-2026-1234", "DEBIAN-CVE-2026-1234"],
+                                    "ids": ["DEBIAN-CVE-2026-1234"],
+                                    "max_severity": "9.8",
+                                }
+                            ],
+                            "package": {
+                                "ecosystem": "Debian:12",
+                                "name": "glibc",
+                                "version": "2.36-9+deb12u14",
+                            },
+                            "vulnerabilities": [
+                                {
+                                    "affected": [
+                                        {
+                                            "ecosystem_specific": {"urgency": "unimportant"},
+                                            "package": {
+                                                "ecosystem": "Debian:12",
+                                                "name": "glibc",
+                                            },
+                                        }
+                                    ],
+                                    "aliases": ["CVE-2026-1234"],
+                                    "id": "DEBIAN-CVE-2026-1234",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+        normalized = scan_tool.normalize_vulnerability_report(
+            report,
+            "osv-image-docker-base",
+        )
+        self.assertEqual(normalized[0]["score"], "9.8")
+        self.assertEqual(normalized[0]["severity"], "LOW")
+
+        report["results"][0]["packages"][0]["vulnerabilities"][0]["affected"][0][
+            "ecosystem_specific"
+        ]["urgency"] = "not yet assigned"
+        normalized = scan_tool.normalize_vulnerability_report(
+            report,
+            "osv-image-docker-base",
+        )
+        self.assertEqual(normalized[0]["severity"], "CRITICAL")
+
+        del report["results"][0]["packages"][0]["vulnerabilities"][0][
+            "affected"
+        ][0]["ecosystem_specific"]
+        normalized = scan_tool.normalize_vulnerability_report(
+            report,
+            "osv-image-docker-base",
+        )
+        self.assertEqual(normalized[0]["severity"], "CRITICAL")
+
+        report["results"][0]["packages"][0]["vulnerabilities"][0][
+            "affected"
+        ][0]["ecosystem_specific"] = {"urgency": "unimportant"}
+        report["results"][0]["packages"][0]["vulnerabilities"][0][
+            "affected"
+        ].append(
+            {
+                "ecosystem_specific": {"urgency": "not yet assigned"},
+                "package": {
+                    "ecosystem": "Debian:12",
+                    "name": "glibc",
+                },
+            }
+        )
+        normalized = scan_tool.normalize_vulnerability_report(
+            report,
+            "osv-image-docker-base",
+        )
+        self.assertEqual(normalized[0]["severity"], "CRITICAL")
+
+    def test_custom_ecosystem_fixed_versions_are_part_of_exact_identity(self) -> None:
+        advisory = {
+            "affected": [
+                {
+                    "ecosystem_specific": {
+                        "custom_ranges": [
+                            {
+                                "events": [
+                                    {"introduced": "RELEASE.2024-01-01"},
+                                    {"fixed": "RELEASE.2025-02-28"},
+                                ],
+                                "type": "ECOSYSTEM",
+                            }
+                        ]
+                    },
+                    "package": {
+                        "ecosystem": "Go",
+                        "name": "example.invalid/module",
+                    },
+                    "ranges": [],
+                }
+            ]
+        }
+        package = {
+            "ecosystem": "Go",
+            "name": "example.invalid/module",
+            "version": "(devel)",
+        }
+        self.assertEqual(
+            scan_tool._matching_fixed_versions(advisory, package),
+            {"RELEASE.2025-02-28"},
+        )
+        advisory["affected"][0]["ecosystem_specific"]["custom_ranges"] = "bad"
+        with self.assertRaises(scan_tool.ScanError):
+            scan_tool._matching_fixed_versions(advisory, package)
 
     def test_exact_unexpired_static_evidence_disposition_reviews_high(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1289,7 +1670,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
             with self.assertRaises(scan_tool.ScanError):
                 scan_tool.load_vulnerability_policy(root, today=date(2026, 8, 12))
 
-    def test_lower_and_unrated_findings_remain_visible_without_blocking(self) -> None:
+    def test_lower_findings_remain_visible_while_unrated_fails_closed(self) -> None:
         report = advisory_report("3.8")
         package = report["results"][0]["packages"][0]
         package["groups"].append(
@@ -1312,18 +1693,19 @@ class DependencyScanSecurityTests(unittest.TestCase):
             policy,
             IMAGE_IDENTITY,
         )
-        self.assertEqual(assessment["status"], "pass")
+        self.assertEqual(assessment["status"], "findings")
         self.assertEqual(assessment["families"], 2)
+        self.assertEqual(assessment["blocking"], 1)
         self.assertEqual(assessment["severity"]["LOW"], 1)
         self.assertEqual(assessment["severity"]["UNRATED"], 1)
         rendered = scan_tool.render_summary(
             {
-                "status": "pass",
+                "status": "findings",
                 "targets": [
                     {
                         "exit_code": 1,
                         "id": "osv-image-minio",
-                        "status": "pass",
+                        "status": "findings",
                         "type": "vulnerability-scan",
                         "vulnerabilities": assessment,
                     }
@@ -1551,6 +1933,291 @@ class DependencyScanSecurityTests(unittest.TestCase):
             first_identity["policy_digest"],
             second_identity["policy_digest"],
         )
+
+    def test_local_policy_identity_ignores_timestamps_but_binds_runtime_content(self) -> None:
+        labels = {"org.opencontainers.image.revision": "uncommitted"}
+
+        def write_archive(path: Path, created: str, mtime: int, payload: bytes) -> str:
+            layer_buffer = io.BytesIO()
+            with tarfile.open(fileobj=layer_buffer, mode="w") as layer:
+                member = tarfile.TarInfo("usr/local/bin/example")
+                member.mode = 0o555
+                member.mtime = mtime
+                member.size = len(payload)
+                layer.addfile(member, io.BytesIO(payload))
+            layer_payload = layer_buffer.getvalue()
+            layer_name = "layer.tar"
+            config_payload = json.dumps(
+                {
+                    "architecture": "amd64",
+                    "config": {
+                        "Entrypoint": ["/usr/local/bin/example"],
+                        "Labels": labels,
+                        "User": "65532:65532",
+                    },
+                    "created": created,
+                    "history": [{"created": created}],
+                    "os": "linux",
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+            config_digest = "sha256:" + hashlib.sha256(config_payload).hexdigest()
+            config_name = config_digest.removeprefix("sha256:") + ".json"
+            manifest_payload = json.dumps(
+                [{"Config": config_name, "Layers": [layer_name], "RepoTags": None}],
+                separators=(",", ":"),
+            ).encode("utf-8")
+            with tarfile.open(path, "w") as archive:
+                for name, value in (
+                    (config_name, config_payload),
+                    (layer_name, layer_payload),
+                    ("manifest.json", manifest_payload),
+                ):
+                    member = tarfile.TarInfo(name)
+                    member.mode = 0o600
+                    member.size = len(value)
+                    archive.addfile(member, io.BytesIO(value))
+            return config_digest
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first_archive = root / "first.tar"
+            second_archive = root / "second.tar"
+            changed_archive = root / "changed.tar"
+            first_config = write_archive(
+                first_archive, "2026-08-12T12:00:00Z", 1, b"same bytes"
+            )
+            second_config = write_archive(
+                second_archive, "2026-08-12T13:00:00Z", 2, b"same bytes"
+            )
+            changed_config = write_archive(
+                changed_archive, "2026-08-12T14:00:00Z", 3, b"changed bytes"
+            )
+
+            def inspected(config_digest: str) -> bytes:
+                return json.dumps(
+                    [
+                        {
+                            "Architecture": "amd64",
+                            "Config": {"Labels": labels},
+                            "Id": config_digest,
+                            "Os": "linux",
+                        }
+                    ]
+                ).encode("utf-8")
+
+            identities = []
+            for reference, archive, config_digest in (
+                ("example:first", first_archive, first_config),
+                ("example:second", second_archive, second_config),
+                ("example:changed", changed_archive, changed_config),
+            ):
+                with mock.patch.object(
+                    scan_tool,
+                    "run_bounded_capture",
+                    return_value=inspected(config_digest),
+                ), mock.patch.object(
+                    scan_tool,
+                    "_save_external_image_archive",
+                    return_value=(archive.stat().st_size, "a" * 64),
+                ):
+                    identities.append(
+                        scan_tool.prepare_local_image_archive(
+                            reference,
+                            "builder",
+                            archive,
+                            None,
+                        )
+                    )
+
+        self.assertNotEqual(identities[0]["config_digest"], identities[1]["config_digest"])
+        self.assertEqual(identities[0]["content_digest"], identities[1]["content_digest"])
+        self.assertEqual(
+            identities[0]["runtime_config_digest"],
+            identities[1]["runtime_config_digest"],
+        )
+        self.assertEqual(identities[0]["policy_digest"], identities[1]["policy_digest"])
+        self.assertNotEqual(identities[1]["content_digest"], identities[2]["content_digest"])
+        self.assertNotEqual(identities[1]["policy_digest"], identities[2]["policy_digest"])
+
+    def test_local_content_identity_binds_runtime_metadata_and_layer_order(self) -> None:
+        baseline_layers = [
+            [
+                {
+                    "devmajor": 0,
+                    "devminor": 0,
+                    "gid": 20,
+                    "linkname": "",
+                    "mode": 0o555,
+                    "name": "usr/local/bin/example",
+                    "pax_headers": {"HBCB.test": "one"},
+                    "payload": b"reviewed runtime bytes",
+                    "type": tarfile.REGTYPE,
+                    "uid": 10,
+                },
+                {
+                    "devmajor": 0,
+                    "devminor": 0,
+                    "gid": 21,
+                    "linkname": "example",
+                    "mode": 0o777,
+                    "name": "usr/local/bin/example-link",
+                    "pax_headers": {},
+                    "payload": b"",
+                    "type": tarfile.SYMTYPE,
+                    "uid": 11,
+                },
+                {
+                    "devmajor": 1,
+                    "devminor": 7,
+                    "gid": 22,
+                    "linkname": "",
+                    "mode": 0o600,
+                    "name": "dev/example",
+                    "pax_headers": {},
+                    "payload": b"",
+                    "type": tarfile.CHRTYPE,
+                    "uid": 12,
+                },
+            ],
+            [
+                {
+                    "devmajor": 0,
+                    "devminor": 0,
+                    "gid": 23,
+                    "linkname": "",
+                    "mode": 0o444,
+                    "name": "etc/example.conf",
+                    "pax_headers": {},
+                    "payload": b"enabled=true\n",
+                    "type": tarfile.REGTYPE,
+                    "uid": 13,
+                }
+            ],
+        ]
+
+        def write_archive(path: Path, layers: list[list[dict[str, object]]]) -> None:
+            layer_payloads = []
+            for index, specs in enumerate(layers):
+                buffer = io.BytesIO()
+                with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as layer:
+                    for spec in specs:
+                        member = tarfile.TarInfo(str(spec["name"]))
+                        member.type = spec["type"]
+                        member.mode = int(spec["mode"])
+                        member.uid = int(spec["uid"])
+                        member.gid = int(spec["gid"])
+                        member.linkname = str(spec["linkname"])
+                        member.devmajor = int(spec["devmajor"])
+                        member.devminor = int(spec["devminor"])
+                        member.pax_headers = dict(spec["pax_headers"])
+                        payload = bytes(spec["payload"])
+                        member.size = len(payload) if member.isfile() else 0
+                        layer.addfile(
+                            member,
+                            io.BytesIO(payload) if member.isfile() else None,
+                        )
+                layer_payloads.append(("layer-%d.tar" % index, buffer.getvalue()))
+
+            manifest = json.dumps(
+                [{"Config": "unused.json", "Layers": [name for name, _ in layer_payloads]}],
+                separators=(",", ":"),
+            ).encode("utf-8")
+            with tarfile.open(path, mode="w") as archive:
+                for name, payload in layer_payloads + [("manifest.json", manifest)]:
+                    member = tarfile.TarInfo(name)
+                    member.size = len(payload)
+                    archive.addfile(member, io.BytesIO(payload))
+
+        mutations = {
+            "bytes": lambda layers: layers[0][0].update(payload=b"changed runtime bytes"),
+            "path": lambda layers: layers[0][0].update(name="usr/local/bin/renamed"),
+            "mode": lambda layers: layers[0][0].update(mode=0o755),
+            "uid": lambda layers: layers[0][0].update(uid=99),
+            "gid": lambda layers: layers[0][0].update(gid=99),
+            "link target": lambda layers: layers[0][1].update(linkname="other"),
+            "link type": lambda layers: layers[0][1].update(type=tarfile.LNKTYPE),
+            "device major": lambda layers: layers[0][2].update(devmajor=2),
+            "device minor": lambda layers: layers[0][2].update(devminor=8),
+            "non-time PAX": lambda layers: layers[0][0]["pax_headers"].update(
+                {"HBCB.test": "two"}
+            ),
+            "layer order": lambda layers: layers.reverse(),
+        }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            baseline_archive = root / "baseline.tar"
+            write_archive(baseline_archive, baseline_layers)
+            baseline = scan_tool._normalized_local_image_content_digest(
+                baseline_archive
+            )
+            for label, mutate in mutations.items():
+                with self.subTest(label=label):
+                    changed_layers = copy.deepcopy(baseline_layers)
+                    mutate(changed_layers)
+                    changed_archive = root / (label.replace(" ", "-") + ".tar")
+                    write_archive(changed_archive, changed_layers)
+                    self.assertNotEqual(
+                        scan_tool._normalized_local_image_content_digest(
+                            changed_archive
+                        ),
+                        baseline,
+                    )
+            with mock.patch.object(
+                scan_tool,
+                "MAX_NORMALIZED_LAYER_MEMBERS",
+                0,
+            ), self.assertRaisesRegex(scan_tool.ScanError, "inventory is too large"):
+                scan_tool._normalized_local_image_content_digest(baseline_archive)
+            with mock.patch.object(
+                scan_tool,
+                "MAX_NORMALIZED_LAYER_BYTES",
+                1,
+            ), self.assertRaisesRegex(scan_tool.ScanError, "content is too large"):
+                scan_tool._normalized_local_image_content_digest(baseline_archive)
+
+            duplicate_layers = copy.deepcopy(baseline_layers)
+            duplicate_layers[0].append(copy.deepcopy(duplicate_layers[0][0]))
+            duplicate_archive = root / "duplicate.tar"
+            write_archive(duplicate_archive, duplicate_layers)
+            with self.assertRaisesRegex(scan_tool.ScanError, "member is duplicated"):
+                scan_tool._normalized_local_image_content_digest(duplicate_archive)
+
+            unsupported_layers = copy.deepcopy(baseline_layers)
+            unsupported_layers[0][0]["type"] = b"Z"
+            unsupported_archive = root / "unsupported.tar"
+            write_archive(unsupported_archive, unsupported_layers)
+            with self.assertRaisesRegex(scan_tool.ScanError, "type is unsupported"):
+                scan_tool._normalized_local_image_content_digest(unsupported_archive)
+
+        runtime = {
+            "architecture": "amd64",
+            "config": {
+                "Entrypoint": ["/usr/local/bin/example"],
+                "Labels": {"org.opencontainers.image.revision": "reviewed"},
+                "User": "65532:65532",
+            },
+            "os": "linux",
+        }
+        runtime_digest = scan_tool._normalized_runtime_config_digest(runtime)
+        for label, mutate in (
+            ("entrypoint", lambda item: item["config"].update(Entrypoint=["/bin/sh"])),
+            ("user", lambda item: item["config"].update(User="0:0")),
+            (
+                "label",
+                lambda item: item["config"]["Labels"].update(
+                    {"org.opencontainers.image.revision": "changed"}
+                ),
+            ),
+        ):
+            with self.subTest(runtime=label):
+                changed = copy.deepcopy(runtime)
+                mutate(changed)
+                self.assertNotEqual(
+                    scan_tool._normalized_runtime_config_digest(changed),
+                    runtime_digest,
+                )
 
     def test_local_tag_cleanup_is_exact_and_reverse_build_order(self) -> None:
         local_images = scan_tool.local_image_references("f" * 24)

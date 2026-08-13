@@ -40,8 +40,15 @@ class OrphanMinioGateContractTests(unittest.TestCase):
         self.assertIn('HBCB_LIFECYCLE_DESTRUCTIVE_DISPOSABLE: "1"', compose)
         self.assertIn("g8_orphan_minio_gate.py", compose)
         self.assertNotRegex(compose, r"(?m)^name:")
-        self.assertIn("--volumes --remove-orphans", wrapper)
+        self.assertNotIn("compose down", wrapper)
+        self.assertNotIn("down --volumes --remove-orphans", wrapper)
         self.assertIn("project_resources", wrapper)
+        self.assertIn("owned_resources", wrapper)
+        self.assertIn("remove_owned_resources", wrapper)
+        self.assertIn("HBCB_ORPHAN_OWNER_TOKEN=$(random_hex 16)", wrapper)
+        self.assertIn('before_project=$(project_resources 2>/dev/null)', wrapper)
+        self.assertIn('before_owned=$(owned_resources 2>/dev/null)', wrapper)
+        self.assertGreaterEqual(compose.count("io.hbcb.orphan-owner:"), 8)
         self.assertIn(") || return 1", wrapper)
         self.assertIn("initial_resources=$(project_resources) ||", wrapper)
         self.assertIn("remaining_resources=$(project_resources 2>/dev/null) ||", wrapper)
@@ -66,6 +73,10 @@ class OrphanMinioGateContractTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(WRAPPER.stat().st_mode), 0o755)
         self.assertNotIn("ports:", compose)
         self.assertIn("internal: true", compose)
+        self.assertRegex(
+            compose,
+            r"(?ms)^  postgres:\n.*?^    user: \"70:70\"$",
+        )
         for required in (
             "baseline_orphans_present",
             '{"InvalidAccessKeyId", "AccessDenied"}',
@@ -136,7 +147,11 @@ class OrphanMinioGateContractTests(unittest.TestCase):
                 with log.open("a", encoding="utf-8") as stream:
                     stream.write(" ".join(args) + "\\n")
                 resource = state / "project-resource"
+                foreign = state / "foreign-resource"
                 scenario = os.environ.get("FAKE_DOCKER_SCENARIO", "")
+                owner_query = any(
+                    item.startswith("label=io.hbcb.orphan-owner=") for item in args
+                )
 
                 if args == ["info"]:
                     raise SystemExit(0)
@@ -146,20 +161,44 @@ class OrphanMinioGateContractTests(unittest.TestCase):
                 if args and args[0] == "ps":
                     if resource.exists():
                         print("c" * 64)
+                    if foreign.exists() and not owner_query:
+                        print("f" * 64)
                     elif scenario == "repeated" and (state / "cleanup-started").exists():
                         os.kill(os.getppid(), signal.SIGHUP)
                         time.sleep(0.05)
                     raise SystemExit(0)
+                if args[:2] == ["rm", "--force"]:
+                    (state / "cleanup-started").write_text("1", encoding="ascii")
+                    selected = {
+                        "hup": (signal.SIGHUP,),
+                        "int": (signal.SIGINT,),
+                        "term": (signal.SIGTERM,),
+                        "repeated": (signal.SIGTERM, signal.SIGTERM),
+                    }.get(scenario, ())
+                    for signum in selected:
+                        os.kill(os.getppid(), signum)
+                        time.sleep(0.05)
+                    time.sleep(0.1)
+                    resource.unlink(missing_ok=True)
+                    raise SystemExit(0)
+                if args[:2] == ["volume", "rm"]:
+                    raise SystemExit(0)
                 if args[:2] == ["volume", "ls"]:
                     if resource.exists():
                         print("fixture-volume")
+                    if foreign.exists() and not owner_query:
+                        print("foreign-volume")
                     elif scenario == "repeated" and (state / "cleanup-started").exists():
                         os.kill(os.getppid(), signal.SIGINT)
                         time.sleep(0.05)
                     raise SystemExit(0)
+                if args[:2] == ["network", "rm"]:
+                    raise SystemExit(0)
                 if args[:2] == ["network", "ls"]:
                     if resource.exists():
                         print("fixture-network")
+                    if foreign.exists() and not owner_query:
+                        print("e" * 64)
                     raise SystemExit(0)
                 if args and args[0] == "compose":
                     operation = next(
@@ -171,6 +210,8 @@ class OrphanMinioGateContractTests(unittest.TestCase):
                     elif operation == "up":
                         resource.write_text("owned", encoding="ascii")
                     elif operation == "run":
+                        if scenario == "foreign":
+                            foreign.write_text("must-survive", encoding="ascii")
                         print(json.dumps({
                             "deleted_orphan_versions": 1,
                             "dry_run_candidates": 1,
@@ -179,19 +220,6 @@ class OrphanMinioGateContractTests(unittest.TestCase):
                             "referenced_versions_survived": 1,
                             "result": "PASS",
                         }, sort_keys=True, separators=(",", ":")))
-                    elif operation == "down":
-                        (state / "cleanup-started").write_text("1", encoding="ascii")
-                        selected = {
-                            "hup": (signal.SIGHUP,),
-                            "int": (signal.SIGINT,),
-                            "term": (signal.SIGTERM,),
-                            "repeated": (signal.SIGTERM, signal.SIGTERM),
-                        }.get(scenario, ())
-                        for signum in selected:
-                            os.kill(os.getppid(), signum)
-                            time.sleep(0.05)
-                        time.sleep(0.1)
-                        resource.unlink(missing_ok=True)
                     raise SystemExit(0)
                 raise SystemExit("unexpected fake Docker invocation: " + " ".join(args))
                 """
@@ -232,13 +260,16 @@ class OrphanMinioGateContractTests(unittest.TestCase):
                 self.assertNotIn("ORPHAN_MINIO_GATE: PASS", completed.stdout)
                 self.assertNotIn('"result":"PASS"', completed.stdout)
                 self.assertFalse((state / "project-resource").exists())
-                down = next(index for index, command in enumerate(commands) if " down " in f" {command} ")
-                self.assertTrue(any(command.startswith("ps ") for command in commands[down + 1 :]))
+                cleanup = next(
+                    index for index, command in enumerate(commands)
+                    if command.startswith("rm --force ")
+                )
+                self.assertTrue(any(command.startswith("ps ") for command in commands[cleanup + 1 :]))
                 self.assertTrue(
-                    any(command.startswith("volume ls ") for command in commands[down + 1 :])
+                    any(command.startswith("volume ls ") for command in commands[cleanup + 1 :])
                 )
                 self.assertTrue(
-                    any(command.startswith("network ls ") for command in commands[down + 1 :])
+                    any(command.startswith("network ls ") for command in commands[cleanup + 1 :])
                 )
 
     @unittest.skipUnless(os.name == "posix", "POSIX signal semantics required")
@@ -248,6 +279,18 @@ class OrphanMinioGateContractTests(unittest.TestCase):
         self.assertNotIn("ORPHAN_MINIO_GATE: PASS", completed.stdout)
         self.assertNotIn('"result":"PASS"', completed.stdout)
         self.assertFalse((state / "project-resource").exists())
+
+    def test_foreign_same_project_resources_are_never_removed(self) -> None:
+        completed, state, commands = self._signal_fixture("foreign")
+        self.assertEqual(completed.returncode, 1, completed.stdout)
+        self.assertIn("disposable ownership mismatch", completed.stdout)
+        self.assertNotIn("ORPHAN_MINIO_GATE: PASS", completed.stdout)
+        self.assertFalse((state / "project-resource").exists())
+        self.assertTrue((state / "foreign-resource").exists())
+        self.assertFalse(any(" down " in f" {command} " for command in commands))
+        self.assertFalse(any(command.endswith(" " + "f" * 64) for command in commands))
+        self.assertFalse(any(command.endswith(" foreign-volume") for command in commands))
+        self.assertFalse(any(command.endswith(" " + "e" * 64) for command in commands))
 
 
 if __name__ == "__main__":

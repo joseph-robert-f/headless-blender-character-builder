@@ -1707,6 +1707,18 @@ class VpsOperatorTests(unittest.TestCase):
         ):
             with self.assertRaises(VPS.OperatorError):
                 VPS._validate_private_storage_network("hbcb-storage-private", os.environ)
+        private_name = "private-network-value-canary"
+        with mock.patch.object(
+            VPS,
+            "_run_bounded",
+            return_value=SimpleNamespace(returncode=1, stdout=b"", stderr=b"private"),
+        ):
+            with self.assertRaisesRegex(
+                VPS.OperatorError,
+                "create the configured Docker-internal network and attach the private S3 gateway",
+            ) as raised:
+                VPS._validate_private_storage_network(private_name, os.environ)
+        self.assertNotIn(private_name, str(raised.exception))
 
 
 if __name__ == "__main__":
