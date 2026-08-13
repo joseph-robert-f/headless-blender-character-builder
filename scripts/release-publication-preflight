@@ -304,8 +304,7 @@ def _read_regular(path: Path, maximum: int) -> bytes:
     return payload
 
 
-def _json_file(path: Path) -> Mapping[str, object]:
-    payload = _read_regular(path, MAX_JSON_BYTES)
+def _json_payload(payload: bytes) -> Mapping[str, object]:
     try:
         value = json.loads(
             payload.decode("utf-8", "strict"),
@@ -322,6 +321,10 @@ def _json_file(path: Path) -> Mapping[str, object]:
     if payload != canonical:
         raise PreflightFailure("invalid_json", "release metadata is not canonical JSON")
     return value
+
+
+def _json_file(path: Path) -> Mapping[str, object]:
+    return _json_payload(_read_regular(path, MAX_JSON_BYTES))
 
 
 def _source_policy(payload: bytes) -> Mapping[str, object]:
@@ -449,13 +452,13 @@ def _safe_checksum_path(value: str) -> PurePosixPath:
     return path
 
 
-def verify_checksums(release_dir: Path) -> None:
+def verify_checksums(release_dir: Path) -> Mapping[str, tuple[int, str]]:
     payload = _read_regular(release_dir / "SHA256SUMS", MAX_CHECKSUM_BYTES)
     try:
         text = payload.decode("ascii", "strict")
     except UnicodeError:
         raise PreflightFailure("invalid_checksums", "release checksum file is not ASCII") from None
-    records: Dict[str, str] = {}
+    records: Dict[str, tuple[int, str]] = {}
     for line in text.splitlines():
         if len(line) < 67 or line[64:66] != "  ":
             raise PreflightFailure("invalid_checksums", "release checksum record is malformed")
@@ -467,7 +470,7 @@ def verify_checksums(release_dir: Path) -> None:
         content = _read_regular(candidate, MAX_ARTIFACT_BYTES)
         if hashlib.sha256(content).hexdigest() != digest:
             raise PreflightFailure("checksum_mismatch", "release artifact checksum mismatch")
-        records[name] = digest
+        records[name] = (len(content), digest)
     required = {
         "corresponding-source.json",
         "image-metadata.json",
@@ -493,10 +496,13 @@ def verify_checksums(release_dir: Path) -> None:
             actual.add(entry.relative_to(release_dir).as_posix())
     if actual != set(records) | {"SHA256SUMS"}:
         raise PreflightFailure("checksums_incomplete", "release file set differs from SHA256SUMS")
+    return records
 
 
 def _verify_release_artifact_inventory(
-    release_dir: Path, release_metadata: Mapping[str, object]
+    release_dir: Path,
+    release_metadata: Mapping[str, object],
+    checksummed: Mapping[str, tuple[int, str]],
 ) -> Mapping[str, tuple[int, str]]:
     raw_artifacts = release_metadata.get("artifacts")
     if not isinstance(raw_artifacts, list) or len(raw_artifacts) > 4096:
@@ -518,40 +524,19 @@ def _verify_release_artifact_inventory(
             or SHA256.fullmatch(digest) is None
         ):
             raise PreflightFailure("identity_mismatch", "release artifact inventory is invalid")
-        relative = _safe_checksum_path(name)
-        payload = _read_regular(release_dir.joinpath(*relative.parts), MAX_ARTIFACT_BYTES)
-        if len(payload) != byte_count or hashlib.sha256(payload).hexdigest() != digest:
+        # Still enforced even though the bytes below come from the
+        # checksummed map rather than a second read of this path.
+        _safe_checksum_path(name)
+        if checksummed.get(name) != (byte_count, digest):
             raise PreflightFailure(
                 "identity_mismatch", "release artifact inventory differs from bundled bytes"
             )
         records[name] = (byte_count, digest)
-    try:
-        entries = list(release_dir.rglob("*"))
-    except OSError:
-        raise PreflightFailure(
-            "release_unavailable", "release directory cannot be inventoried"
-        ) from None
-    if len(entries) > 4096:
-        raise PreflightFailure("release_too_large", "release directory has too many entries")
-    actual = set()
-    for candidate in entries:
-        try:
-            metadata = candidate.lstat()
-        except OSError:
-            raise PreflightFailure(
-                "input_changed", "release directory changed during preflight"
-            ) from None
-        if candidate.is_symlink() or not (
-            stat.S_ISREG(metadata.st_mode) or stat.S_ISDIR(metadata.st_mode)
-        ):
-            raise PreflightFailure("unsafe_input", "release directory contains an unsafe entry")
-        relative = candidate.relative_to(release_dir).as_posix()
-        if stat.S_ISREG(metadata.st_mode) and relative not in {
-            "SHA256SUMS",
-            "release-metadata.json",
-        }:
-            actual.add(relative)
-    if set(records) != actual:
+    # verify_checksums already swept release_dir and proved the on-disk file
+    # set equals its own checksummed names plus SHA256SUMS; re-derive the
+    # inventory's set relationship from that map instead of walking the
+    # directory again.
+    if set(records) != set(checksummed) - {"release-metadata.json"}:
         raise PreflightFailure(
             "identity_mismatch", "release artifact inventory is incomplete"
         )
@@ -955,7 +940,7 @@ def _verify_sample_bundle(
     manifest_payload = _read_regular(
         release_dir / "sample" / "manifest.json", MAX_JSON_BYTES
     )
-    manifest = _json_file(release_dir / "sample" / "manifest.json")
+    manifest = _json_payload(manifest_payload)
     qa = _json_file(release_dir / "sample" / "qa.json")
     hashed_names = sample_names - {"manifest.json"}
     described = manifest.get("artifacts")
@@ -1249,10 +1234,13 @@ def verify_bundle(
         release_dir = original_release_dir.resolve(strict=True)
     except OSError:
         raise PreflightFailure("release_unavailable", "release directory is unavailable") from None
-    verify_checksums(release_dir)
+    checksummed = verify_checksums(release_dir)
     image_metadata = _json_file(release_dir / "image-metadata.json")
     release_metadata = _json_file(release_dir / "release-metadata.json")
-    source_inventory = _json_file(release_dir / "corresponding-source.json")
+    corresponding_source_payload = _read_regular(
+        release_dir / "corresponding-source.json", MAX_JSON_BYTES
+    )
+    source_inventory = _json_payload(corresponding_source_payload)
     if expected_publication is not None:
         if (
             set(expected_publication) != PUBLICATION_FIELDS
@@ -1265,18 +1253,19 @@ def verify_bundle(
                 "identity_mismatch",
                 "release inventory differs from the tracked publication policy",
             )
-    artifact_records = _verify_release_artifact_inventory(release_dir, release_metadata)
+    artifact_records = _verify_release_artifact_inventory(
+        release_dir, release_metadata, checksummed
+    )
     _verify_corresponding_source_inventory(
         source_inventory, artifact_records, version, revision, source_policy
     )
     expected_inventory_digest = release_metadata.get(
         "corresponding_source_inventory_sha256"
     )
-    inventory_payload = _read_regular(release_dir / "corresponding-source.json", MAX_JSON_BYTES)
     if (
         not isinstance(expected_inventory_digest, str)
         or SHA256.fullmatch(expected_inventory_digest) is None
-        or hashlib.sha256(inventory_payload).hexdigest() != expected_inventory_digest
+        or hashlib.sha256(corresponding_source_payload).hexdigest() != expected_inventory_digest
     ):
         raise PreflightFailure("identity_mismatch", "corresponding-source inventory is not bound")
     if index_digest is not None and release_metadata.get("git_index_sha256") != index_digest:

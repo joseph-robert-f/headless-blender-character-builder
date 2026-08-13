@@ -669,6 +669,60 @@ class ReleaseArtifactsTests(unittest.TestCase):
                         metadata_path.write_bytes(original_metadata)
                         (output / "SHA256SUMS").write_bytes(original_checksums)
 
+    def test_release_metadata_inventory_digest_disagreement_with_checksums_is_detected(
+        self,
+    ) -> None:
+        # release-metadata.json's own inventory can disagree with
+        # SHA256SUMS even when SHA256SUMS still agrees with the file on
+        # disk; the map-comparison path added for F9 must still catch this
+        # by comparing the inventory record against the checksummed map
+        # rather than only re-hashing bundled bytes.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, report, supplements, corresponding, demo, images = self._inputs(
+                root, publication_ready=True
+            )
+            output = root / "release"
+            packager.package(
+                source,
+                report,
+                supplements,
+                corresponding,
+                demo,
+                images,
+                output,
+                "0.1.0-rc.1",
+                123456789,
+            )
+            preflight.verify_bundle(output, "0.1.0-rc.1", "a" * 40)
+            metadata_path = output / "release-metadata.json"
+            original_metadata = metadata_path.read_bytes()
+            original_checksums = (output / "SHA256SUMS").read_bytes()
+            metadata = json.loads(original_metadata)
+            matches = 0
+            for item in metadata["artifacts"]:
+                if item["name"] == "source-audit.json":
+                    matches += 1
+                    item["sha256"] = "0" * 64
+            self.assertEqual(matches, 1)
+            metadata_path.write_text(
+                json.dumps(metadata, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+            # Recompute SHA256SUMS from the files actually on disk: this
+            # fixes up release-metadata.json's own (now-stale) checksum
+            # entry, but source-audit.json's file is untouched, so its
+            # SHA256SUMS entry still agrees with the real bytes -- only
+            # release-metadata.json's inventory record disagrees.
+            self._refresh_bundle_checksums(output)
+            try:
+                with self.assertRaises(preflight.PreflightFailure) as mismatch:
+                    preflight.verify_bundle(output, "0.1.0-rc.1", "a" * 40)
+                self.assertEqual(mismatch.exception.code, "identity_mismatch")
+            finally:
+                metadata_path.write_bytes(original_metadata)
+                (output / "SHA256SUMS").write_bytes(original_checksums)
+
     def test_publication_preflight_validates_source_material_and_image_references(
         self,
     ) -> None:
