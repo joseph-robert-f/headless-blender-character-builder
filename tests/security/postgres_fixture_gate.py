@@ -288,6 +288,7 @@ def _validate_image(document: Mapping[str, object], image: str) -> str:
         "PG_MAJOR=16",
         "PG_VERSION=16.14",
         "PGDATA=/var/lib/postgresql/data",
+        "DOCKER_PG_LLVM_DEPS=llvm21-dev \t\tclang21",
     }
     if (
         not isinstance(environment, list)

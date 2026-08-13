@@ -39,8 +39,16 @@ ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     PG_MAJOR="16" \
     PG_VERSION="16.14" \
     PG_SHA256="f6d077142737920858ce958ccdb75c6ee137a63b5b0853c70693d401ac7e3471" \
-    DOCKER_PG_LLVM_DEPS="llvm21-dev \t\tclang21" \
     PGDATA="/var/lib/postgresql/data"
+
+# Real-tab legacy ENV form copied verbatim from upstream
+# docker-library/postgres@4f9ced003ba58a854656ba150d146243d27ae3ac
+# 16/alpine3.24/Dockerfile so the derived image env matches the
+# reviewed base contract byte-for-byte (double-quoted ENV values do
+# not interpret \t escapes).
+ENV DOCKER_PG_LLVM_DEPS \
+		llvm21-dev \
+		clang21
 
 WORKDIR /
 VOLUME ["/var/lib/postgresql/data"]

@@ -56,6 +56,7 @@ def valid_document() -> dict[str, object]:
                 "PG_MAJOR=16",
                 "PG_VERSION=16.14",
                 "PGDATA=/var/lib/postgresql/data",
+                "DOCKER_PG_LLVM_DEPS=llvm21-dev \t\tclang21",
             ],
             "Volumes": {"/var/lib/postgresql/data": {}},
             "Labels": {
@@ -120,6 +121,10 @@ class PostgresSecurityGateTests(unittest.TestCase):
         document = valid_document()
         environment = document["Config"]["Env"]  # type: ignore[index]
         environment.append("GOSU_VERSION=1.19")  # type: ignore[union-attr]
+        mutations.append(document)
+        document = valid_document()
+        environment = document["Config"]["Env"]  # type: ignore[index]
+        environment.remove("DOCKER_PG_LLVM_DEPS=llvm21-dev \t\tclang21")  # type: ignore[union-attr]
         mutations.append(document)
         document = valid_document()
         document["Config"]["Labels"]["io.hbcb.postgres.recipe-id"] = "changed"  # type: ignore[index]
