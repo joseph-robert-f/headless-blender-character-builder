@@ -1057,9 +1057,18 @@ class ReleaseArtifactsTests(unittest.TestCase):
             owned.mkdir()
             owned_metadata = owned.lstat()
             old_identity = (owned_metadata.st_dev, owned_metadata.st_ino)
-            owned.rmdir()
+            # Keep the original inode alive so this fixture deterministically
+            # models a path replacement even on filesystems that immediately
+            # reuse an inode after an empty directory is removed.
+            displaced_owned = root / "displaced-owned-output"
+            owned.rename(displaced_owned)
             owned.mkdir()
             (owned / "foreign-marker").write_bytes(b"replacement\n")
+            replacement_metadata = owned.lstat()
+            self.assertNotEqual(
+                (replacement_metadata.st_dev, replacement_metadata.st_ino),
+                old_identity,
+            )
             with self.assertRaises(preflight.PreflightFailure) as replaced:
                 preflight._remove_owned_output(owned, old_identity)
             self.assertEqual(replaced.exception.code, "finalization_failed")
