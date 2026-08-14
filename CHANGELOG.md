@@ -7,6 +7,11 @@ Changelog, and releases use Semantic Versioning.
 
 ### Changed
 
+- Documented a dedicated, fail-closed source-only v0.1 release transaction
+  (D-069) that publishes the signed `v0.1.0-rc.1` Git tag and a
+  source-bearing GitHub Release without authenticating to GHCR, pushing an
+  image, or changing package visibility, leaving the conditional
+  image-publication transaction and its `public_oci_ready` gate unchanged.
 - Bound release-candidate builder, API, and worker tags and OCI labels to the
   exact distribution version and audited commit, and added checksum-verified
   Blender/project source assets with a machine-readable, image-bound scope
