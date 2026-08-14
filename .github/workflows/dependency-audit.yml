@@ -41,6 +41,11 @@
           "if": "${{ always() }}",
           "name": "Enforce complete vulnerability result",
           "run": "case \"$SCAN_STATUS\" in\n  0) printf '%s\\n' 'DEPENDENCY_AUDIT: PASS' ;;\n  1) printf '%s\\n' 'DEPENDENCY_AUDIT: FINDINGS' >&2; exit 1 ;;\n  *) printf '%s\\n' 'DEPENDENCY_AUDIT: INCOMPLETE' >&2; exit 1 ;;\nesac"
+        },
+        {
+          "if": "${{ always() }}",
+          "name": "Enforce disposition expiry runway",
+          "run": "python3 - <<'PY'\nimport datetime\nimport json\nimport sys\n\nTHRESHOLD_DAYS = 14\ntry:\n    with open(\"release/vulnerability-policy.json\", encoding=\"utf-8\") as stream:\n        document = json.load(stream)\nexcept (OSError, ValueError):\n    print(\"DEPENDENCY_AUDIT: DISPOSITION INVENTORY INVALID\", file=sys.stderr)\n    raise SystemExit(1)\ndispositions = document.get(\"dispositions\") if isinstance(document, dict) else None\nif not isinstance(dispositions, list) or not dispositions:\n    print(\"DEPENDENCY_AUDIT: DISPOSITION INVENTORY INVALID\", file=sys.stderr)\n    raise SystemExit(1)\ndates = []\nfor item in dispositions:\n    try:\n        dates.append(datetime.date.fromisoformat(str(item.get(\"expires_on\"))))\n    except ValueError:\n        print(\"DEPENDENCY_AUDIT: DISPOSITION EXPIRY INVALID\", file=sys.stderr)\n        raise SystemExit(1)\nearliest = min(dates)\nremaining = (earliest - datetime.date.today()).days\nmarker = \"earliest disposition expiry \" + earliest.isoformat() + \" in \" + str(remaining) + \" days\"\nif remaining < 0:\n    print(\"DEPENDENCY_AUDIT: DISPOSITIONS EXPIRED (\" + marker + \")\", file=sys.stderr)\n    raise SystemExit(1)\nif remaining <= THRESHOLD_DAYS:\n    print(\"DEPENDENCY_AUDIT: DISPOSITIONS EXPIRE SOON (\" + marker + \")\", file=sys.stderr)\n    raise SystemExit(1)\nprint(\"DEPENDENCY_AUDIT: DISPOSITION RUNWAY OK (\" + marker + \")\")\nPY"
         }
       ]
     }

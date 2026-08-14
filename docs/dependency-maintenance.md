@@ -45,6 +45,13 @@ manual runs use the maintainer-selected ref. The workflow receives
 `contents: read`, persists no checkout credentials, has no issue or pull-request
 write permission, and is never triggered by a contributor pull request.
 
+Besides the scan itself, every run enforces a disposition expiry runway: it
+fails with `DEPENDENCY_AUDIT: DISPOSITIONS EXPIRE SOON` once the earliest
+`expires_on` in `release/vulnerability-policy.json` is fourteen days away or
+less, so the weekly failure notification arrives while there is still time to
+rerun the vulnerability review and refresh the dispositions before the scan
+itself starts failing closed on their expiry.
+
 After adopting this workflow, enable GitHub Actions and manually dispatch
 `Dependency audit` once. Forks start with scheduled workflows disabled, and
 GitHub can disable schedules in a public repository after 60 days without
