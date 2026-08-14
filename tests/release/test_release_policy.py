@@ -170,6 +170,16 @@ class ReleasePolicyTests(unittest.TestCase):
         ]
         self.assertIn("./scripts/dependency-scan", run_text)
         self.assertIn("GITHUB_STEP_SUMMARY", run_text)
+        runway = next(
+            step
+            for step in steps
+            if isinstance(step, dict)
+            and step.get("name") == "Enforce disposition expiry runway"
+        )
+        self.assertEqual(runway.get("if"), "${{ always() }}")
+        self.assertIn("release/vulnerability-policy.json", str(runway.get("run")))
+        self.assertIn("THRESHOLD_DAYS = 14", str(runway.get("run")))
+        self.assertIn("DEPENDENCY_AUDIT: DISPOSITIONS EXPIRE SOON", str(runway.get("run")))
         self.assertTrue(
             any(item.startswith("actions/upload-artifact@") for item in uses)
         )
