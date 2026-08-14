@@ -586,6 +586,23 @@ class ReleaseArtifactsTests(unittest.TestCase):
                 preflight.verify_bundle(output, "0.1.0-rc.1", "a" * 40)
             self.assertEqual(tampered.exception.code, "checksum_mismatch")
 
+    def test_live_image_null_config_fails_closed_not_attribute_error(self) -> None:
+        payload = (
+            json.dumps(
+                [
+                    {
+                        "Architecture": "amd64",
+                        "Os": "linux",
+                        "Id": "sha256:" + "0" * 64,
+                        "Config": None,
+                    }
+                ]
+            )
+        ).encode("utf-8")
+        with self.assertRaises(preflight.PreflightFailure) as blocked:
+            preflight._live_image(payload, "builder", "0.1.0-rc.1", "a" * 40)
+        self.assertEqual(blocked.exception.code, "live_image_invalid")
+
     def test_publication_preflight_requires_every_release_artifact_role(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -651,6 +668,60 @@ class ReleaseArtifactsTests(unittest.TestCase):
                         target.write_bytes(original_payload)
                         metadata_path.write_bytes(original_metadata)
                         (output / "SHA256SUMS").write_bytes(original_checksums)
+
+    def test_release_metadata_inventory_digest_disagreement_with_checksums_is_detected(
+        self,
+    ) -> None:
+        # release-metadata.json's own inventory can disagree with
+        # SHA256SUMS even when SHA256SUMS still agrees with the file on
+        # disk; the map-comparison path added for F9 must still catch this
+        # by comparing the inventory record against the checksummed map
+        # rather than only re-hashing bundled bytes.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, report, supplements, corresponding, demo, images = self._inputs(
+                root, publication_ready=True
+            )
+            output = root / "release"
+            packager.package(
+                source,
+                report,
+                supplements,
+                corresponding,
+                demo,
+                images,
+                output,
+                "0.1.0-rc.1",
+                123456789,
+            )
+            preflight.verify_bundle(output, "0.1.0-rc.1", "a" * 40)
+            metadata_path = output / "release-metadata.json"
+            original_metadata = metadata_path.read_bytes()
+            original_checksums = (output / "SHA256SUMS").read_bytes()
+            metadata = json.loads(original_metadata)
+            matches = 0
+            for item in metadata["artifacts"]:
+                if item["name"] == "source-audit.json":
+                    matches += 1
+                    item["sha256"] = "0" * 64
+            self.assertEqual(matches, 1)
+            metadata_path.write_text(
+                json.dumps(metadata, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+            # Recompute SHA256SUMS from the files actually on disk: this
+            # fixes up release-metadata.json's own (now-stale) checksum
+            # entry, but source-audit.json's file is untouched, so its
+            # SHA256SUMS entry still agrees with the real bytes -- only
+            # release-metadata.json's inventory record disagrees.
+            self._refresh_bundle_checksums(output)
+            try:
+                with self.assertRaises(preflight.PreflightFailure) as mismatch:
+                    preflight.verify_bundle(output, "0.1.0-rc.1", "a" * 40)
+                self.assertEqual(mismatch.exception.code, "identity_mismatch")
+            finally:
+                metadata_path.write_bytes(original_metadata)
+                (output / "SHA256SUMS").write_bytes(original_checksums)
 
     def test_publication_preflight_validates_source_material_and_image_references(
         self,
@@ -1179,6 +1250,53 @@ class ReleaseArtifactsTests(unittest.TestCase):
             self.assertTrue(quarantines[0].is_dir())
             for item, handler in previous.items():
                 self.assertIs(signal.getsignal(item), handler)
+
+    def test_nested_finalization_guards_delegate_signal_delivery(self) -> None:
+        previous = {
+            item: signal.getsignal(item)
+            for item in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+        }
+        with preflight._FinalizationSignalGuard() as outer:
+            self.assertIsNone(outer.delegate)
+            with preflight._FinalizationSignalGuard() as inner:
+                self.assertIs(inner.delegate, outer)
+                os.kill(os.getpid(), signal.SIGTERM)
+                with self.assertRaises(preflight._FinalizationInterrupted) as raised:
+                    inner.raise_if_pending()
+                self.assertEqual(raised.exception.signum, signal.SIGTERM)
+                # Drain the signal recorded on the guard that actually
+                # installed the handler (the outer, non-delegating guard) so
+                # both context managers can close normally without
+                # re-raising; the re-raise-on-exit path is covered below.
+                outer.received = None
+        for item, handler in previous.items():
+            self.assertIs(signal.getsignal(item), handler)
+
+    def test_delegating_inner_finalization_guard_exit_raises_pending_signal(self) -> None:
+        previous = {
+            item: signal.getsignal(item)
+            for item in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+        }
+        with self.assertRaises(preflight._FinalizationInterrupted) as raised:
+            with preflight._FinalizationSignalGuard():
+                with preflight._FinalizationSignalGuard():
+                    os.kill(os.getpid(), signal.SIGTERM)
+        self.assertEqual(raised.exception.signum, signal.SIGTERM)
+        for item, handler in previous.items():
+            self.assertIs(signal.getsignal(item), handler)
+
+    def test_delegating_inner_finalization_guard_does_not_mask_in_flight_exception(self) -> None:
+        previous = {
+            item: signal.getsignal(item)
+            for item in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+        }
+        with self.assertRaisesRegex(RuntimeError, "canary failure"):
+            with preflight._FinalizationSignalGuard():
+                with preflight._FinalizationSignalGuard():
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    raise RuntimeError("canary failure")
+        for item, handler in previous.items():
+            self.assertIs(signal.getsignal(item), handler)
 
     def test_publication_main_finalization_is_one_policy_bound_transaction(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

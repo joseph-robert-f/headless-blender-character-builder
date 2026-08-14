@@ -190,6 +190,31 @@ esac
 HBCB_MINIO_RECIPE_ID=$minio_recipe_id
 export HBCB_MINIO_RECIPE_ID
 
+# Detect a pre-upgrade postgres-data volume before starting the stack.  The
+# PostgreSQL runtime moved from a root-entrypoint Debian image (PGDATA owned
+# by UID 999) to a derived UID-70 Alpine image, and separately from glibc to
+# musl collations, so a volume initialized before that swap cannot safely be
+# reused in place.  This is detection only; it never deletes or migrates
+# data.  Probe infrastructure errors (image not present, docker error) fall
+# open and let `compose up` surface the real error; only the positive
+# incompatibility signal blocks startup.
+postgres_data_volume=${COMPOSE_PROJECT_NAME}_postgres-data
+if "$docker_bin" volume inspect "$postgres_data_volume" >/dev/null 2>&1 && \
+   "$docker_bin" image inspect "$HBCB_POSTGRES_IMAGE" >/dev/null 2>&1; then
+  postgres_probe_status=0
+  "$docker_bin" run --rm --network none --read-only \
+    --user 0:0 --entrypoint /bin/sh \
+    --cap-drop ALL --security-opt no-new-privileges:true \
+    --pids-limit 64 --memory 128m \
+    -v "$postgres_data_volume:/probe:ro" \
+    "$HBCB_POSTGRES_IMAGE" -c \
+    'test -f /probe/PG_VERSION || exit 0; test "$(stat -c %u /probe)" = 70 || exit 3' \
+    >/dev/null 2>&1 || postgres_probe_status=$?
+  if [ "$postgres_probe_status" = 3 ]; then
+    fail "$postgres_data_volume was initialized by the pre-upgrade PostgreSQL image and cannot be reused by the current UID-70 Alpine runtime; see docs/troubleshooting.md#postgresql-image-upgrade-and-existing-volumes for the dump/restore migration path" 7
+  fi
+fi
+
 # Always materialize the gosu-free PostgreSQL runtime from the exact pinned
 # Dockerfile.  Compose tags it with this checkout's scoped name, while the
 # Docker build cache keeps repeated local starts inexpensive.

@@ -56,6 +56,7 @@ def valid_document() -> dict[str, object]:
                 "PG_MAJOR=16",
                 "PG_VERSION=16.14",
                 "PGDATA=/var/lib/postgresql/data",
+                "DOCKER_PG_LLVM_DEPS=llvm21-dev \t\tclang21",
             ],
             "Volumes": {"/var/lib/postgresql/data": {}},
             "Labels": {
@@ -120,6 +121,10 @@ class PostgresSecurityGateTests(unittest.TestCase):
         document = valid_document()
         environment = document["Config"]["Env"]  # type: ignore[index]
         environment.append("GOSU_VERSION=1.19")  # type: ignore[union-attr]
+        mutations.append(document)
+        document = valid_document()
+        environment = document["Config"]["Env"]  # type: ignore[index]
+        environment.remove("DOCKER_PG_LLVM_DEPS=llvm21-dev \t\tclang21")  # type: ignore[union-attr]
         mutations.append(document)
         document = valid_document()
         document["Config"]["Labels"]["io.hbcb.postgres.recipe-id"] = "changed"  # type: ignore[index]
@@ -197,9 +202,17 @@ class PostgresSecurityGateTests(unittest.TestCase):
         volume_owned = False
         resource_name = ""
         owner_label = ""
+        poll_attempts = 0
+
+        def is_poll(command: tuple[str, ...]) -> bool:
+            return (
+                len(command) >= 4
+                and command[3] == "/bin/sh"
+                and "pg_isready" in command[-1]
+            )
 
         def fake_run(command: tuple[str, ...], **_: object) -> subprocess.CompletedProcess[bytes]:
-            nonlocal container_owned, volume_owned, resource_name, owner_label
+            nonlocal container_owned, volume_owned, resource_name, owner_label, poll_attempts
             command = tuple(command)
             calls.append(command)
             if command[1:3] == ("volume", "create"):
@@ -221,7 +234,14 @@ class PostgresSecurityGateTests(unittest.TestCase):
                     stdout=((container_id + "\n").encode("ascii") if container_owned else b""),
                 )
             if command[1:3] == ("exec", container_id):
-                if "pg_isready" in command:
+                if is_poll(command):
+                    poll_attempts += 1
+                    if poll_attempts == 1:
+                        # Simulates the entrypoint's temporary initdb
+                        # bootstrap server still running as PID 1: the
+                        # compound check must fail on this iteration
+                        # rather than accepting a one-shot pg_isready.
+                        return completed(command, returncode=1)
                     return completed(command)
                 return completed(command, stdout=b"hbcb_gate|hbcb_gate\n")
             if command[1:3] == ("rm", "--force"):
@@ -238,6 +258,7 @@ class PostgresSecurityGateTests(unittest.TestCase):
             observed_id = GATE._runtime_gate("docker", TEST_IMAGE_ID)
 
         self.assertEqual(observed_id, container_id)
+        self.assertEqual(poll_attempts, 2)
         run = next(command for command in calls if command[1:3] == ("run", "--detach"))
         self.assertRegex(resource_name, GATE.RESOURCE_NAME)
         self.assertRegex(owner_label, r"^io\.hbcb\.postgres-fixture-owner=[0-9a-f]{32}$")
@@ -257,10 +278,21 @@ class PostgresSecurityGateTests(unittest.TestCase):
             self.assertIn(required, run)
         self.assertNotIn("--publish", run)
         self.assertFalse(any("/usr/local/bin/gosu" in item for item in run))
+        polls = [command for command in calls if command[1:3] == ("exec", container_id) and is_poll(command)]
+        self.assertEqual(len(polls), 2)
+        for poll in polls:
+            self.assertEqual(poll[3:6], ("/bin/sh", "-eu", "-c"))
+            self.assertIn('test "$(cat /proc/1/comm)" = postgres', poll[-1])
+            self.assertIn(
+                "exec pg_isready --quiet --username hbcb_gate --dbname hbcb_gate",
+                poll[-1],
+            )
         proof = next(
             command
             for command in calls
-            if command[1:3] == ("exec", container_id) and "/bin/sh" in command
+            if command[1:3] == ("exec", container_id)
+            and "/bin/sh" in command
+            and not is_poll(command)
         )
         script = proof[-1]
         for required in (

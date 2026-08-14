@@ -86,6 +86,12 @@ Treat `.env` and the named Compose volumes as a matched set. `make service-down`
 preserves both data and volume-side credentials. Do not replace `.env` while
 those volumes remain; restore the original file or deliberately dispose of the
 local data first. See [Troubleshooting](troubleshooting.md#local-asynchronous-service).
+A `postgres-data` volume created before a PostgreSQL base-image change (for
+example the Debian-to-Alpine, UID-999-to-70 switch) is not safe to reuse
+in place; `make service-up` detects this and refuses to start rather than
+guessing. See [PostgreSQL image upgrade and existing
+volumes](troubleshooting.md#postgresql-image-upgrade-and-existing-volumes) for
+the supported dump/restore path.
 
 The local service binds only to loopback. `make service-config` validates the
 resolved Compose configuration without starting the application or building an

@@ -8,7 +8,6 @@ import hashlib
 import json
 import os
 import re
-import signal
 import subprocess
 import sys
 import tarfile
@@ -17,6 +16,21 @@ import time
 import uuid
 from pathlib import Path, PurePosixPath
 from typing import Mapping, Sequence
+
+_COMMON_DIR = str(Path(__file__).resolve().parent)
+if _COMMON_DIR not in sys.path:
+    sys.path.insert(0, _COMMON_DIR)
+import fixture_gate_common
+from fixture_gate_common import (
+    CHILD_TERMINATION_GRACE_SECONDS,
+    CLEANUP_DOCKER_TIMEOUT_SECONDS,
+    CONTAINER_ID,
+    GateError,
+    _process_group_exists,
+    _safe_tool_selector,
+    _TerminationGuard,
+    _TerminationSignal,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,197 +52,41 @@ EXPECTED_ENTRYPOINT_SHA256 = (
     "9c440299ae04a0a79d55b8bf03307036d890a40979d2fb698073c9050d4b20a5"
 )
 OWNER_LABEL_KEY = "io.hbcb.postgres-fixture-owner"
-SAFE_TOOL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
 IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
-CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
 RESOURCE_NAME = re.compile(r"^hbcb-postgres-security-[0-9a-f]{16}$")
 BUILD_TAG = re.compile(r"^hbcb-postgres-security-build-[0-9a-f]{16}:local$")
-MAX_OUTPUT_BYTES = 1024 * 1024
 MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_ARCHIVE_MEMBER_COUNT = 100_000
 MAX_ARCHIVE_CONFIG_BYTES = 32 * 1024 * 1024
 MAX_ARCHIVE_MANIFEST_BYTES = 1024 * 1024
-CLEANUP_DOCKER_TIMEOUT_SECONDS = 5
 MAX_OWNED_RUNTIME_DOCKER_TIMEOUT_SECONDS = 60
 CLEANUP_DOCKER_OPERATION_COUNT = 12
-CHILD_TERMINATION_GRACE_SECONDS = 3
-COMMAND_POLL_SECONDS = 0.1
 BUILD_OWNER_LABEL_KEY = "io.hbcb.postgres-build-owner"
-_ACTIVE_TERMINATION_GUARD: "_TerminationGuard | None" = None
-
-
-class GateError(RuntimeError):
-    pass
-
-
-class _TerminationSignal(SystemExit):
-    def __init__(self, signum: int) -> None:
-        self.signum = signum
-        super().__init__(128 + signum)
-
-
-class _TerminationGuard:
-    """Defer default termination until the owned container and volume are gone."""
-
-    def __init__(self) -> None:
-        self.received: int | None = None
-        self.previous: dict[int, object] = {}
-        self.installed: set[int] = set()
-        self.delegate: _TerminationGuard | None = None
-
-    def _record(self, signum: int, _frame: object) -> None:
-        if self.received is None:
-            self.received = int(signum)
-
-    def __enter__(self) -> "_TerminationGuard":
-        global _ACTIVE_TERMINATION_GUARD
-        if _ACTIVE_TERMINATION_GUARD is not None:
-            self.delegate = _ACTIVE_TERMINATION_GUARD
-            return self
-        _ACTIVE_TERMINATION_GUARD = self
-        for signum in (signal.SIGINT, getattr(signal, "SIGHUP", None), signal.SIGTERM):
-            if not isinstance(signum, int) or signum in self.previous:
-                continue
-            previous = signal.getsignal(signum)
-            self.previous[signum] = previous
-            if previous == signal.SIG_DFL or (
-                signum == signal.SIGINT and previous == signal.default_int_handler
-            ):
-                signal.signal(signum, self._record)
-                self.installed.add(signum)
-        return self
-
-    def __exit__(self, _kind: object, _value: object, _traceback: object) -> None:
-        global _ACTIVE_TERMINATION_GUARD
-        if self.delegate is not None:
-            self.raise_if_pending()
-            return
-        for signum in self.installed:
-            signal.signal(signum, self.previous[signum])
-        if _ACTIVE_TERMINATION_GUARD is self:
-            _ACTIVE_TERMINATION_GUARD = None
-        self.raise_if_pending()
-
-    def raise_if_pending(self) -> None:
-        received = self.delegate.received if self.delegate is not None else self.received
-        if received is None:
-            return
-        if received == signal.SIGINT:
-            raise KeyboardInterrupt
-        raise _TerminationSignal(received)
-
-
-def _safe_tool_selector(value: str) -> bool:
-    if SAFE_TOOL.fullmatch(value) is not None:
-        return True
-    if not value or len(value) > 1024 or any(ord(character) < 32 for character in value):
-        return False
-    supplied = Path(value)
-    if not supplied.is_absolute() or supplied == Path("/") or ".." in supplied.parts:
-        return False
-    try:
-        resolved = supplied.resolve(strict=True)
-    except OSError:
-        return False
-    return resolved.is_file() and os.access(resolved, os.X_OK)
 
 
 def _run(
-    command: Sequence[str],
-    *,
-    timeout: int = 30,
-    check: bool = True,
-    interruptible: bool = True,
+    command: Sequence[str], *, timeout: int = 30, check: bool = True, interruptible: bool = True,
 ) -> subprocess.CompletedProcess[bytes]:
-    process: subprocess.Popen[bytes] | None = None
-    deadline = time.monotonic() + timeout
-    try:
-        process = subprocess.Popen(
-            list(command),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=dict(os.environ, LC_ALL="C"),
-            start_new_session=True,
-        )
-        while True:
-            active = _ACTIVE_TERMINATION_GUARD
-            if interruptible and active is not None and active.received is not None:
-                _terminate_process(process)
-                active.raise_if_pending()
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                _terminate_process(process)
-                raise GateError("a bounded Docker operation timed out")
-            try:
-                stdout, stderr = process.communicate(
-                    timeout=min(COMMAND_POLL_SECONDS, remaining)
-                )
-                break
-            except subprocess.TimeoutExpired:
-                continue
-    except OSError as failure:
-        if process is not None:
-            _terminate_process(process)
-        raise GateError("a bounded Docker operation failed") from failure
-    except BaseException:
-        if process is not None and _process_group_exists(process.pid):
-            _terminate_process(process)
-        raise
-    completed = subprocess.CompletedProcess(list(command), process.returncode, stdout, stderr)
-    if len(completed.stdout) > MAX_OUTPUT_BYTES or len(completed.stderr) > MAX_OUTPUT_BYTES:
-        raise GateError("a Docker operation exceeded the output limit")
-    if check and completed.returncode != 0:
-        raise GateError("the reviewed PostgreSQL fixture check failed")
-    return completed
+    return fixture_gate_common._run(
+        command, timeout=timeout, check=check, interruptible=interruptible,
+        check_failure_message="the reviewed PostgreSQL fixture check failed",
+    )
 
 
-def _process_group_exists(process_group: int) -> bool:
-    try:
-        os.killpg(process_group, 0)
-    except ProcessLookupError:
-        return False
-    except (OSError, PermissionError):
-        return True
-    return True
+def _owned_container_ids(
+    docker: str, name: str, owner_label: str, *, timeout: int = 30, interruptible: bool = True,
+) -> list[str]:
+    return fixture_gate_common._owned_container_ids(
+        _run, docker, name, owner_label,
+        label="the PostgreSQL container", timeout=timeout, interruptible=interruptible,
+    )
 
 
-def _wait_process_group(process: subprocess.Popen[bytes], deadline: float) -> bool:
-    process_group = process.pid
-    while _process_group_exists(process_group):
-        process.poll()
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(COMMAND_POLL_SECONDS)
-    return True
-
-
-def _terminate_process(process: subprocess.Popen[bytes]) -> None:
-    process_group = process.pid
-    if _process_group_exists(process_group):
-        try:
-            os.killpg(process_group, signal.SIGTERM)
-        except OSError:
-            pass
-    if not _wait_process_group(
-        process, time.monotonic() + CHILD_TERMINATION_GRACE_SECONDS
-    ):
-        try:
-            os.killpg(process_group, signal.SIGKILL)
-        except OSError:
-            pass
-        if not _wait_process_group(
-            process, time.monotonic() + CHILD_TERMINATION_GRACE_SECONDS
-        ):
-            raise GateError("a Docker subprocess group could not be terminated")
-    try:
-        process.communicate(timeout=CHILD_TERMINATION_GRACE_SECONDS)
-    except subprocess.TimeoutExpired as failure:
-        try:
-            process.kill()
-        except OSError:
-            pass
-        raise GateError("a Docker subprocess could not be reaped") from failure
+def _remove_owned_container(docker: str, name: str, owner_label: str) -> None:
+    fixture_gate_common._remove_owned_container(
+        _run, docker, name, owner_label,
+        label="the PostgreSQL container", timeout=CLEANUP_DOCKER_TIMEOUT_SECONDS,
+    )
 
 
 def _json_document(payload: bytes, label: str) -> Mapping[str, object]:
@@ -288,6 +146,7 @@ def _validate_image(document: Mapping[str, object], image: str) -> str:
         "PG_MAJOR=16",
         "PG_VERSION=16.14",
         "PGDATA=/var/lib/postgresql/data",
+        "DOCKER_PG_LLVM_DEPS=llvm21-dev \t\tclang21",
     }
     if (
         not isinstance(environment, list)
@@ -621,46 +480,6 @@ def _remove_owned_image_tag(
         raise GateError("the PostgreSQL build image tag could not be removed")
 
 
-def _owned_container_ids(
-    docker: str,
-    name: str,
-    owner_label: str,
-    *,
-    timeout: int = 30,
-    interruptible: bool = True,
-) -> list[str]:
-    result = _run(
-        (
-            docker,
-            "container",
-            "ls",
-            "--all",
-            "--no-trunc",
-            "--quiet",
-            "--filter",
-            "name=^/" + name + "$",
-            "--filter",
-            "label=" + owner_label,
-        ),
-        timeout=timeout,
-        check=False,
-        interruptible=interruptible,
-    )
-    if result.returncode != 0:
-        raise GateError("the PostgreSQL container ownership could not be inspected")
-    try:
-        identifiers = result.stdout.decode("ascii", "strict").splitlines()
-    except UnicodeError as failure:
-        raise GateError("the PostgreSQL container ownership is invalid") from failure
-    if (
-        any(CONTAINER_ID.fullmatch(identifier) is None for identifier in identifiers)
-        or len(identifiers) != len(set(identifiers))
-        or len(identifiers) > 1
-    ):
-        raise GateError("the PostgreSQL container ownership is ambiguous")
-    return identifiers
-
-
 def _owned_volume_names(
     docker: str,
     name: str,
@@ -693,32 +512,6 @@ def _owned_volume_names(
     if any(item != name for item in names) or len(names) != len(set(names)) or len(names) > 1:
         raise GateError("the PostgreSQL volume ownership is ambiguous")
     return names
-
-
-def _remove_owned_container(docker: str, name: str, owner_label: str) -> None:
-    owned = _owned_container_ids(
-        docker,
-        name,
-        owner_label,
-        timeout=CLEANUP_DOCKER_TIMEOUT_SECONDS,
-        interruptible=False,
-    )
-    if owned:
-        removal = _run(
-            (docker, "rm", "--force", owned[0]),
-            timeout=CLEANUP_DOCKER_TIMEOUT_SECONDS,
-            check=False,
-            interruptible=False,
-        )
-        remaining = _owned_container_ids(
-            docker,
-            name,
-            owner_label,
-            timeout=CLEANUP_DOCKER_TIMEOUT_SECONDS,
-            interruptible=False,
-        )
-        if removal.returncode != 0 or remaining:
-            raise GateError("the PostgreSQL fixture container could not be removed")
 
 
 def _remove_owned_volume(docker: str, name: str, owner_label: str) -> None:
@@ -828,12 +621,11 @@ def _runtime_gate(docker: str, image: str) -> str:
                         docker,
                         "exec",
                         container_id,
-                        "pg_isready",
-                        "--quiet",
-                        "--username",
-                        "hbcb_gate",
-                        "--dbname",
-                        "hbcb_gate",
+                        "/bin/sh",
+                        "-eu",
+                        "-c",
+                        'test "$(cat /proc/1/comm)" = postgres && '
+                        "exec pg_isready --quiet --username hbcb_gate --dbname hbcb_gate",
                     ),
                     timeout=10,
                     check=False,
