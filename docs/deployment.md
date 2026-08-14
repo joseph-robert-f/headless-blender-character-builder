@@ -1,6 +1,11 @@
 # VPS deployment and operations
 
-This runbook describes a production-oriented v0.1 reference topology: one
+> **Outside the v0.1 support boundary:** this is a future design and validation
+> reference for experienced operators. It is not a v0.1 installation path. Do
+> not expose it to the Internet, accept hostile or multi-tenant workloads, or
+> treat passing local recovery tests as authorization to deploy it.
+
+This runbook describes a future single-operator reference topology: one
 `linux/amd64` Linux VPS running the reviewed Docker Compose overlay, with one
 API process, one concurrency-one worker, local PostgreSQL and Redis, Caddy at
 the public edge, and an external versioned S3-compatible artifact service. It
@@ -11,9 +16,12 @@ multi-tenant platform, high-availability design, or managed-cloud template.
 
 The repository currently contains source, container build definitions, local
 release tooling, and the deployment reference. It does **not** publish the
-three required application images, a populated digest release lock, a signed
-source release, or a live service. Consequently, these instructions are not yet a copy-paste
-path to a public production deployment.
+four required project-built images (builder, API, worker, and the derived
+PostgreSQL runtime), a populated digest release lock, a signed source release,
+or a live service. Consequently, these instructions are not yet a copy-paste
+path to a public production deployment. Current publication tooling inventories
+only builder, API, and worker; it does not yet inventory, SBOM, sign, push, or
+lock the derived PostgreSQL image.
 
 Do not substitute mutable images, a locally edited all-zero lock example, or a
 Git clone of `main` for those missing release inputs. Until a publisher makes
@@ -28,7 +36,7 @@ private images, operating storage, and running an external smoke build are
 operator actions against explicitly authorized infrastructure. Local G8
 validation does not perform any of those actions.
 
-## Supported topology
+## Reference topology
 
 ```text
 Internet
@@ -50,7 +58,7 @@ one worker -------------------+                          public TLS endpoint
                                                                   for signed URLs
 ```
 
-The production services are:
+The future reference services are:
 
 - `caddy`: TLS termination and reverse proxy. It alone publishes host ports.
 - `api`: bearer-authenticated asynchronous build API. It cannot reach the
@@ -350,6 +358,7 @@ mixing images from different tags.
 
 The lock pins:
 
+- the project-derived PostgreSQL image by OCI digest;
 - API and worker images by OCI digest;
 - Caddy by OCI digest;
 - the builder provenance reference and image configuration ID;
@@ -387,6 +396,12 @@ sudo ./scripts/vps preflight \
   --config /etc/hbcb/vps.env \
   --release-lock /etc/hbcb/release.lock.env
 ```
+
+If this stops with `private storage network is unavailable`, create the
+configured Docker-internal network and attach the private S3 gateway described
+in [External storage and network contract](#external-storage-and-network-contract), then rerun live
+preflight. The wrapper deliberately omits the configured network name and
+captured Docker output from this error.
 
 `config` performs the same safe, quiet validation and prints only a pass/fail
 marker. Do not run raw `docker compose config`: resolved service configuration
@@ -787,7 +802,7 @@ an older image to start.
 | Symptom | Safe response |
 |---|---|
 | Preflight rejects a file, digest, or permission | Correct the named input. Do not bypass the wrapper or relax a mode. |
-| Storage network validation fails | Recreate/repair the external `Internal=true` network and gateway. Do not attach API or worker to a default-egress network. |
+| `private storage network is unavailable` | Create or repair the configured external `Internal=true` network and attach the private S3 gateway before rerunning live preflight. Do not attach API or worker to a default-egress network. |
 | API is healthy but not ready internally | Check PostgreSQL, Redis, migration catalog, bucket versioning, private TLS/DNS, and scoped storage IAM. Do not expose `/readyz`. |
 | Caddy cannot obtain a certificate | Verify DNS, host time, TCP 80/443, ACME email, and UID-1000 Caddy state ownership. Keep the API unexposed. |
 | Worker exits during a build | Preserve PostgreSQL and Redis. Restart the single worker; lease expiry and at-least-once delivery permit recovery. Do not publish scratch output manually. |

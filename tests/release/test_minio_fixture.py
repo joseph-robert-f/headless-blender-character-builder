@@ -14,22 +14,33 @@ CLIENT_ARCHIVE_SHA256 = "167415edd21bc29f5360943dac64272aa5cda0a39f3070b15cfeca6
 GO_VERSION = "1.25.12"
 GO_SHA256 = "234828b7a89e0e303d2556310ee549fbcf253d28de937bac3da13d6294262ac1"
 FIXTURE_VERSION = "final-community-20260212-hbcb.1"
+RUNTIME_BASE = "alpine:3.22.5@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce"
 
 SERVER_MODULES = {
     "github.com/apache/thrift": "v0.23.0",
     "github.com/buger/jsonparser": "v1.1.2",
+    "github.com/eclipse/paho.mqtt.golang": "v1.5.1",
     "github.com/go-jose/go-jose/v4": "v4.1.4",
     "github.com/prometheus/prometheus": "v0.311.3",
-    "go.opentelemetry.io/otel": "v1.43.0",
-    "go.opentelemetry.io/otel/metric": "v1.43.0",
-    "go.opentelemetry.io/otel/trace": "v1.43.0",
-    "go.opentelemetry.io/otel/sdk": "v1.43.0",
-    "go.opentelemetry.io/otel/sdk/metric": "v1.43.0",
+    "go.opentelemetry.io/otel": "v1.44.0",
+    "go.opentelemetry.io/otel/metric": "v1.44.0",
+    "go.opentelemetry.io/otel/trace": "v1.44.0",
+    "go.opentelemetry.io/otel/sdk": "v1.44.0",
+    "go.opentelemetry.io/otel/sdk/metric": "v1.44.0",
     "golang.org/x/crypto": "v0.53.0",
     "golang.org/x/net": "v0.56.0",
     "golang.org/x/sys": "v0.46.0",
     "golang.org/x/text": "v0.39.0",
     "google.golang.org/grpc": "v1.82.1",
+}
+
+SERVER_TRANSITIVE_SECURITY_MODULES = {
+    "filippo.io/edwards25519": "v1.1.1",
+    "github.com/Azure/go-ntlmssp": "v0.1.1",
+    "github.com/klauspost/compress": "v1.18.7",
+}
+CLIENT_SECURITY_MODULES = {
+    "github.com/klauspost/compress": "v1.18.7",
 }
 
 
@@ -49,6 +60,8 @@ def assert_contract(
 
     for module, version in SERVER_MODULES.items():
         test.assertRegex(server_modules, rf"(?m)^\s*{re.escape(module)} {re.escape(version)}(?:\s|$)", module)
+    for module, version in SERVER_TRANSITIVE_SECURITY_MODULES.items():
+        test.assertRegex(server_modules, rf"(?m)^\s*{re.escape(module)} {re.escape(version)}(?:\s|$)", module)
     for module in (
         "github.com/prometheus/prometheus",
         "golang.org/x/crypto",
@@ -62,11 +75,20 @@ def assert_contract(
             rf"(?m)^\s*{re.escape(module)} {re.escape(SERVER_MODULES[module])}(?:\s|$)",
             module,
         )
+    for module, version in CLIENT_SECURITY_MODULES.items():
+        test.assertRegex(client_modules, rf"(?m)^\s*{re.escape(module)} {re.escape(version)}(?:\s|$)", module)
 
     test.assertEqual(dockerfile.count("-mod=readonly"), 2)
     for overlay in ("minio.go.mod", "minio.go.sum", "mc.go.mod", "mc.go.sum"):
         test.assertIn("docker/minio-modules/" + overlay, dockerfile)
     test.assertIn(f'org.opencontainers.image.version="{FIXTURE_VERSION}"', dockerfile)
+    test.assertIn(f"FROM --platform=linux/amd64 {RUNTIME_BASE} AS minio", dockerfile)
+    test.assertIn('org.opencontainers.image.base.name="alpine:3.22.5"', dockerfile)
+    test.assertIn(
+        'org.opencontainers.image.base.digest="sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce"',
+        dockerfile,
+    )
+    test.assertIn("test -s /etc/ssl/certs/ca-certificates.crt", dockerfile)
     test.assertIn(f'org.opencontainers.image.revision="{SERVER_REVISION}"', dockerfile)
     test.assertIn(f'io.hbcb.mc-revision="{CLIENT_REVISION}"', dockerfile)
     test.assertIn(f"commit-id={SERVER_REVISION}", dockerfile)

@@ -17,7 +17,11 @@ reviewed authentication design.
 |---|---:|---:|---|
 | `make dependency-check` | No | No | Fail when declarations, locks, hashes, notices, provenance, Compose recovery pins, or exact assertions disagree. |
 | `make dependency-audit` | Yes | No | Run the offline gate, then report PyPI candidates, Docker Official Image support status, and tag-to-digest drift. It never edits files. |
-| `make dependency-scan DEPENDENCY_OUTPUT=build/dependency-audit-review` | Yes | Yes | Download a checksum-pinned OSV-Scanner, build the four project images, scan all three Python locks and every release image, then enforce the checked-in HIGH/CRITICAL disposition policy while retaining the detailed reports. |
+| `make dependency-scan DEPENDENCY_OUTPUT=build/dependency-audit-review` | Yes | Yes | Download a checksum-pinned OSV-Scanner, build the five project images—including the gosu-free PostgreSQL derivative—scan all three Python locks and every release image, run the isolated PostgreSQL runtime proof, then enforce the checked-in UNRATED/HIGH/CRITICAL disposition policy while retaining the detailed reports. |
+
+`make postgres-security-check` reruns only the exact PostgreSQL fresh-volume
+proof. It is useful while diagnosing that fixture, but it does not replace the
+complete dependency scan.
 
 The complete scan requires substantial downloads, disk, and build time. Its
 output directory must not already exist. Choose a new ignored `build/` path for
@@ -54,25 +58,47 @@ The workflow:
 3. downloads OSV-Scanner 2.3.8 from its official release and verifies the
    platform-specific SHA-256 recorded in `scripts/dependency-scan`;
 4. executes the trusted Dockerfile build steps under random per-run tags, but
-   never starts the resulting service containers, then scans each final image.
+   never starts the resulting project-built service containers, then scans each
+   final image.
    Each project tag is inspected once, exported by the resulting immutable
    image ID, and accepted only when the archive is `linux/amd64` and its config
-   digest and complete label set match that inspection. The per-run tags are
-   removed in reverse build order even after a build or scan failure. For every
-   external image, the scanner verifies the pinned registry index bytes,
+   digest and complete label set match that inspection. Its policy identity
+   hashes every runtime layer member's bytes, path, type, mode, ownership,
+   link/device metadata, and non-time PAX metadata plus the complete runtime
+   config and labels. Wall-clock config/history and tar timestamps are excluded
+   so two otherwise identical clean BuildKit rebuilds have one identity. The
+   final disposition identity additionally hashes the exact repository runtime
+   controls used by that target's review. API and worker bind the base/VPS
+   Compose models and Caddyfile; MinIO binds those models, both disposable
+   integration models, and its runtime security gate; PostgreSQL binds its
+   Dockerfile, every Compose model that can start it, and its fresh-volume
+   runtime gate; and Caddy
+   binds its VPS Compose model and Caddyfile. A relevant configuration or gate
+   change therefore cannot reuse an earlier disposition. The per-run tags are removed in reverse build order
+   even after a build or scan failure. For every external image, the scanner
+   verifies the pinned registry index bytes,
    requires exactly one `linux/amd64` child, verifies that child's manifest and
    config digests, and pulls and inspects that exact child. OSV-Scanner receives
    only validated, size-capped private archives—not mutable local tags or
-   multi-architecture registry references;
+   multi-architecture registry references. The official PostgreSQL base is
+   checked for maintenance and digest drift as provenance, but it is not the
+   runtime scan target: the scanner builds, exports by immutable image ID, and
+   scans the repository's derived image after deleting `gosu`. After that exact
+   derivative is scanned, one random owner-labelled, network-disabled fixture
+   proves that `gosu` is absent and a fresh volume initializes as UID/GID 70.
+   Cleanup removes only the exact labelled container and
+   volume, including after failure or interruption;
 5. retains per-file and aggregate size-capped JSON and Markdown reports for
    seven days; and
 6. normalizes aliases into advisory families, reports every severity, and fails
-   for an undispositioned HIGH/CRITICAL family, an unmaintained image tag,
+   for an undispositioned UNRATED/HIGH/CRITICAL family, an unmaintained image tag,
    mutable-tag digest drift, inconsistent repository evidence, an invalid or
-   expired disposition, or an incomplete scan.
+   expired disposition, a failed PostgreSQL runtime proof, or an incomplete
+   scan.
 
-An informational newer version and a LOW, MODERATE, or unrated advisory family
-do not fail the workflow by themselves. They remain counted in
+An informational newer version or a LOW or MODERATE advisory family does not
+fail the workflow by itself. UNRATED fails closed because absence of a score is
+not evidence of absence of impact. Every family remains counted in
 `scan-summary.md`, and the complete OSV JSON remains in the artifact. A failed
 run therefore means either an actionable policy/security finding or that the
 audit could not complete; inspect the summary first and then the named raw
@@ -185,8 +211,8 @@ The full `make dependency-scan` result is required before merge.
 
 ### Dockerfile frontend
 
-The service and MinIO Dockerfiles use one exact-version, manifest-digest-pinned
-`docker/dockerfile` frontend. Update both first-line directives and the reviewed
+The service, MinIO, and PostgreSQL Dockerfiles use one exact-version,
+manifest-digest-pinned `docker/dockerfile` frontend. Update all three first-line directives and the reviewed
 reference in `release/dependency-policy.json` together. Confirm the digest from
 Docker's verified-publisher registry metadata, review the required BuildKit
 version and release notes, then run the offline gate and rebuild every affected
@@ -194,13 +220,22 @@ target. The build engine itself remains a manually reviewed tool boundary.
 
 ### PostgreSQL or Redis
 
-Update `compose.yaml`, `tests/deployment/g8_recovery_compose.yaml`, the exact
-assertions in `tests/deployment/test_g8_recovery_drill.py`, and
-`THIRD_PARTY_NOTICES.md` together. Run the service and G8 recovery gates plus a
-full `make dependency-scan` using a new output path before merge.
+For PostgreSQL, update the exact official base in `docker/postgres.Dockerfile`,
+its provenance labels, `release/dependency-policy.json`, every local/recovery
+Compose image expression, the digest-pinned VPS lock example, the runtime gate,
+and `THIRD_PARTY_NOTICES.md` together. Redis remains a direct external image;
+update its Compose pins and recovery assertions together. Run the service and
+G8 recovery gates plus a full `make dependency-scan` using a new output path
+before merge.
 
 Do not treat a PostgreSQL major release as an image update. It requires a
 separately designed backup, migration, rollback, and existing-volume rehearsal.
+The same rehearsal is required for any change to the base OS or runtime UID
+(for example a Debian-to-Alpine or gosu-removal swap) even without a major
+version bump: `make service-up` fails closed on an incompatible existing
+`postgres-data` volume, and operators must follow the documented dump/restore
+path in [Troubleshooting](troubleshooting.md#postgresql-image-upgrade-and-existing-volumes)
+rather than reuse data in place.
 For Redis, review persistence format, UID, configuration, and the documented
 empty-queue reconstruction path even though PostgreSQL remains authoritative.
 
@@ -232,9 +267,9 @@ graph to reuse stale scan/release identity.
 ## Vulnerability decision policy
 
 `release/vulnerability-policy.json` is deliberately separate from the
-dependency inventory. The scanner owns the enforcement rules: HIGH and
-CRITICAL block by default, and the policy cannot weaken that threshold. LOW,
-MODERATE, NONE, and UNRATED remain counted in each target's summary and remain
+dependency inventory. The scanner owns the enforcement rules: UNRATED, HIGH,
+and CRITICAL block by default, and the policy cannot weaken that threshold.
+LOW, MODERATE, and NONE remain counted in each target's summary and remain
 present in the detailed OSV report. The checked-in policy starts with no
 dispositions and an immutable `"default_action": "deny"`; do not populate it
 merely to make a scheduled scan green.
@@ -251,15 +286,24 @@ therefore applies to one exact tuple only:
   explicit JSON `null` when the report has none);
 - complete canonical advisory family; and
 - exact scanner score (or `null` when unrated), matching-ecosystem fixed-version
-  union, and normalized HIGH or CRITICAL severity.
+  union, and normalized UNRATED, HIGH, or CRITICAL severity.
 
-Severity precedence is deliberately conservative. The evaluator takes the
-maximum of OSV-Scanner's group CVSS score, database severity labels, and
-ecosystem urgency labels. A Debian `low`, `none`, or `not affected` urgency can
-classify an otherwise unrated advisory, but it cannot downgrade a HIGH or
-CRITICAL group score. Treat a distro backport or not-affected determination as
-an exact, evidence-backed `not-affected` disposition instead of relying on a
-lower urgency label to override CVSS.
+The fixed-version union includes both ordinary OSV ranges and
+`ecosystem_specific.custom_ranges`. This matters for release-named or
+pseudo-version projects such as MinIO; omitting a custom bound would make two
+different advisory states look identical.
+
+Severity precedence is deliberately conservative. Normally the evaluator takes
+the maximum of OSV-Scanner's group CVSS score, database severity labels, and
+ecosystem urgency labels. There is one narrowly scoped vendor override: an
+official `DEBIAN-*` advisory whose affected entry exactly matches the reported
+`Debian:<release>` package and says `urgency: unimportant` is reported as LOW.
+Debian uses that state for issues its security team has determined do not
+warrant a security update for that exact distribution package. The override
+does not apply to missing or conflicting metadata, generic advisories, other
+ecosystems, or Debian `not yet assigned`, `low`, `none`, or `not affected`
+states. Those continue to use the maximum severity; a distro backport or
+not-affected determination requires an exact evidence-backed disposition.
 
 There are no target globs, package prefixes, advisory prefixes, severity-wide
 exceptions, or permanent exceptions. Each disposition also requires a
@@ -315,18 +359,24 @@ their Dockerfile text is unchanged.
 
 The target identity is not a substitute for the evidence file. It is a
 canonical digest over stable image provenance shown in `scan-summary.json`.
-For the source-built MinIO fixture, that provenance includes the exact image
-config digest, `linux/amd64`, the verified OCI source revision, and the
-composite `io.hbcb.recipe-id`. This means OSV's Go `(devel)`/JSON `null`
-package identity cannot make a disposition portable to another MinIO source
-build. The temporary archive hash and size remain visible operational evidence
-but are excluded from the policy digest because Docker archive byte layout is
-not a release identity.
+For project-built images it includes the normalized runtime-layer content
+digest, normalized runtime-config digest, complete-label digest,
+`linux/amd64`, and verified OCI source revision. The source-built MinIO fixture
+also includes the composite `io.hbcb.recipe-id`. Raw image config/descriptor
+digests and private archive hashes remain visible operational evidence but are
+excluded from the policy digest because BuildKit timestamps and Docker archive
+layout are not runtime identities. Any file bytes, path, type, mode, ownership,
+link/device metadata, non-time PAX metadata, runtime config, label, revision, or
+MinIO recipe change produces a different image identity. For API, worker,
+MinIO, PostgreSQL, and Caddy, that image identity is then combined with the
+exact disposition-context digest described above. Changing any reviewed
+runtime control produces a different final policy identity even when the image
+bytes are unchanged.
 
 The raw scanner exit remains recorded. Exit `1` from OSV-Scanner only means it
 found at least one family; after evaluation, that target may pass when every
-HIGH/CRITICAL family has an exact active disposition and all remaining families
-are lower or unrated. A scanner/report disagreement, malformed inner report,
+UNRATED/HIGH/CRITICAL family has an exact active disposition and all remaining
+families are lower. A scanner/report disagreement, malformed inner report,
 missing policy, bad evidence digest, or expired disposition is incomplete—not
 clean.
 
@@ -335,7 +385,7 @@ clean.
 | Exit | Meaning |
 |---:|---|
 | `0` | The requested audit completed without blocking findings. Informational candidates may still be listed. |
-| `1` | A consistency/maintenance finding or undispositioned HIGH/CRITICAL advisory family needs review. |
+| `1` | A consistency/maintenance finding or undispositioned UNRATED/HIGH/CRITICAL advisory family needs review. |
 | `2` | The audit was incomplete because an input, network request, build, scanner, or report failed. Do not interpret this as clean. |
 
 OSV-Scanner's detailed reports remain authoritative for package findings. The

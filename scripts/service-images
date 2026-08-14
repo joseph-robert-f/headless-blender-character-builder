@@ -1,0 +1,100 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
+# shellcheck source=service-common
+. "$script_dir/service-common"
+
+usage() {
+  printf '%s\n' 'usage: scripts/service-images list|remove' >&2
+  exit 2
+}
+
+[ "$#" -ne 1 ] || case "$1" in
+  -h|--help)
+    printf '%s\n' 'usage: scripts/service-images list|remove'
+    exit 0
+    ;;
+esac
+[ "$#" -eq 1 ] || usage
+action=$1
+case "$action" in list|remove) ;; *) usage ;; esac
+
+docker_bin=${DOCKER:-docker}
+case "$docker_bin" in ''|-*|*[![:graph:]]*)
+  printf '%s\n' 'SERVICE_IMAGES: DOCKER must name one safe executable' >&2
+  exit 3
+  ;;
+esac
+[ "${#docker_bin}" -le 4096 ] || {
+  printf '%s\n' 'SERVICE_IMAGES: DOCKER must name one safe executable' >&2
+  exit 3
+}
+
+hbcb_service_settings || exit 3
+
+image_rows() {
+  printf '%s\t%s\n' \
+    builder "$HBCB_BUILDER_PROJECT_IMAGE" \
+    postgres "$HBCB_POSTGRES_IMAGE" \
+    api "$HBCB_SERVICE_API_IMAGE" \
+    worker "$HBCB_SERVICE_WORKER_IMAGE" \
+    minio "$HBCB_MINIO_IMAGE" \
+    test "$HBCB_SERVICE_TEST_IMAGE"
+}
+
+if [ "$action" = list ]; then
+  image_rows | while IFS="$(printf '\t')" read -r role reference; do
+    printf 'SERVICE_IMAGE: role=%s reference=%s\n' "$role" "$reference"
+  done
+  printf '%s\n' \
+    'SERVICE_IMAGES: named volumes and shared Docker build cache are outside this image list'
+  exit 0
+fi
+
+if [ "$HBCB_COMPOSE_PROJECT_NAME" = hbcb-local ]; then
+  printf '%s\n' \
+    'SERVICE_IMAGES: FAIL: legacy hbcb-local tags may be shared by older checkouts; inspect the listed tags and remove them manually only after every legacy stack is stopped' >&2
+  exit 4
+fi
+if [ -f .env ] && ! hbcb_service_env_private; then
+  printf '%s\n' \
+    'SERVICE_IMAGES: FAIL: .env must be an owned mode-0600 regular file before image removal' >&2
+  exit 4
+fi
+if ! command -v "$docker_bin" >/dev/null 2>&1; then
+  printf '%s\n' 'SERVICE_IMAGES: FAIL: Docker executable is unavailable' >&2
+  exit 4
+fi
+if ! "$docker_bin" info --format '{{.ServerVersion}}' >/dev/null 2>&1; then
+  printf '%s\n' 'SERVICE_IMAGES: FAIL: Docker daemon is unavailable' >&2
+  exit 4
+fi
+
+image_rows | while IFS="$(printf '\t')" read -r role reference; do
+  if ! matches=$("$docker_bin" image ls \
+    --filter "reference=$reference" \
+    --format '{{.Repository}}:{{.Tag}}' 2>/dev/null); then
+    printf 'SERVICE_IMAGES: FAIL: Docker could not query the %s image\n' "$role" >&2
+    exit 4
+  fi
+  if [ -z "$matches" ]; then
+    printf 'SERVICE_IMAGE_ABSENT: role=%s reference=%s\n' "$role" "$reference"
+    continue
+  fi
+  if [ "$matches" != "$reference" ]; then
+    printf 'SERVICE_IMAGES: FAIL: Docker returned an ambiguous %s image query\n' "$role" >&2
+    exit 4
+  fi
+  if ! "$docker_bin" image inspect "$reference" >/dev/null 2>&1; then
+    printf 'SERVICE_IMAGES: FAIL: Docker could not inspect the %s image\n' "$role" >&2
+    exit 4
+  fi
+  if ! "$docker_bin" image rm "$reference"; then
+    printf 'SERVICE_IMAGES: FAIL: Docker could not remove the %s image\n' "$role" >&2
+    exit 4
+  fi
+  printf 'SERVICE_IMAGE_REMOVED: role=%s reference=%s\n' "$role" "$reference"
+done
+printf '%s\n' \
+  'SERVICE_IMAGES: cleanup complete; named volumes and shared Docker build cache were retained'

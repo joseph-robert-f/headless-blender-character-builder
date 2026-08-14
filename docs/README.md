@@ -25,6 +25,9 @@ the one-shot builder.
 
 ## I want to integrate or understand it
 
+The HTTP material describes an experimental, loopback-only evaluation path
+for one trusted operator; it is not an Internet-facing v0.1 service contract.
+
 - [HTTP API v1](api.md) — authenticated asynchronous submission, status,
   cancellation, and artifact retrieval
 - [Architecture](architecture.md) — execution lanes, components, network and
@@ -36,9 +39,9 @@ the one-shot builder.
 
 ## I want to operate or release it
 
-The VPS material is a production-oriented reference, not a currently
-published deployment product. There is no release archive, release lock, or
-published image set yet.
+The VPS material is a future design and validation reference outside v0.1
+support, not a currently published deployment product. There is no release
+archive, release lock, or published image set yet.
 
 - [VPS deployment and recovery](deployment.md) — availability, topology,
   verified source installation, TLS, external S3, permissions, lifecycle,

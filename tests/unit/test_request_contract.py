@@ -23,13 +23,26 @@ REJECTED = ROOT / "tests" / "fixtures" / "rejected"
 
 
 class BuildRequestContractTests(unittest.TestCase):
-    def test_both_named_original_examples_validate(self) -> None:
+    def test_all_named_original_examples_validate(self) -> None:
         facet = BuildRequest.from_json((EXAMPLES / "facet-bot.json").read_bytes())
+        tidepool = BuildRequest.from_json(
+            (EXAMPLES / "facet-bot-tidepool.json").read_bytes()
+        )
         moss = BuildRequest.from_json((EXAMPLES / "moss-hopper.json").read_bytes())
 
         self.assertEqual(facet.spec.slug, "facet-bot")
+        self.assertEqual(tidepool.spec.slug, "facet-bot-tidepool")
         self.assertEqual(moss.spec.slug, "moss-hopper")
+        self.assertNotEqual(facet.request_sha256, tidepool.request_sha256)
         self.assertNotEqual(facet.request_sha256, moss.request_sha256)
+
+        self.assertNotEqual(facet.spec.palette, tidepool.spec.palette)
+        self.assertEqual(facet.spec.style, tidepool.spec.style)
+        self.assertEqual(facet.spec.height_mm, tidepool.spec.height_mm)
+        self.assertEqual(facet.spec.pose, tidepool.spec.pose)
+        self.assertEqual(facet.spec.proportions, tidepool.spec.proportions)
+        self.assertEqual(facet.spec.components, tidepool.spec.components)
+        self.assertEqual(facet.spec.base, tidepool.spec.base)
 
         # The second fixture is intentionally not a palette-only variant.
         self.assertNotEqual(facet.spec.style, moss.spec.style)

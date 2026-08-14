@@ -79,9 +79,8 @@ RUN set -eux; \
     cp /src/mc/CREDITS /out/MC-CREDITS
 
 
-FROM --platform=linux/amd64 debian:bookworm-20260803-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241 AS minio
+FROM --platform=linux/amd64 alpine:3.22.5@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce AS minio
 
-ARG DEBIAN_SNAPSHOT=20260804T000000Z
 ARG HBCB_MINIO_RECIPE_ID=unmeasured
 
 LABEL org.opencontainers.image.title="MinIO local compatibility fixture" \
@@ -89,20 +88,15 @@ LABEL org.opencontainers.image.title="MinIO local compatibility fixture" \
       org.opencontainers.image.revision="7aac2a2c5b7c882e68c1ce017d8256be2feea27f" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.version="final-community-20260212-hbcb.1" \
+      org.opencontainers.image.base.name="alpine:3.22.5" \
+      org.opencontainers.image.base.digest="sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce" \
       io.hbcb.mc-revision="77f82e18b5401a65958f1619df6ebb994634bd88" \
       io.hbcb.security-modules="2026-08-12" \
       io.hbcb.recipe-id="${HBCB_MINIO_RECIPE_ID}" \
       io.hbcb.scope="local-development-only"
 
 RUN set -eux; \
-    sed -i \
-      -e "s|http://deb.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
-      -e "s|http://deb.debian.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
-      /etc/apt/sources.list.d/debian.sources; \
-    printf '%s\n' 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99snapshot; \
-    apt-get update; \
-    DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ca-certificates; \
-    rm -rf /var/lib/apt/lists/*; \
+    test -s /etc/ssl/certs/ca-certificates.crt; \
     mkdir -p /data /work/home /licenses/minio; \
     chown -R 65532:65532 /data /work; \
     chmod 0700 /data /work/home

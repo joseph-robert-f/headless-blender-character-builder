@@ -485,6 +485,52 @@ esac
             r"baseline is 20 GiB| \(20 GiB service baseline\))",
         )
 
+    def test_demo_reports_advisory_one_shot_capacity_without_failing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            tools = Path(temporary)
+            git = write_tool(tools, "git", "printf '%s\\n' 'git version 2.50.1'\n")
+            make = write_tool(tools, "make", "printf '%s\\n' 'GNU Make 4.4.1'\n")
+            docker = write_tool(
+                tools,
+                "docker",
+                """
+case "${1:-}:${2:-}" in
+  --version:) printf '%s\n' 'Docker version 29.4.0, build example' ;;
+  info:--format)
+    case "${3:-}" in
+      '{{.ServerVersion}}') printf '%s\n' '29.4.0' ;;
+      '{{.NCPU}}|{{.MemTotal}}') printf '%s\n' '4|3221225472' ;;
+      *) exit 9 ;;
+    esac
+    ;;
+  buildx:version) exit 0 ;;
+  *) exit 9 ;;
+esac
+""",
+            )
+            completed = subprocess.run(
+                (str(DOCTOR), "--demo"),
+                cwd=ROOT,
+                env={
+                    "PATH": os.environ.get("PATH", ""),
+                    "HBCB_DOCTOR_GIT": str(git),
+                    "HBCB_DOCTOR_MAKE": str(make),
+                    "HBCB_DOCTOR_DOCKER": str(docker),
+                },
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+        self.assertIn("builder is capped at 4 CPUs and 4 GiB", completed.stdout)
+        self.assertIn("less than the advisory 8 GiB one-shot", completed.stdout)
+        self.assertRegex(
+            completed.stdout,
+            r"checkout has about [0-9]+ GiB free(?:; the advisory one-shot "
+            r"baseline is 10 GiB| \(10 GiB one-shot baseline\))",
+        )
+
     def test_missing_python_does_not_misreport_supported_compose(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -533,7 +579,7 @@ esac
         self.assertNotIn("Docker Compose 2.24.4+ is required", completed.stdout)
         self.assertIn("FAIL (1 prerequisite check(s) failed)", completed.stdout)
 
-    def test_service_curl_selector_checks_documented_flag_without_network(self) -> None:
+    def test_service_curl_selector_is_advisory_and_never_contacts_network(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.service_checkout(root)
@@ -616,13 +662,13 @@ esac
                 check=False,
             )
             curl_calls = curl_log.read_text(encoding="utf-8").splitlines()
-        self.assertEqual(unsupported.returncode, 1, unsupported.stdout)
+        self.assertEqual(unsupported.returncode, 0, unsupported.stdout)
         self.assertIn(
-            "curl with --fail-with-body and --noproxy support is required",
+            "curl lacks --fail-with-body or --noproxy; use the stdlib lightweight client",
             unsupported.stdout,
         )
         self.assertEqual(supported.returncode, 0, supported.stdout)
-        self.assertIn("supports the documented local API journey", supported.stdout)
+        self.assertIn("supports the optional manual API protocol example", supported.stdout)
         self.assertEqual(
             curl_calls,
             ["--version", "--help all", "--version", "--help all"],

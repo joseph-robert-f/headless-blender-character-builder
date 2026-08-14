@@ -15,6 +15,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -33,9 +34,11 @@ SOURCE_ENV_FILE = ROOT / ".env"
 EVIDENCE_PARENT = ROOT / "build" / "g8-recovery"
 DEFAULT_SERVICE_IMAGE_TAG = "hbcb-service-api:dev"
 DEFAULT_MINIO_IMAGE_TAG = "hbcb-minio-local:final-community-20260212-hbcb.1"
+DEFAULT_POSTGRES_IMAGE_TAG = "hbcb-postgres-local:16.14-alpine3.24-hbcb.1"
 MAX_COMMAND_OUTPUT = 16 * 1024 * 1024
 MAX_ENV_BYTES = 64 * 1024
 MAX_DATABASE_BACKUP_BYTES = 4 * 1024 * 1024 * 1024
+TERMINATION_GRACE_SECONDS = 5.0
 HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 ROLE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 NAMESPACE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$")
@@ -99,6 +102,134 @@ class GateError(RuntimeError):
         self.code = code
 
 
+class GateInterrupted(BaseException):
+    """A CLI-default termination signal deferred through exact cleanup."""
+
+    def __init__(self, signum: int) -> None:
+        self.signum = int(signum)
+        super().__init__("interrupted")
+
+
+class _TerminationController:
+    """Own termination signals and the one active subprocess group."""
+
+    def __init__(self) -> None:
+        self.active: Optional[subprocess.Popen[bytes]] = None
+        self.cleanup_depth = 0
+        self.received: Optional[int] = None
+        self.previous: dict[int, object] = {}
+
+    @property
+    def cleanup_active(self) -> bool:
+        return self.cleanup_depth > 0
+
+    def _record(self, signum: int, _frame: object) -> None:
+        if self.received is None:
+            self.received = int(signum)
+        if self.cleanup_active:
+            return
+        process = self.active
+        if process is not None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except OSError:
+                try:
+                    process.terminate()
+                except OSError:
+                    pass
+        raise GateInterrupted(self.received)
+
+    def install(self) -> None:
+        if self.previous:
+            raise GateError("nested_signal_guard")
+        self.received = None
+        for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+            self.previous[signum] = signal.getsignal(signum)
+            signal.signal(signum, self._record)
+
+    def restore(self) -> None:
+        previous = self.previous
+        self.previous = {}
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+    def raise_if_pending(self) -> None:
+        if self.received is not None:
+            raise GateInterrupted(self.received)
+
+
+_TERMINATION = _TerminationController()
+
+
+class _TerminationGuard:
+    def __enter__(self) -> _TerminationController:
+        _TERMINATION.install()
+        return _TERMINATION
+
+    def __exit__(self, kind: object, _value: object, _traceback: object) -> None:
+        pending = _TERMINATION.received
+        _TERMINATION.restore()
+        _TERMINATION.received = None
+        if kind is None and pending is not None:
+            raise GateInterrupted(pending)
+
+
+class _CleanupGuard:
+    def __enter__(self) -> None:
+        _TERMINATION.cleanup_depth += 1
+
+    def __exit__(self, _kind: object, _value: object, _traceback: object) -> None:
+        _TERMINATION.cleanup_depth -= 1
+
+
+def _process_group_exists(process_group: int) -> bool:
+    try:
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Terminate and reap the exact isolated child process group."""
+    # Repeated/different termination signals must not interrupt escalation or
+    # reaping after the first signal selected this child group for teardown.
+    _TERMINATION.cleanup_depth += 1
+    try:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            try:
+                process.terminate()
+            except OSError:
+                pass
+        deadline = time.monotonic() + TERMINATION_GRACE_SECONDS
+        while time.monotonic() < deadline:
+            process.poll()
+            if not _process_group_exists(process.pid):
+                return
+            time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            try:
+                process.kill()
+            except OSError:
+                pass
+        try:
+            process.wait(timeout=max(1.0, TERMINATION_GRACE_SECONDS))
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    finally:
+        _TERMINATION.cleanup_depth -= 1
+
+
 @dataclass(frozen=True)
 class CommandResult:
     stdout: bytes
@@ -120,23 +251,64 @@ class CommandRunner:
     ) -> CommandResult:
         if not command or any(not isinstance(item, str) or not item for item in command):
             raise GateError("invalid_command")
+        if _TERMINATION.active is not None:
+            raise GateError(label + "_nested")
+        if _TERMINATION.received is not None and not _TERMINATION.cleanup_active:
+            raise GateInterrupted(_TERMINATION.received)
         try:
-            completed = subprocess.run(
-                list(command),
-                cwd=ROOT,
-                env=None if environment is None else dict(environment),
-                stdin=stdin,
-                stdout=subprocess.PIPE if stdout is None else stdout,
-                stderr=subprocess.PIPE,
-                check=False,
-                timeout=timeout,
+            previous_mask = signal.pthread_sigmask(
+                signal.SIG_BLOCK, (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
             )
-        except (OSError, subprocess.SubprocessError):
+        except (AttributeError, OSError):
             raise GateError(label + "_unavailable") from None
-        captured = b"" if stdout is not None else completed.stdout
-        if len(captured) > MAX_COMMAND_OUTPUT or len(completed.stderr) > MAX_COMMAND_OUTPUT:
+        process: Optional[subprocess.Popen[bytes]] = None
+        try:
+            try:
+                try:
+                    process = subprocess.Popen(
+                        list(command),
+                        cwd=ROOT,
+                        env=None if environment is None else dict(environment),
+                        stdin=stdin,
+                        stdout=subprocess.PIPE if stdout is None else stdout,
+                        stderr=subprocess.PIPE,
+                        start_new_session=True,
+                    )
+                except OSError:
+                    raise GateError(label + "_unavailable") from None
+                _TERMINATION.active = process
+            finally:
+                try:
+                    signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+                except (AttributeError, OSError):
+                    raise GateError(label + "_unavailable") from None
+            captured, captured_stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            if process is not None:
+                _terminate_process_group(process)
+            raise GateError(label + "_unavailable") from None
+        except GateInterrupted:
+            if process is not None:
+                _terminate_process_group(process)
+            raise
+        except BaseException:
+            if process is not None:
+                _terminate_process_group(process)
+            raise
+        finally:
+            if _TERMINATION.active is process:
+                _TERMINATION.active = None
+            if process is not None:
+                for stream in (process.stdout, process.stderr):
+                    if stream is not None and not stream.closed:
+                        stream.close()
+        captured = b"" if stdout is not None else (captured or b"")
+        captured_stderr = captured_stderr or b""
+        if len(captured) > MAX_COMMAND_OUTPUT or len(captured_stderr) > MAX_COMMAND_OUTPUT:
             raise GateError(label + "_output_too_large")
-        if completed.returncode != 0 and not allow_failure:
+        if _TERMINATION.received is not None and not _TERMINATION.cleanup_active:
+            raise GateInterrupted(_TERMINATION.received)
+        if process.returncode != 0 and not allow_failure:
             raise GateError(label + "_failed")
         return CommandResult(captured)
 
@@ -155,6 +327,7 @@ class DrillContext:
     runtime_gid: int
     work_root: Path
     backup_root: Path
+    postgres_image: str
     service_image: str
     minio_image: str
 
@@ -359,6 +532,7 @@ def _image_id(
 def _target_environment(
     source: Mapping[str, str],
     *,
+    postgres_image: str,
     service_image: str,
     minio_image: str,
     backup_root: Path,
@@ -393,6 +567,7 @@ def _target_environment(
         "HBCB_G8_STORAGE_MAINTENANCE_SECRET_KEY": secrets.token_hex(32),
         "HBCB_G8_STORAGE_BUCKET": source["HBCB_STORAGE_BUCKET"],
         "HBCB_G8_STORAGE_REGION": source["HBCB_STORAGE_REGION"],
+        "HBCB_G8_POSTGRES_IMAGE": postgres_image,
         "HBCB_G8_SERVICE_IMAGE": service_image,
         "HBCB_G8_MINIO_IMAGE": minio_image,
         "HBCB_G8_BACKUP_ROOT": str(backup_root),
@@ -450,6 +625,9 @@ def _create_context(runner: Optional[CommandRunner] = None) -> DrillContext:
         "HBCB_SERVICE_API_IMAGE", DEFAULT_SERVICE_IMAGE_TAG
     )
     minio_reference = _selected_reference("HBCB_MINIO_IMAGE", DEFAULT_MINIO_IMAGE_TAG)
+    postgres_reference = _selected_reference(
+        "HBCB_POSTGRES_IMAGE", DEFAULT_POSTGRES_IMAGE_TAG
+    )
     builder_image = _image_id(
         selected_runner, builder_reference, "builder_image", docker
     )
@@ -457,6 +635,9 @@ def _create_context(runner: Optional[CommandRunner] = None) -> DrillContext:
         selected_runner, service_reference, "service_image", docker
     )
     minio_image = _image_id(selected_runner, minio_reference, "minio_image", docker)
+    postgres_image = _image_id(
+        selected_runner, postgres_reference, "postgres_image", docker
+    )
 
     EVIDENCE_PARENT.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(EVIDENCE_PARENT, 0o700)
@@ -482,6 +663,7 @@ def _create_context(runner: Optional[CommandRunner] = None) -> DrillContext:
         source_values=source_values,
         target_environment=_target_environment(
             source_values,
+            postgres_image=postgres_image,
             service_image=service_image,
             minio_image=minio_image,
             backup_root=backup_root,
@@ -494,6 +676,7 @@ def _create_context(runner: Optional[CommandRunner] = None) -> DrillContext:
         runtime_gid=runtime_gid,
         work_root=work_root,
         backup_root=backup_root,
+        postgres_image=postgres_image,
         service_image=service_image,
         minio_image=minio_image,
     )
@@ -1116,12 +1299,15 @@ def execute_drill(context: DrillContext) -> Mapping[str, Any]:
         print("G8_RECOVERY_GATE: quiescing source API and worker")
         for service in ("api", "worker"):
             if was_running[service]:
+                # Record the restart obligation before the bounded stop.  A
+                # signal or Docker timeout is ambiguous: the stop may already
+                # have reached the daemon even when the CLI never returned.
+                stopped.append(service)
                 context.source_compose(
                     "stop", "--timeout", "120", service,
                     label="source_quiesce",
                     timeout=180,
                 )
-                stopped.append(service)
 
         source_snapshot = _snapshot(context, target=False)
         source_object_path = context.backup_root / "source-objects"
@@ -1379,29 +1565,33 @@ SELECT CASE WHEN EXISTS (
         primary_error = exc
     finally:
         cleanup_error: Optional[BaseException] = None
-        if target_touched:
+        # Once any source service might be quiesced or the target might exist,
+        # HUP/INT/TERM become record-only until source recovery, exact target
+        # teardown, and private-work cleanup have all been attempted.
+        with _CleanupGuard():
+            if target_touched:
+                try:
+                    context.target_compose(
+                        "down", "--volumes", "--remove-orphans", "--timeout", "30",
+                        label="target_cleanup",
+                        timeout=180,
+                        allow_failure=False,
+                    )
+                    _verify_target_removed(context)
+                except BaseException as exc:
+                    cleanup_error = exc
+            for service in reversed(stopped):
+                try:
+                    context.source_compose("start", service, label="source_restart", timeout=120)
+                    _wait_source_service(context, service, healthy=service == "api")
+                except BaseException as exc:
+                    if cleanup_error is None:
+                        cleanup_error = exc
             try:
-                context.target_compose(
-                    "down", "--volumes", "--remove-orphans", "--timeout", "30",
-                    label="target_cleanup",
-                    timeout=180,
-                    allow_failure=False,
-                )
-                _verify_target_removed(context)
-            except BaseException as exc:
-                cleanup_error = exc
-        for service in reversed(stopped):
-            try:
-                context.source_compose("start", service, label="source_restart", timeout=120)
-                _wait_source_service(context, service, healthy=service == "api")
+                _remove_work_root(context.work_root)
             except BaseException as exc:
                 if cleanup_error is None:
                     cleanup_error = exc
-        try:
-            _remove_work_root(context.work_root)
-        except BaseException as exc:
-            if cleanup_error is None:
-                cleanup_error = exc
         if primary_error is not None:
             raise primary_error
         if cleanup_error is not None:
@@ -1414,8 +1604,11 @@ SELECT CASE WHEN EXISTS (
 def main() -> int:
     context: Optional[DrillContext] = None
     try:
-        context = _create_context()
-        summary = execute_drill(context)
+        # Evidence publication happens only after the guard has restored the
+        # original handlers and proved no deferred signal is pending.
+        with _TerminationGuard():
+            context = _create_context()
+            summary = execute_drill(context)
         summary = dict(summary)
         summary["source_services_restored"] = True
         summary["target_resources_removed"] = True
@@ -1423,6 +1616,9 @@ def main() -> int:
         print(json.dumps(summary, sort_keys=True, separators=(",", ":")))
         print(f"G8_RECOVERY_GATE: evidence={evidence}")
         return 0
+    except GateInterrupted as exc:
+        print("G8_RECOVERY_GATE: FAIL code=interrupted", file=sys.stderr)
+        return 128 + exc.signum
     except GateError as exc:
         if context is not None and context.work_root.exists():
             try:

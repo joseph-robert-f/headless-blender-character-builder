@@ -12,6 +12,7 @@ import re
 import selectors
 import signal
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -45,11 +46,14 @@ MAX_DOCKER_INSPECT_BYTES = 4 * 1024 * 1024
 MAX_DOCKER_COMMAND_BYTES = 256 * 1024
 MAX_DOCKER_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_DOCKER_ARCHIVE_MEMBERS = 20_000
+MAX_NORMALIZED_LAYER_MEMBERS = 500_000
+MAX_NORMALIZED_LAYER_BYTES = 20 * 1024 * 1024 * 1024
 MAX_DOCKER_CONFIG_BYTES = 4 * 1024 * 1024
 MAX_DOCKER_MANIFEST_BYTES = 1024 * 1024
 MAX_SUBPROCESS_STDERR_BYTES = 256 * 1024
 PROCESS_TERM_GRACE_SECONDS = 2.0
 PROCESS_KILL_GRACE_SECONDS = 2.0
+POSTGRES_GATE_TERM_GRACE_SECONDS = 95.0
 PROCESS_GROUP_POLL_SECONDS = 0.02
 PROCESS_SIGNAL_POLL_SECONDS = 0.1
 VULNERABILITY_POLICY_PATH = Path("release/vulnerability-policy.json")
@@ -57,9 +61,10 @@ VULNERABILITY_POLICY_FORMAT = "hbcb-vulnerability-policy/v1"
 MAX_DISPOSITION_DAYS = 90
 MAX_DISPOSITIONS = 500
 MAX_EVIDENCE_BYTES = 4 * 1024 * 1024
+MAX_DISPOSITION_CONTEXT_BYTES = 4 * 1024 * 1024
 MAX_FINDING_FAMILIES = 50_000
 MAX_PACKAGE_FINDING_FAMILIES = 2_000
-BLOCKING_SEVERITIES = frozenset({"HIGH", "CRITICAL"})
+BLOCKING_SEVERITIES = frozenset({"UNRATED", "HIGH", "CRITICAL"})
 SEVERITY_ORDER = {
     "UNRATED": 0,
     "NONE": 1,
@@ -95,7 +100,39 @@ OCI_CONFIG_MEDIA_TYPES = frozenset(
         "application/vnd.oci.image.config.v1+json",
     }
 )
-LOCAL_IMAGE_IDS = ("builder", "minio", "api", "worker")
+LOCAL_IMAGE_IDS = ("builder", "minio", "postgres", "api", "worker")
+DEPENDENCY_AUDIT_LOCAL_IMAGE_IDS = frozenset({"postgres"})
+DISPOSITION_CONTEXT_FILES = {
+    "api": (
+        "compose.yaml",
+        "deploy/vps/Caddyfile",
+        "deploy/vps/compose.yaml",
+    ),
+    "caddy": (
+        "deploy/vps/Caddyfile",
+        "deploy/vps/compose.yaml",
+    ),
+    "minio": (
+        "compose.yaml",
+        "deploy/vps/compose.yaml",
+        "tests/deployment/g8_recovery_compose.yaml",
+        "tests/security/minio_fixture_gate.py",
+        "tests/service_integration/g8_orphan_minio_compose.yaml",
+    ),
+    "postgres": (
+        "compose.yaml",
+        "deploy/vps/compose.yaml",
+        "docker/postgres.Dockerfile",
+        "tests/deployment/g8_recovery_compose.yaml",
+        "tests/security/postgres_fixture_gate.py",
+        "tests/service_integration/g8_orphan_minio_compose.yaml",
+    ),
+    "worker": (
+        "compose.yaml",
+        "deploy/vps/Caddyfile",
+        "deploy/vps/compose.yaml",
+    ),
+}
 LOCAL_SCAN_TOKEN = re.compile(r"^[0-9a-f]{24}$")
 KNOWN_VULNERABILITY_TARGETS = frozenset(
     {"osv-source"}
@@ -257,6 +294,13 @@ def expected_external_image_ids(root: Path = ROOT) -> tuple:
             identifier = entry.get("id") if isinstance(entry, dict) else None
             if not isinstance(identifier, str):
                 raise ScanError("dependency policy %s identifier is invalid" % key)
+            scan_mode = entry.get("scan_mode", "external")
+            if scan_mode not in {"external", "local-build"}:
+                raise ScanError("dependency policy %s scan mode is invalid" % key)
+            if scan_mode == "local-build":
+                if key != "compose_images" or identifier not in DEPENDENCY_AUDIT_LOCAL_IMAGE_IDS:
+                    raise ScanError("dependency policy local-build image is invalid")
+                continue
             identifiers.append(identifier)
 
     local_ids = set(LOCAL_IMAGE_IDS)
@@ -274,15 +318,19 @@ def validate_external_images(raw_images: object, expected_ids: Sequence[str]) ->
     if not isinstance(raw_images, list):
         raise ValueError("missing image inventory")
     images: Dict[str, str] = {}
+    scan_modes: Dict[str, str] = {}
     for item in raw_images:
         if not isinstance(item, dict):
             raise ValueError("invalid image inventory item")
         identifier = item.get("id")
         reference = item.get("reference")
+        scan_mode = item.get("scan_mode", "external")
         if not isinstance(identifier, str) or SAFE_ID.fullmatch(identifier) is None:
             raise ValueError("unsafe image inventory identifier")
         if identifier in images:
             raise ValueError("duplicate image inventory identifier")
+        if scan_mode not in {"external", "local-build"}:
+            raise ValueError("invalid image inventory scan mode")
         if (
             not isinstance(reference, str)
             or SAFE_IMAGE_REFERENCE.fullmatch(reference) is None
@@ -290,9 +338,22 @@ def validate_external_images(raw_images: object, expected_ids: Sequence[str]) ->
         ):
             raise ValueError("unsafe or mutable image inventory reference")
         images[identifier] = reference
-    if set(images) != set(expected_ids):
+        scan_modes[identifier] = scan_mode
+    expected_external = set(expected_ids)
+    expected_all = expected_external | set(DEPENDENCY_AUDIT_LOCAL_IMAGE_IDS)
+    if set(images) != expected_all:
         raise ValueError("image inventory does not match the dependency policy")
-    return [{"id": identifier, "reference": images[identifier]} for identifier in sorted(images)]
+    if any(scan_modes[identifier] != "external" for identifier in expected_external):
+        raise ValueError("external image inventory scan mode is invalid")
+    if any(
+        scan_modes[identifier] != "local-build"
+        for identifier in DEPENDENCY_AUDIT_LOCAL_IMAGE_IDS
+    ):
+        raise ValueError("local-build image inventory scan mode is invalid")
+    return [
+        {"id": identifier, "reference": images[identifier]}
+        for identifier in sorted(expected_external)
+    ]
 
 
 def local_image_references(run_token: Optional[str] = None) -> Tuple[Tuple[str, str], ...]:
@@ -611,8 +672,17 @@ def _matching_fixed_versions(
         ranges = item.get("ranges", [])
         if ranges is None:
             ranges = []
-        if not isinstance(ranges, list):
+        ecosystem_specific = item.get("ecosystem_specific")
+        custom_ranges = []
+        if ecosystem_specific is not None:
+            if not isinstance(ecosystem_specific, dict):
+                raise ScanError("vulnerability ecosystem range metadata is invalid")
+            custom_ranges = ecosystem_specific.get("custom_ranges", [])
+            if custom_ranges is None:
+                custom_ranges = []
+        if not isinstance(ranges, list) or not isinstance(custom_ranges, list):
             raise ScanError("vulnerability affected ranges are invalid")
+        ranges = list(ranges) + list(custom_ranges)
         for affected_range in ranges:
             if not isinstance(affected_range, dict):
                 raise ScanError("vulnerability affected range is invalid")
@@ -712,6 +782,52 @@ def _advisory_labeled_severity(raw: Mapping[str, object]) -> str:
             ):
                 raise ScanError("vulnerability severity vector is unsupported")
     return _max_severity(severities)
+
+
+def _debian_vendor_marks_unimportant(
+    advisories: Mapping[str, Mapping[str, object]],
+    package: Mapping[str, object],
+) -> bool:
+    ecosystem = package.get("ecosystem")
+    if not isinstance(ecosystem, str) or not ecosystem.startswith("Debian:"):
+        return False
+    urgencies = []
+    debian_advisories = 0
+    for identifier, advisory in advisories.items():
+        if not identifier.startswith("DEBIAN-"):
+            continue
+        debian_advisories += 1
+        affected = advisory.get("affected")
+        if not isinstance(affected, list):
+            return False
+        matching_urgencies = []
+        for item in affected:
+            if not isinstance(item, dict):
+                continue
+            affected_package = item.get("package")
+            ecosystem_specific = item.get("ecosystem_specific")
+            if (
+                isinstance(affected_package, dict)
+                and affected_package.get("ecosystem") == ecosystem
+                and affected_package.get("name") == package.get("name")
+            ):
+                if (
+                    not isinstance(ecosystem_specific, dict)
+                    or not isinstance(ecosystem_specific.get("urgency"), str)
+                ):
+                    return False
+                matching_urgencies.append(ecosystem_specific["urgency"].lower())
+        if not matching_urgencies:
+            return False
+        urgencies.extend(matching_urgencies)
+    # Debian's exact package/release analysis is authoritative only for the
+    # explicit `unimportant` state. Missing, conflicting, unassigned, or
+    # generic advisory metadata must retain the scanner's CVSS severity.
+    return (
+        debian_advisories > 0
+        and bool(urgencies)
+        and set(urgencies) == {"unimportant"}
+    )
 
 
 def _merge_observation(
@@ -836,9 +952,13 @@ def normalize_vulnerability_report(
                     for identifier in normalized_ids
                 ):
                     raise ScanError("vulnerability group omitted a vector severity score")
-                # Distro urgency is additive evidence, not an override: a lower
-                # Debian label must never downgrade OSV-Scanner's group score.
                 severity = _max_severity([score_severity] + labeled_severities)
+                family_advisories = {
+                    identifier: advisory_by_id[identifier]
+                    for identifier in normalized_ids
+                }
+                if _debian_vendor_marks_unimportant(family_advisories, package):
+                    severity = "LOW"
                 fixed_versions = set()
                 for identifier in normalized_ids:
                     fixed_versions.update(
@@ -960,7 +1080,10 @@ def run(
     cwd: Path = ROOT,
     quiet: bool = False,
     timeout: int = 900,
+    termination_grace_seconds: Optional[float] = None,
 ) -> int:
+    if termination_grace_seconds is None:
+        termination_grace_seconds = PROCESS_TERM_GRACE_SECONDS
     with _TerminationGuard() as termination:
         termination.raise_if_pending()
         try:
@@ -982,7 +1105,11 @@ def run(
                 termination.raise_if_pending()
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    return 124 if _terminate_process(process) else 127
+                    return (
+                        124
+                        if _terminate_process(process, termination_grace_seconds)
+                        else 127
+                    )
                 try:
                     code = process.wait(
                         timeout=min(PROCESS_SIGNAL_POLL_SECONDS, remaining)
@@ -992,7 +1119,7 @@ def run(
                 termination.raise_if_pending()
                 return code
         except BaseException:
-            _terminate_process(process)
+            _terminate_process(process, termination_grace_seconds)
             raise
 
 
@@ -1043,13 +1170,19 @@ def _signal_process_group(process: subprocess.Popen, selected_signal: int) -> No
             pass
 
 
-def _terminate_process(process: subprocess.Popen) -> bool:
+def _terminate_process(
+    process: subprocess.Popen,
+    termination_grace_seconds: Optional[float] = None,
+) -> bool:
     """Boundedly stop the entire new-session process group and reap its leader."""
+
+    if termination_grace_seconds is None:
+        termination_grace_seconds = PROCESS_TERM_GRACE_SECONDS
 
     _signal_process_group(process, signal.SIGTERM)
     group_gone = _wait_for_process_group_exit(
         process,
-        time.monotonic() + PROCESS_TERM_GRACE_SECONDS,
+        time.monotonic() + termination_grace_seconds,
     )
     if not group_gone:
         _signal_process_group(process, signal.SIGKILL)
@@ -1201,6 +1334,126 @@ def _bind_image_identity(identity: Mapping[str, object]) -> Dict[str, object]:
         raise ScanError("image identity metadata exceeded its size limit")
     result = dict(identity)
     result["policy_digest"] = "sha256:" + hashlib.sha256(canonical).hexdigest()
+    return result
+
+
+def _disposition_context_digest(identifier: str, root: Path = ROOT) -> Optional[str]:
+    """Bind repository runtime controls used to justify target dispositions."""
+    selected = DISPOSITION_CONTEXT_FILES.get(identifier)
+    if selected is None:
+        return None
+    if not isinstance(root, Path):
+        raise ScanError("disposition context root is invalid")
+    try:
+        resolved_root = root.resolve(strict=True)
+    except OSError:
+        raise ScanError("disposition context root is unavailable") from None
+    if root.is_symlink() or not resolved_root.is_dir():
+        raise ScanError("disposition context root is unsafe")
+
+    digest = hashlib.sha256(b"hbcb-vulnerability-disposition-context/v1\0")
+    total = 0
+    for relative in selected:
+        candidate = root / relative
+        descriptor = None
+        try:
+            metadata = candidate.lstat()
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(resolved_root)
+            if (
+                candidate.is_symlink()
+                or not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_size <= 0
+                or metadata.st_size > MAX_DISPOSITION_CONTEXT_BYTES
+            ):
+                raise ScanError("disposition context input is unsafe")
+            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(
+                os, "O_NOFOLLOW", 0
+            )
+            descriptor = os.open(candidate, flags)
+            opened = os.fstat(descriptor)
+            with os.fdopen(descriptor, "rb") as stream:
+                descriptor = None
+                payload = stream.read(MAX_DISPOSITION_CONTEXT_BYTES + 1)
+                after_read = os.fstat(stream.fileno())
+        except ScanError:
+            raise
+        except (OSError, ValueError):
+            raise ScanError("disposition context input is unavailable") from None
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+                opened.st_mtime_ns,
+                opened.st_ctime_ns,
+            )
+            != (
+                metadata.st_dev,
+                metadata.st_ino,
+                metadata.st_size,
+                metadata.st_mtime_ns,
+                metadata.st_ctime_ns,
+            )
+            or (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+                opened.st_mtime_ns,
+                opened.st_ctime_ns,
+            )
+            != (
+                after_read.st_dev,
+                after_read.st_ino,
+                after_read.st_size,
+                after_read.st_mtime_ns,
+                after_read.st_ctime_ns,
+            )
+            or len(payload) != metadata.st_size
+            or not payload
+        ):
+            raise ScanError("disposition context input changed while being read")
+        total += len(payload)
+        if total > MAX_DISPOSITION_CONTEXT_BYTES:
+            raise ScanError("disposition context exceeded its size limit")
+        encoded_name = relative.encode("ascii", "strict")
+        digest.update(len(encoded_name).to_bytes(4, "big"))
+        digest.update(encoded_name)
+        digest.update(len(payload).to_bytes(8, "big"))
+        digest.update(payload)
+    return "sha256:" + digest.hexdigest()
+
+
+def _bind_disposition_context(
+    identifier: str,
+    identity: Mapping[str, object],
+    root: Path = ROOT,
+) -> Dict[str, object]:
+    context_digest = _disposition_context_digest(identifier, root)
+    if context_digest is None:
+        return dict(identity)
+    context_files = list(DISPOSITION_CONTEXT_FILES[identifier])
+    image_policy_digest = identity.get("policy_digest")
+    if not isinstance(image_policy_digest, str) or DIGEST.fullmatch(
+        image_policy_digest
+    ) is None:
+        raise ScanError("image policy identity is unavailable")
+    contextual = _bind_image_identity(
+        {
+            "disposition_context_files": context_files,
+            "image_policy_digest": image_policy_digest,
+            "disposition_context_digest": context_digest,
+        }
+    )
+    result = dict(identity)
+    result["image_policy_digest"] = image_policy_digest
+    result["disposition_context_files"] = context_files
+    result["disposition_context_digest"] = context_digest
+    result["policy_digest"] = contextual["policy_digest"]
     return result
 
 
@@ -1477,6 +1730,164 @@ def _read_docker_archive_config(archive: Path) -> Tuple[str, Mapping[str, object
     return config_digest, config
 
 
+def _canonical_sha256(value: object, label: str) -> str:
+    try:
+        payload = json.dumps(
+            value,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("ascii", "strict")
+    except (TypeError, UnicodeError, ValueError, RecursionError):
+        raise ScanError(label + " metadata is invalid") from None
+    if len(payload) > MAX_POLICY_BYTES:
+        raise ScanError(label + " metadata exceeded its size limit")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _normalized_local_image_content_digest(archive: Path) -> str:
+    """Bind runtime layer content while excluding non-semantic tar timestamps."""
+    layer_digests = []
+    member_total = 0
+    byte_total = 0
+    try:
+        with tarfile.open(archive, mode="r:") as outer:
+            manifest_member = outer.getmember("manifest.json")
+            manifest_stream = outer.extractfile(manifest_member)
+            if manifest_stream is None:
+                raise ScanError("local image archive manifest is unavailable")
+            manifest = strict_json_loads(
+                manifest_stream.read(MAX_DOCKER_MANIFEST_BYTES + 1).decode(
+                    "utf-8", "strict"
+                )
+            )
+            manifest_stream.close()
+            if (
+                not isinstance(manifest, list)
+                or len(manifest) != 1
+                or not isinstance(manifest[0], dict)
+                or not isinstance(manifest[0].get("Layers"), list)
+            ):
+                raise ScanError("local image archive manifest contract is invalid")
+            for layer_name_raw in manifest[0]["Layers"]:
+                layer_name = _safe_archive_member(layer_name_raw)
+                layer_member = outer.getmember(layer_name)
+                if not layer_member.isfile():
+                    raise ScanError("local image archive layer inventory is invalid")
+                layer_stream = outer.extractfile(layer_member)
+                if layer_stream is None:
+                    raise ScanError("local image archive layer is unavailable")
+                records = []
+                names = set()
+                with tarfile.open(fileobj=layer_stream, mode="r|*") as layer:
+                    for member in layer:
+                        member_total += 1
+                        if member_total > MAX_NORMALIZED_LAYER_MEMBERS:
+                            raise ScanError(
+                                "local image archive runtime inventory is too large"
+                            )
+                        name = _safe_archive_member(member.name)
+                        if name in names:
+                            raise ScanError(
+                                "local image archive runtime member is duplicated"
+                            )
+                        names.add(name)
+                        byte_total += member.size
+                        if (
+                            member.size < 0
+                            or byte_total > MAX_NORMALIZED_LAYER_BYTES
+                        ):
+                            raise ScanError(
+                                "local image archive runtime content is too large"
+                            )
+                        if not (
+                            member.isfile()
+                            or member.isdir()
+                            or member.issym()
+                            or member.islnk()
+                            or member.ischr()
+                            or member.isblk()
+                            or member.isfifo()
+                        ):
+                            raise ScanError(
+                                "local image archive runtime member type is unsupported"
+                            )
+                        content_sha256 = None
+                        if member.isfile():
+                            stream = layer.extractfile(member)
+                            if stream is None:
+                                raise ScanError(
+                                    "local image archive runtime file is unavailable"
+                                )
+                            digest = hashlib.sha256()
+                            observed = 0
+                            while True:
+                                chunk = stream.read(1024 * 1024)
+                                if not chunk:
+                                    break
+                                observed += len(chunk)
+                                digest.update(chunk)
+                            stream.close()
+                            if observed != member.size:
+                                raise ScanError(
+                                    "local image archive runtime file size did not match"
+                                )
+                            content_sha256 = digest.hexdigest()
+                        pax_headers = {
+                            key: value
+                            for key, value in member.pax_headers.items()
+                            if key.lower()
+                            not in {
+                                "atime",
+                                "ctime",
+                                "mtime",
+                                "libarchive.creationtime",
+                            }
+                        }
+                        record = {
+                            "content_sha256": content_sha256,
+                            "devmajor": member.devmajor,
+                            "devminor": member.devminor,
+                            "gid": member.gid,
+                            "linkname": member.linkname,
+                            "mode": member.mode,
+                            "name": name,
+                            "pax_headers": pax_headers,
+                            "size": member.size,
+                            "type": bytes(member.type).hex(),
+                            "uid": member.uid,
+                        }
+                        records.append(
+                            (name, _canonical_sha256(record, "local image runtime member"))
+                        )
+                layer_stream.close()
+                layer_digest = hashlib.sha256()
+                for name, record_digest in sorted(records):
+                    encoded_name = name.encode("utf-8", "strict")
+                    layer_digest.update(len(encoded_name).to_bytes(8, "big"))
+                    layer_digest.update(encoded_name)
+                    layer_digest.update(bytes.fromhex(record_digest.removeprefix("sha256:")))
+                layer_digests.append("sha256:" + layer_digest.hexdigest())
+    except ScanError:
+        raise
+    except (KeyError, OSError, tarfile.TarError, UnicodeError, ValueError, RecursionError):
+        raise ScanError("local image archive runtime content is malformed") from None
+    return _canonical_sha256(layer_digests, "local image normalized content")
+
+
+def _normalized_runtime_config_digest(config: Mapping[str, object]) -> str:
+    runtime = {
+        key: config[key]
+        for key in ("architecture", "config", "os", "variant")
+        if key in config
+    }
+    if runtime.get("architecture") != "amd64" or runtime.get("os") != "linux":
+        raise ScanError("local image runtime config platform is invalid")
+    if not isinstance(runtime.get("config"), dict):
+        raise ScanError("local image runtime config is invalid")
+    return _canonical_sha256(runtime, "local image runtime config")
+
+
 def _validate_external_image_archive(archive: Path, config_digest: str) -> None:
     observed_digest, _config = _read_docker_archive_config(archive)
     if observed_digest != config_digest:
@@ -1672,6 +2083,9 @@ def prepare_local_image_archive(
     if descriptor_digest is None and image_id != config_digest:
         raise ScanError("local image runtime descriptor is unavailable")
 
+    content_digest = _normalized_local_image_content_digest(archive)
+    runtime_config_digest = _normalized_runtime_config_digest(archived_config)
+
     revision = archived_labels.get("org.opencontainers.image.revision", "")
     if (
         not revision
@@ -1685,15 +2099,18 @@ def prepare_local_image_archive(
         separators=(",", ":"),
         sort_keys=True,
     ).encode("ascii")
-    # The policy key binds the archived config (which itself binds the rootfs
-    # diff IDs) and the complete provenance-label set. Runtime descriptor and
-    # tag metadata remain evidence, but are intentionally excluded so the same
-    # image config has the same disposition key across Docker image stores.
+    # BuildKit records wall-clock timestamps in the config and layer tar
+    # headers.  The policy key instead binds every runtime layer member's
+    # content and security-relevant metadata plus the complete runtime config,
+    # excluding only timestamps. Runtime descriptor, raw config digest, and
+    # tag metadata remain evidence. Thus byte/config changes cannot reuse a
+    # disposition, while identical clean rebuilds receive the same key.
     stable_identity: Dict[str, object] = {
-        "config_digest": config_digest,
+        "content_digest": content_digest,
         "labels_sha256": "sha256:" + hashlib.sha256(labels_payload).hexdigest(),
         "oci_revision": revision,
         "platform": "linux/amd64",
+        "runtime_config_digest": runtime_config_digest,
     }
     if identifier == "minio":
         if not isinstance(expected_recipe, str) or DIGEST.fullmatch(expected_recipe) is None:
@@ -1716,6 +2133,7 @@ def prepare_local_image_archive(
             "archive_sha256": archive_sha256,
             "archive_size_bytes": archive_size,
             "build_reference": reference,
+            "config_digest": config_digest,
             "descriptor_digest": descriptor_digest,
             "image_id": image_id,
         }
@@ -1856,6 +2274,23 @@ def build_images(
                 "HBCB_MINIO_RECIPE_ID=" + recipe,
                 "--tag",
                 references["minio"],
+                "--platform",
+                "linux/amd64",
+                ".",
+            ],
+        ),
+        (
+            "postgres",
+            900,
+            [
+                "docker",
+                "build",
+                "--file",
+                "docker/postgres.Dockerfile",
+                "--target",
+                "postgres",
+                "--tag",
+                references["postgres"],
                 "--platform",
                 "linux/amd64",
                 ".",
@@ -2122,6 +2557,7 @@ def scan_external_image(
     archive = temporary / ("external-image-" + identifier + ".tar")
     try:
         identity = prepare_external_image_archive(reference, archive)
+        identity = _bind_disposition_context(identifier, identity)
         scan_image(
             scanner,
             output,
@@ -2138,6 +2574,36 @@ def scan_external_image(
             pass
         except OSError as failure:
             raise ScanError("external image archive cleanup failed") from failure
+
+
+def run_postgres_runtime_gate(
+    runtime_image_id: str,
+    linux_amd64_config_id: str,
+    records: List[Dict[str, object]],
+) -> None:
+    code = run(
+        [
+            sys.executable,
+            str(ROOT / "tests/security/postgres_fixture_gate.py"),
+            "--docker",
+            "docker",
+            "--image",
+            runtime_image_id,
+            "--config-id",
+            linux_amd64_config_id,
+        ],
+        timeout=900,
+        termination_grace_seconds=POSTGRES_GATE_TERM_GRACE_SECONDS,
+    )
+    records.append(
+        {
+            "exit_code": code,
+            "id": "postgres-runtime-security",
+            "report": None,
+            "status": "pass" if code == 0 else "incomplete",
+            "type": "runtime-security-gate",
+        }
+    )
 
 
 def scan_local_image(
@@ -2160,6 +2626,7 @@ def scan_local_image(
             archive,
             expected_recipe if identifier == "minio" else None,
         )
+        identity = _bind_disposition_context(identifier, identity)
         scan_image(
             scanner,
             output,
@@ -2169,6 +2636,17 @@ def scan_local_image(
             policy,
             image_identity=identity,
         )
+        if identifier == "postgres":
+            image_id = identity.get("image_id")
+            config_digest = identity.get("config_digest")
+            if (
+                not isinstance(image_id, str)
+                or DIGEST.fullmatch(image_id) is None
+                or not isinstance(config_digest, str)
+                or DIGEST.fullmatch(config_digest) is None
+            ):
+                raise ScanError("local PostgreSQL immutable image identities are unavailable")
+            run_postgres_runtime_gate(image_id, config_digest, records)
     finally:
         try:
             archive.unlink()
@@ -2196,6 +2674,16 @@ def record_unrun_scans(
                 "report": None,
                 "status": "incomplete",
                 "type": "vulnerability-scan",
+            }
+        )
+    if include_images and "postgres-runtime-security" not in recorded:
+        records.append(
+            {
+                "exit_code": None,
+                "id": "postgres-runtime-security",
+                "report": None,
+                "status": "incomplete",
+                "type": "runtime-security-gate",
             }
         )
 
@@ -2309,7 +2797,7 @@ def render_summary(summary: Mapping[str, object]) -> str:
     lines.extend(
         [
             "",
-            "Detailed OSV JSON reports are retained as workflow artifacts. Undispositioned HIGH/CRITICAL advisory families and dependency-policy findings return `1`; incomplete scans or invalid/expired vulnerability policy return `2`. Lower and unrated families remain visible above without independently blocking.",
+            "Detailed OSV JSON reports are retained as workflow artifacts. Undispositioned UNRATED, HIGH, or CRITICAL advisory families and dependency-policy findings return `1`; incomplete scans or invalid/expired vulnerability policy return `2`. LOW and MODERATE families remain visible above without independently blocking.",
             "",
         ]
     )

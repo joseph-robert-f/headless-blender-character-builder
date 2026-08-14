@@ -9,7 +9,7 @@ usage() {
     'usage: scripts/doctor [--demo|--service|--native]' \
     '' \
     '  --demo     Check the keyless Docker path (default).' \
-    '  --service  Also require Compose 2.24.4+, Python 3.11+, and curl.' \
+    '  --service  Also require Compose 2.24.4+ and Python 3.11+.' \
     '  --native   Check Python 3.11+ and Blender 4.5.12 without Docker.'
 }
 
@@ -109,21 +109,21 @@ check_python() {
 
 check_curl() {
   if ! command -v "$doctor_curl" >/dev/null 2>&1; then
-    fail "curl is unavailable ($doctor_curl); it is required by the local API journey"
+    note 'curl is unavailable; only the optional manual API protocol example needs it'
     return
   fi
   curl_version=$("$doctor_curl" --version 2>/dev/null | first_line || true)
   if [ -z "$curl_version" ]; then
-    fail 'curl was found but did not report a version'
+    note 'curl was found but did not report a version; the lightweight client does not need it'
     return
   fi
   curl_help=$("$doctor_curl" --help all 2>/dev/null || true)
   case "$curl_help" in
     *'--fail-with-body'*'--noproxy'*)
-      ok "$curl_version (supports the documented local API journey)"
+      ok "$curl_version (supports the optional manual API protocol example)"
       ;;
     *)
-      fail "curl with --fail-with-body and --noproxy support is required (found: $curl_version)"
+      note "curl lacks --fail-with-body or --noproxy; use the stdlib lightweight client (found: $curl_version)"
       ;;
   esac
 }
@@ -271,7 +271,22 @@ check_service_ports() {
     "$HBCB_STORAGE_HOST_PORT" 'artifact storage' "$((port_status & 2))"
 }
 
-check_service_capacity() {
+check_capacity() {
+  if [ "$mode" = service ]; then
+    capacity_label=service
+    memory_baseline_bytes=8589934592
+    memory_baseline_gib=8
+    disk_baseline_kib=20971520
+    disk_baseline_gib=20
+    cpu_note='the service can use about 8 CPUs'
+  else
+    capacity_label=one-shot
+    memory_baseline_bytes=8589934592
+    memory_baseline_gib=8
+    disk_baseline_kib=10485760
+    disk_baseline_gib=10
+    cpu_note='the one-shot builder is capped at 4 CPUs and 4 GiB; the 8 GiB host baseline allows overhead'
+  fi
   if [ "$docker_ready" -eq 1 ] && [ "$service_docker_local" -eq 1 ]; then
     capacity=$("$doctor_docker" info --format '{{.NCPU}}|{{.MemTotal}}' 2>/dev/null | first_line || true)
     capacity_cpus=${capacity%%|*}
@@ -285,27 +300,29 @@ check_service_capacity() {
       ''|*[!0-9:]*|*:|:*) capacity_valid=0 ;;
     esac
     if [ "$capacity_valid" -ne 1 ]; then
-      note 'Docker CPU/RAM allocation could not be measured; the service baseline is 8 GiB RAM and the smoke path recommends 12 GiB'
+      note "Docker CPU/RAM allocation could not be measured; the advisory $capacity_label Docker-memory baseline is ${memory_baseline_gib} GiB"
     else
       capacity_gib=$((capacity_memory / 1073741824))
-      note "Docker reports $capacity_cpus CPU(s) and ${capacity_gib} GiB RAM; the service can use about 8 CPUs"
-      if [ "$capacity_memory" -lt 8589934592 ]; then
-        note 'Docker has less than the advisory 8 GiB service baseline'
+      note "Docker reports $capacity_cpus CPU(s) and ${capacity_gib} GiB RAM; $cpu_note"
+      if [ "$capacity_memory" -lt "$memory_baseline_bytes" ]; then
+        note "Docker has less than the advisory ${memory_baseline_gib} GiB $capacity_label memory baseline"
       else
-        ok 'Docker meets the advisory 8 GiB service-memory baseline'
+        ok "Docker meets the advisory ${memory_baseline_gib} GiB $capacity_label memory baseline"
       fi
-      note 'the full service-smoke path recommends at least 12 GiB of Docker memory'
+      if [ "$mode" = service ]; then
+        note 'the full service-smoke path recommends at least 12 GiB of Docker memory'
+      fi
     fi
   fi
   free_kib=$(df -Pk . 2>/dev/null | awk 'END { print $4 }' || true)
   case "$free_kib" in
-    ''|*[!0-9]*) note 'checkout free disk could not be measured; allow at least 20 GiB' ;;
+    ''|*[!0-9]*) note "checkout free disk could not be measured; allow at least ${disk_baseline_gib} GiB for the $capacity_label path" ;;
     *)
       free_gib=$((free_kib / 1048576))
-      if [ "$free_kib" -lt 20971520 ]; then
-        note "checkout has about ${free_gib} GiB free; the advisory service baseline is 20 GiB"
+      if [ "$free_kib" -lt "$disk_baseline_kib" ]; then
+        note "checkout has about ${free_gib} GiB free; the advisory $capacity_label baseline is ${disk_baseline_gib} GiB"
       else
-        ok "checkout has about ${free_gib} GiB free (20 GiB service baseline)"
+        ok "checkout has about ${free_gib} GiB free (${disk_baseline_gib} GiB $capacity_label baseline)"
       fi
       ;;
   esac
@@ -365,6 +382,7 @@ case "$mode" in
   demo)
     check_make
     check_docker
+    check_capacity
     ;;
   service)
     check_make
@@ -377,7 +395,7 @@ case "$mode" in
     if [ "$service_env_ready" -eq 1 ]; then
       check_service_settings
     fi
-    check_service_capacity
+    check_capacity
     ;;
   native)
     check_python

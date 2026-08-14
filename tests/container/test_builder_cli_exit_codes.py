@@ -13,12 +13,14 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from builder_cli import commands
 from builder_cli.__main__ import main
 from builder_cli.exit_codes import ExitCode
 from shared.json_contract import ContractValidationError
+from tests.support import valid_manifest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -60,6 +62,105 @@ class _TimeoutProcess:
 
 
 class BuilderCliExitCodeTests(unittest.TestCase):
+    def test_manifest_inspection_is_bounded_canonical_and_path_free(self) -> None:
+        document = valid_manifest()
+        private_reference = "private-registry.invalid/team/canary:internal"
+        document["execution"].update(
+            {
+                "mode": "container",
+                "worker_image_reference": private_reference,
+                "worker_image_digest": "sha256:" + "1" * 64,
+                "worker_image_id": "sha256:" + "2" * 64,
+            }
+        )
+        with tempfile.TemporaryDirectory(prefix="hbcb-manifest-inspect-") as raw:
+            manifest = Path(raw) / "private-path-canary.json"
+            manifest.write_bytes(
+                commands.canonical_json_bytes(document) + b"\n"
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                result = main(("inspect-manifest", "--manifest", str(manifest)))
+        self.assertEqual(result, int(ExitCode.SUCCESS), stderr.getvalue())
+        lines = stdout.getvalue().splitlines()
+        self.assertEqual(lines[-1], "BUILDER_INSPECT_MANIFEST: PASS")
+        summary = json.loads(lines[0])
+        self.assertEqual(summary["manifest_version"], "manifest/v1")
+        self.assertEqual(summary["artifact_count"], 8)
+        self.assertEqual(summary["qa"]["status"], "passed")
+        self.assertLess(len(lines[0].encode("utf-8")), 4096)
+        self.assertNotIn(str(manifest), stdout.getvalue())
+        self.assertNotIn(private_reference, stdout.getvalue())
+        self.assertNotIn("worker_image", stdout.getvalue())
+
+    def test_manifest_inspection_rejects_oversized_noncanonical_and_symlink_inputs(self) -> None:
+        document = valid_manifest()
+        canonical = commands.canonical_json_bytes(document) + b"\n"
+        with tempfile.TemporaryDirectory(prefix="hbcb-manifest-reject-") as raw:
+            root = Path(raw)
+            cases = []
+            noncanonical = root / "noncanonical.json"
+            noncanonical.write_bytes(b" " + canonical)
+            cases.append((noncanonical, ExitCode.VERIFICATION, "not canonical"))
+            oversized = root / "oversized.json"
+            oversized.write_bytes(b"x" * (commands.MAX_MANIFEST_BYTES + 1))
+            cases.append((oversized, ExitCode.VERIFICATION, "size limit"))
+            target = root / "target.json"
+            target.write_bytes(canonical)
+            linked = root / "linked.json"
+            linked.symlink_to(target)
+            cases.append((linked, ExitCode.FILESYSTEM, "could not read"))
+            for path, expected_code, diagnostic in cases:
+                with self.subTest(path=path.name):
+                    stdout = io.StringIO()
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                        result = main(
+                            ("inspect-manifest", "--manifest", str(path))
+                        )
+                    self.assertEqual(result, int(expected_code))
+                    self.assertEqual(stdout.getvalue(), "")
+                    self.assertIn(diagnostic, stderr.getvalue())
+                    self.assertNotIn(str(path), stderr.getvalue())
+
+    def test_manifest_inspection_rejects_an_input_that_changes_during_read(self) -> None:
+        document = valid_manifest()
+        with tempfile.TemporaryDirectory(prefix="hbcb-manifest-change-") as raw:
+            manifest = Path(raw) / "manifest.json"
+            manifest.write_bytes(commands.canonical_json_bytes(document) + b"\n")
+            actual_fstat = commands.os.fstat
+            calls = 0
+
+            def changed_fstat(descriptor):
+                nonlocal calls
+                metadata = actual_fstat(descriptor)
+                calls += 1
+                if calls == 2:
+                    return SimpleNamespace(
+                        st_mode=metadata.st_mode,
+                        st_size=metadata.st_size + 1,
+                        st_dev=metadata.st_dev,
+                        st_ino=metadata.st_ino,
+                        st_mtime_ns=metadata.st_mtime_ns,
+                        st_ctime_ns=metadata.st_ctime_ns,
+                    )
+                return metadata
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with mock.patch.object(
+                commands.os, "fstat", side_effect=changed_fstat
+            ), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                result = main(("inspect-manifest", "--manifest", str(manifest)))
+        self.assertEqual(result, int(ExitCode.FILESYSTEM))
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(
+            stderr.getvalue(),
+            "BUILDER: FAIL[4]: could not read success manifest\n",
+        )
+        self.assertNotIn(str(manifest), stderr.getvalue())
+
     def test_validate_accepts_request_without_blender_or_output(self) -> None:
         stdout = io.StringIO()
         request = ROOT / "examples" / "requests" / "facet-bot.json"

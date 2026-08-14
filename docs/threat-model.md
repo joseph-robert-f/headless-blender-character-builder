@@ -7,14 +7,21 @@
 This document defines the security assumptions and release boundary for
 Headless Blender Character Builder v0.1. It covers the keyless one-shot
 builder, the local asynchronous service, and the single-operator VPS reference
-deployment. It does not claim to secure a public multi-tenant hosted product.
+deployment so experimental and future paths receive security analysis. v0.1
+support is narrower: one trusted user building their own model locally with
+the one-shot Docker builder. The Compose service is experimental and
+loopback-only; Internet-facing, hostile-input, multi-tenant, and VPS operation
+are outside v0.1 support.
 
 The core design treats every caller-supplied request as untrusted and every
-project-controlled generator and image as trusted release code. The supported
-input is a strict, bounded `BuildRequest v1` containing a declarative
-`CharacterSpec v1`. Customer- or model-authored Python, Blender commands,
-add-ons, drivers, node graphs, uploaded `.blend` files, host paths, remote
-URLs, reference-image ingestion, and container controls are outside v0.1.
+project-controlled generator and image as trusted release code. “Untrusted” is
+a defensive data-handling rule: every request is validated even when its
+author is the trusted local user. It does not mean that v0.1 supports accepting
+hostile requests or operating a public service. The accepted input format is a
+strict, bounded `BuildRequest v1` containing a declarative `CharacterSpec v1`.
+Customer- or model-authored Python, Blender commands, add-ons, drivers, node
+graphs, uploaded `.blend` files, host paths, remote URLs, reference-image
+ingestion, and container controls are outside v0.1.
 
 ## Assets to protect
 

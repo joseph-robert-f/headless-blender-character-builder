@@ -55,16 +55,18 @@ Do not open a public issue for a suspected vulnerability. Follow
 
 | Scope | Paths |
 |---|---|
-| Supported for best-effort community issue triage | Reproducible defects in the source-built `linux/amd64` one-shot Docker builder, bounded request/manifest contracts, local Compose service, and repository tests |
-| Best effort | Docker Desktop emulation on Apple Silicon, exact-Blender native contributor use, Linux `arm64` emulation, and project/release tooling questions |
+| Supported for best-effort community issue triage | Reproducible defects in the source-built `linux/amd64` one-shot Docker builder and bounded request/manifest contracts |
+| Best effort | Repository tests, Docker Desktop emulation on Apple Silicon, exact-Blender native contributor use, Linux `arm64` emulation, and project/release tooling questions |
+| Experimental, best-effort triage | Local Compose service on loopback for one trusted operator |
 | Experimental | Windows with WSL2 |
-| Documentation review only | The production-oriented VPS reference until a matching source release, image set, and digest lock are published |
-| Out of scope | A hosted or multi-tenant service, arbitrary prompt-to-3D, custom commissions, private deployment operations, and unreviewed third-party Blender files or scripts |
+| Documentation review only | The out-of-scope VPS design and validation reference |
+| Out of scope | Internet-facing, hostile-input, hosted, multi-tenant, or VPS operation; arbitrary prompt-to-3D; custom commissions; private deployment operations; and unreviewed third-party Blender files or scripts |
 
-“Supported” here identifies the paths maintainers can triage from a
-reproduction; it does not promise response time, compatibility with every host,
-or production support. Questions can improve the VPS reference, but they do not
-create an operational commitment.
+v0.1 support assumes one trusted user who controls the machine and creates or
+reviews the bounded JSON request. “Supported” identifies paths maintainers can
+triage from a reproduction; it does not promise response time, compatibility
+with every host, or production support. Questions can improve the VPS reference,
+but they do not create an operational commitment.
 
 Maintainers do not provide uptime guarantees, private deployment or incident
 response, emergency response, model-design commissions, intellectual-property

@@ -42,8 +42,10 @@ The full Docker-backed suite, including the separately packaged service, is
 ## Request envelope
 
 See [Facet Bot](../examples/requests/facet-bot.json) for the passing canonical
-starter and [Moss Hopper](../examples/requests/moss-hopper.json) for a
-materially different, intentionally `needs_review` request. The
+starter, [Facet Bot Tidepool](../examples/requests/facet-bot-tidepool.json) for
+a passing palette-only customization, and
+[Moss Hopper](../examples/requests/moss-hopper.json) for a materially different,
+intentionally `needs_review` request. The
 [examples guide](../examples/README.md) gives exact commands and expected
 outcomes.
 
@@ -143,7 +145,14 @@ SET
 
 `CHARACTER` contains separately named procedural display meshes with bounded native materials and semantic component metadata. `PRINT` contains exactly one derived `PrintableShell`; the source display meshes remain independently inspectable. Total requested height includes the base, and the base display mesh uses the requested width, depth, and height exactly.
 
-The G2 gate starts four fresh Blender 4.5 processes: both bundled examples twice. It checks finite nonempty source/evaluated meshes, collection placement, object/material/triangle caps, no image-backed materials, semantic component inventories, one connected manifold and consistently wound printable shell, positive signed volume, requested-height tolerance, repeat-stable structural evidence, and cross-example topology differences.
+The G2 gate starts four fresh Blender 4.5 processes: the two geometry-distinct
+fixtures, Facet Bot and Moss Hopper, twice each. It checks finite nonempty
+source/evaluated meshes, collection placement, object/material/triangle caps,
+no image-backed materials, semantic component inventories, one connected
+manifold and consistently wound printable shell, positive signed volume,
+requested-height tolerance, repeat-stable structural evidence, and
+cross-example topology differences. The G3 gate additionally builds and
+independently verifies the Tidepool palette example.
 
 Native contributors can run the gate with an empty caller-owned evidence directory outside the repository:
 

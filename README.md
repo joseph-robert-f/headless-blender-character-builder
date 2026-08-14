@@ -14,13 +14,14 @@ views, geometry QA, and a hash manifest. The tracked
 [asset manifest](docs/assets/manifest.json) records its provenance and CC0
 license.
 
-> **Project status:** v0.1.0-rc.1 source candidate. The repository provides
-> source, Docker build definitions, tests, and a production-oriented VPS
-> reference. It does **not** yet publish a GitHub Release, container images, or
-> a hosted service. No project package is published on PyPI, and installing a
-> similarly named package from PyPI is not a supported path. The VPS path is not
-> currently deployable from a published release package; build locally from
-> reviewed source for evaluation.
+> **First-release support boundary:** v0.1.0-rc.1 is a source candidate for a trusted user building
+> their own models locally with the one-shot Docker builder. Here, “trusted”
+> means that you control the machine and create or review the bounded JSON
+> request. The optional Compose service is experimental, local-only, and for
+> one trusted operator. Internet-facing, multi-tenant, and VPS operation are
+> outside v0.1 support. The repository does **not** yet publish a GitHub Release,
+> container images, or a hosted service. No project package is published on PyPI,
+> and installing a similarly named package from PyPI is not supported.
 
 ## Build your first model
 
@@ -58,6 +59,10 @@ artifact that fits your next step:
 | `diagnostics/*.png` | Compare the front, side, and back geometry views. |
 | `qa.json` | Read the measured geometry checks and terminal QA status. |
 | `manifest.json` | Audit request, generator, Blender, execution, size, and SHA-256 provenance for the other eight artifacts. |
+
+Run `make inspect OUTPUT_NAME=facet-bot` for a bounded, path-free manifest and
+QA summary. This is a convenient read-only view; `make verify` remains the
+independent artifact check.
 
 The builder refuses to overwrite an existing output. Keep a result by moving
 it aside, or choose a new output name:
@@ -131,8 +136,8 @@ supports, or physical testing.
 | Build one model locally | [Container quickstart](docs/installation.md#container-path-recommended) | Git, Docker, GNU Make |
 | Build without Make | [Direct Docker commands](docs/installation.md#docker-without-make) | Git and Docker |
 | Develop against host Blender | [Native path](docs/installation.md#native-blender-best-effort) | Python 3.11+ and exact Blender 4.5.12 LTS |
-| Exercise the local HTTP API | [Asynchronous service](#optional-asynchronous-service) | Docker Compose 2.24.4+, Python 3.11+, curl, 8 GiB Docker memory, and 20 GB free disk |
-| Review a future self-hosted deployment | [VPS runbook](docs/deployment.md) | Linux `amd64`, Python 3.11+, Compose 2.24.4+, domain/TLS, external S3, secrets, and a future published release/lock |
+| Evaluate the experimental local HTTP API | [Asynchronous service](#optional-asynchronous-service) | One trusted operator, Docker Compose 2.24.4+, Python 3.11+, 8 GiB Docker memory, and 20 GB free disk |
+| Review the out-of-scope VPS design | [VPS runbook](docs/deployment.md) | Operations and security expertise; this is not a v0.1 deployment path |
 | Contribute | [Contribution guide](CONTRIBUTING.md) | A focused change (issue where required), applicable tests, and DCO sign-off |
 
 The release reference is `linux/amd64`. Docker Desktop on Apple Silicon uses
@@ -141,7 +146,11 @@ WSL2 is experimental. See [compatibility](docs/compatibility.md).
 
 ## Optional asynchronous service
 
-The local service adds an authenticated API, PostgreSQL, Redis, versioned
+> **Experimental and local-only:** use this stack on loopback with one trusted
+> operator and requests you created or reviewed. It is not a supported v0.1 path
+> for Internet-facing, multi-user, or hostile-input workloads.
+
+The service adds an authenticated API, PostgreSQL, Redis, versioned
 S3-compatible local storage, and one Blender worker. It invokes the same
 builder contract and still needs no AI-provider key.
 
@@ -159,7 +168,13 @@ make service-ps
 
 `service-ps` should show `api`, `worker`, PostgreSQL, Redis, and MinIO running;
 the one-shot `database-init` and `minio-init` rows should say `Exited (0)`. Now
-follow the copy-paste API journey linked below. When finished, stop this
+submit the bundled request and save one verified result:
+
+```sh
+make service-client REQUEST="$PWD/examples/requests/facet-bot.json"
+```
+
+When finished, stop this
 checkout's stack with `make service-down`.
 
 `make init-env` creates an ignored mode-`0600` `.env` once and refuses to
@@ -176,13 +191,13 @@ namespace—it is not separately network-isolated.
 
 The local MinIO image is a pinned compatibility fixture, not a production
 object-store recommendation. Do not expose this stack publicly. Read
-the [copy-paste HTTP API journey](docs/api.md#copy-paste-local-client-journey),
+the [lightweight HTTP API client](docs/api.md#lightweight-local-client),
 [troubleshooting](docs/troubleshooting.md), [architecture](docs/architecture.md),
 and the [VPS availability note](docs/deployment.md#availability) before
 integrating or operating it.
 
-The repository does not yet include a lightweight custom-request service
-client. Use the API journey for first evaluation. `make service-smoke` is the
+`make service-client` is the documented first-evaluation and custom-request
+path for this experimental stack. `make service-smoke` is the
 slower maintainer/integration confidence gate: it performs direct and service
 builds, restarts the API, tests cancellation and IAM, and retains evidence. It
 can add another 4 GiB builder workload, so allocate at least 12 GiB to Docker
@@ -203,8 +218,10 @@ before running it.
 - You are responsible for rights to designs, names, references, logos,
   likenesses, and outputs. This project grants no rights to Pokémon or any
   other third-party character or brand.
-- There is no public multi-tenant service, billing system, SLA, automatic IP
-  clearance, or print-success warranty.
+- v0.1 support covers the trusted local one-shot builder. The optional local
+  service is experimental; public, multi-tenant, and VPS operation remain out
+  of scope. There is no billing system, SLA, automatic IP clearance, or
+  print-success warranty.
 
 Read [OUTPUT_POLICY.md](OUTPUT_POLICY.md), [SECURITY.md](SECURITY.md), and
 [SUPPORT.md](SUPPORT.md). Report vulnerabilities through

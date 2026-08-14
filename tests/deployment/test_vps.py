@@ -31,6 +31,7 @@ LOADER.exec_module(VPS)
 def valid_lock() -> dict[str, str]:
     return {
         "HBCB_RELEASE_VERSION": "0.1.0",
+        "HBCB_POSTGRES_IMAGE": "ghcr.io/example/postgres@sha256:" + "6" * 64,
         "HBCB_API_IMAGE": "ghcr.io/example/api@sha256:" + "1" * 64,
         "HBCB_WORKER_IMAGE": "ghcr.io/example/worker@sha256:" + "2" * 64,
         "HBCB_CADDY_IMAGE": "caddy@sha256:" + "3" * 64,
@@ -189,6 +190,7 @@ class VpsOperatorTests(unittest.TestCase):
         values = valid_lock()
         VPS.validate_release_lock(values)
         for name, value in (
+            ("HBCB_POSTGRES_IMAGE", "postgres:16.14-alpine3.24"),
             ("HBCB_API_IMAGE", "ghcr.io/example/api:latest"),
             ("HBCB_WORKER_IMAGE", "ghcr.io/example/worker@sha256:" + "0" * 64),
             ("HBCB_BUILDER_SOURCE_REVISION", "9" * 64),
@@ -1707,6 +1709,18 @@ class VpsOperatorTests(unittest.TestCase):
         ):
             with self.assertRaises(VPS.OperatorError):
                 VPS._validate_private_storage_network("hbcb-storage-private", os.environ)
+        private_name = "private-network-value-canary"
+        with mock.patch.object(
+            VPS,
+            "_run_bounded",
+            return_value=SimpleNamespace(returncode=1, stdout=b"", stderr=b"private"),
+        ):
+            with self.assertRaisesRegex(
+                VPS.OperatorError,
+                "create the configured Docker-internal network and attach the private S3 gateway",
+            ) as raised:
+                VPS._validate_private_storage_network(private_name, os.environ)
+        self.assertNotIn(private_name, str(raised.exception))
 
 
 if __name__ == "__main__":

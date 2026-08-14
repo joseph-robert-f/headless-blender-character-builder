@@ -2,12 +2,17 @@
 
 ## Release boundary
 
-Headless Blender Character Builder has two public execution lanes around one
+Headless Blender Character Builder has two execution lanes around one
 trusted Blender build contract.
+
+> **v0.1 support boundary:** Lane A, used locally by one trusted user, is the
+> supported v0.1 product path. The loopback portion of Lane B is experimental;
+> its self-hosted/public form and all VPS or multi-tenant operation are future
+> design references outside v0.1 support.
 
 > The code and container definitions for both lanes are present. No container
 > image, GitHub Release, or hosted service is published yet. The VPS material
-> describes a production-oriented target architecture, not a currently
+> describes a future target architecture, not a v0.1-supported or currently
 > installable public deployment.
 
 ```text
@@ -131,7 +136,7 @@ New generator versions belong behind the existing registry and must add a
 schema, bounded implementation, structural evidence, QA policy, two materially
 different examples where appropriate, and fresh-process tests. Storage, queue,
 and state implementations remain behind service interfaces. Optional prompt
-planning and MCP are post-v0.1 adapters over the public JSON/API contract—not
+planning and MCP are post-v0.1 adapters over the versioned JSON/API contract—not
 alternate Blender execution engines.
 
 ## Repository map
@@ -142,7 +147,7 @@ alternate Blender execution engines.
 | `blender/`, `builder_cli/` | Trusted generator, exporters, QA, runner, and one-shot CLI |
 | `service/` | API, worker, persistence, queue, storage, and maintenance code |
 | `compose.yaml`, `compose/` | Local asynchronous stack and scoped local policies |
-| `deploy/vps/` | Production-oriented Compose overlay, Caddy, and operator examples |
+| `deploy/vps/` | Future VPS design reference: Compose overlay, Caddy, and operator examples |
 | `scripts/` | Trusted launchers, smoke/recovery gates, and release tooling |
 | `tests/` | Contract, unit, real-Blender, container, service, deployment, and release gates |
 | `docs/` | Categorized user/operator guides plus scope, evidence, and decision records |

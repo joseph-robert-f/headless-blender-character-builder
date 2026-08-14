@@ -22,15 +22,23 @@ printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
 if [ "${{1:-}}:${{2:-}}" = image:inspect ]; then
   shift 2
   format=
+  target=
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --format)
         shift
         format=${{1:-}}
         ;;
+      *)
+        target=$1
+        ;;
     esac
     shift
   done
+  if [ -n "${{FAKE_POSTGRES_IMAGE:-}}" ] && [ "$target" = "${{FAKE_POSTGRES_IMAGE:-}}" ]; then
+    [ -n "${{FAKE_POSTGRES_IMAGE_PRESENT:-}}" ] || exit 1
+    exit 0
+  fi
   case "$format" in
     '{{{{.Os}}}}/{{{{.Architecture}}}}|{{{{.Id}}}}')
       printf '%s|%s\n' "${{FAKE_IMAGE_PLATFORM:-linux/amd64}}" \
@@ -40,8 +48,18 @@ if [ "${{1:-}}:${{2:-}}" = image:inspect ]; then
   esac
   exit 0
 fi
+if [ "${{1:-}}:${{2:-}}" = volume:inspect ]; then
+  [ -n "${{FAKE_POSTGRES_VOLUME_PRESENT:-}}" ] || exit 1
+  exit 0
+fi
 case "${{1:-}}" in
-  build|run) exit 0 ;;
+  run)
+    case "$*" in
+      *--pids-limit*) exit "${{FAKE_POSTGRES_PROBE_STATUS:-0}}" ;;
+    esac
+    exit 0
+    ;;
+  build) exit 0 ;;
 esac
 printf '%s\n' 'unexpected fake Docker command' >&2
 exit 64
@@ -235,6 +253,7 @@ class ServiceComposeTests(unittest.TestCase):
         for variable in (
             "HBCB_API_HOST_PORT",
             "HBCB_STORAGE_HOST_PORT",
+            "HBCB_POSTGRES_IMAGE",
             "HBCB_MINIO_IMAGE",
             "HBCB_SERVICE_API_IMAGE",
             "HBCB_SERVICE_WORKER_IMAGE",
@@ -244,13 +263,24 @@ class ServiceComposeTests(unittest.TestCase):
         self.assertIn(
             "HBCB_STORAGE_PUBLIC_ENDPOINT:-localhost:9000", compose
         )
-        for maintained_server in (
-            "postgres:16.14-bookworm@sha256:"
-            "64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8",
-            "redis:8.2.8-bookworm@sha256:"
-            "2f7462b9e93e0a7ae2edf3a0a0babc8a4d29f8bfc50849b906b7caaef925edc1",
-        ):
-            self.assertIn(maintained_server, compose)
+        self.assertIn(
+            "redis:8.2.8-alpine3.22@sha256:"
+            "a7859ed111db3c1f5404a973a4747505d559fb5ca32d37e447afc0ef845a2103",
+            compose,
+        )
+        postgres_dockerfile = (ROOT / "docker" / "postgres.Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "postgres:16.14-alpine3.24@sha256:"
+            "57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
+            postgres_dockerfile,
+        )
+        self.assertIn("dockerfile: docker/postgres.Dockerfile", compose)
+        self.assertRegex(
+            compose,
+            r"(?ms)^  postgres:\n.*?^    user: \"70:70\"$",
+        )
         for redis_policy in (
             "appendonly yes",
             "appendfsync everysec",
@@ -524,6 +554,7 @@ class ServiceComposeTests(unittest.TestCase):
                 for line in compose_log.read_text(encoding="utf-8").splitlines()
             ]
             self.assertEqual(compose_commands, [
+                "--project-name hbcb-exact-source --env-file .env build postgres",
                 "--project-name hbcb-exact-source --env-file .env build minio",
                 "--project-name hbcb-exact-source --env-file .env build api",
                 "--project-name hbcb-exact-source --env-file .env build worker",
@@ -584,6 +615,86 @@ class ServiceComposeTests(unittest.TestCase):
             self.assertIn("API loopback port is unavailable", blocked.stdout)
             self.assertFalse(docker_log.exists())
             self.assertIn(" port api 8080", compose_log.read_text(encoding="utf-8"))
+
+    def postgres_probe_fixture(
+        self, root: Path, environment: dict[str, str], *, project: str = "hbcb-test-checkout"
+    ) -> dict[str, str]:
+        self.write_env(root, project=project)
+        selected = environment.copy()
+        selected["FAKE_POSTGRES_IMAGE"] = project + "-postgres:16.14-alpine3.24-hbcb.1"
+        return selected
+
+    def test_incompatible_postgres_volume_blocks_up_before_compose(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, docker_log, compose_log = self.fixture(root)
+            project = "hbcb-test-checkout"
+            environment = self.postgres_probe_fixture(root, environment, project=project)
+            environment.update(
+                {
+                    "FAKE_POSTGRES_IMAGE_PRESENT": "1",
+                    "FAKE_POSTGRES_VOLUME_PRESENT": "1",
+                    "FAKE_POSTGRES_PROBE_STATUS": "3",
+                }
+            )
+            completed = self.invoke(root, environment, "up")
+            self.assertEqual(completed.returncode, 7, completed.stdout)
+            self.assertIn(project + "_postgres-data", completed.stdout)
+            self.assertIn(
+                "troubleshooting.md#postgresql-image-upgrade-and-existing-volumes",
+                completed.stdout,
+            )
+            self.assertFalse(compose_log.exists())
+
+    def test_compatible_postgres_volume_lets_up_proceed_to_compose(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, docker_log, compose_log = self.fixture(root)
+            environment = self.postgres_probe_fixture(root, environment)
+            environment.update(
+                {
+                    "FAKE_POSTGRES_IMAGE_PRESENT": "1",
+                    "FAKE_POSTGRES_VOLUME_PRESENT": "1",
+                    "FAKE_POSTGRES_PROBE_STATUS": "0",
+                }
+            )
+            completed = self.invoke(root, environment, "up")
+            self.assertEqual(completed.returncode, 0, completed.stdout)
+            self.assertTrue(compose_log.exists())
+
+    def test_absent_postgres_volume_skips_probe_and_proceeds(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, docker_log, compose_log = self.fixture(root)
+            environment = self.postgres_probe_fixture(root, environment)
+            environment.update(
+                {
+                    "FAKE_POSTGRES_IMAGE_PRESENT": "1",
+                    # FAKE_POSTGRES_VOLUME_PRESENT intentionally unset.
+                    "FAKE_POSTGRES_PROBE_STATUS": "3",
+                }
+            )
+            completed = self.invoke(root, environment, "up")
+            self.assertEqual(completed.returncode, 0, completed.stdout)
+            docker_commands = docker_log.read_text(encoding="utf-8").splitlines()
+            self.assertFalse(any("--pids-limit" in command for command in docker_commands))
+            self.assertTrue(compose_log.exists())
+
+    def test_postgres_probe_infrastructure_error_fails_open(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, docker_log, compose_log = self.fixture(root)
+            environment = self.postgres_probe_fixture(root, environment)
+            environment.update(
+                {
+                    "FAKE_POSTGRES_IMAGE_PRESENT": "1",
+                    "FAKE_POSTGRES_VOLUME_PRESENT": "1",
+                    "FAKE_POSTGRES_PROBE_STATUS": "125",
+                }
+            )
+            completed = self.invoke(root, environment, "up")
+            self.assertEqual(completed.returncode, 0, completed.stdout)
+            self.assertTrue(compose_log.exists())
 
 
 if __name__ == "__main__":

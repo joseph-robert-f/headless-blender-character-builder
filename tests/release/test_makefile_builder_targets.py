@@ -147,6 +147,53 @@ class MakefileBuilderTargetTests(unittest.TestCase):
             )
             self.assertEqual(run[-2:], ["--output", "/output/custom-model"])
 
+    def test_inspect_uses_only_the_selected_regular_manifest(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="hbcb-make-inspect-") as temporary:
+            environment, docker, docker_log, request, build_parent = self.fixture(
+                temporary
+            )
+            output = build_parent / "custom-model"
+            output.mkdir(parents=True)
+            manifest = output / "manifest.json"
+            manifest.write_text("{}\n", encoding="utf-8")
+            inspected = self.run_make(
+                "inspect",
+                environment=environment,
+                docker=docker,
+                request=request,
+                build_parent=build_parent,
+                output_name="custom-model",
+            )
+            self.assertEqual(inspected.returncode, 0, inspected.stdout)
+            records = [
+                line.split("\t")
+                for line in docker_log.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual([record[0] for record in records], ["build", "run"])
+            run = records[-1]
+            self.assertIn(
+                f"type=bind,source={manifest},target=/input/manifest.json,readonly",
+                run,
+            )
+            self.assertEqual(
+                run[-3:],
+                ["inspect-manifest", "--manifest", "/input/manifest.json"],
+            )
+
+            docker_log.unlink()
+            manifest.unlink()
+            rejected = self.run_make(
+                "inspect",
+                environment=environment,
+                docker=docker,
+                request=request,
+                build_parent=build_parent,
+                output_name="custom-model",
+            )
+            self.assertEqual(rejected.returncode, 2, rejected.stdout)
+            self.assertIn("HBCB_MAKE: FAIL[manifest_missing]", rejected.stdout)
+            self.assertFalse(docker_log.exists())
+
     def test_repository_relative_request_is_normalized_for_docker_mounts(self) -> None:
         environment = os.environ.copy()
         environment.pop("OUTPUT_NAME", None)

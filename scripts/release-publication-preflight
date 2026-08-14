@@ -1,0 +1,2181 @@
+#!/usr/bin/env python3
+"""Fail-closed local identity check immediately before release publication."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import io
+import json
+import os
+import re
+import signal
+import stat
+import subprocess
+import sys
+import tarfile
+import time
+from pathlib import Path, PurePosixPath
+from typing import Callable, Dict, Mapping, Optional, Sequence
+
+
+ROOT = Path(__file__).resolve().parents[1]
+MAX_JSON_BYTES = 4 * 1024 * 1024
+MAX_CHECKSUM_BYTES = 1024 * 1024
+MAX_ARTIFACT_BYTES = 256 * 1024 * 1024
+MAX_SOURCE_BYTES = 5 * 1024 * 1024
+COMMAND_TIMEOUT_SECONDS = 60.0
+PROCESS_TERM_GRACE_SECONDS = 0.25
+PROCESS_KILL_GRACE_SECONDS = 1.0
+PROCESS_GROUP_POLL_SECONDS = 0.02
+PROCESS_SIGNAL_POLL_SECONDS = 0.1
+SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
+GIT_OID = re.compile(r"^[0-9a-f]{40,64}$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
+SAFE_TOOL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
+REGISTRY_OWNER = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$")
+CANONICAL_SOURCE_URL = (
+    "https://github.com/joseph-robert-f/headless-blender-character-builder"
+)
+OFFICIAL_BLENDER_SOURCE_PREFIX = "https://download.blender.org/source/"
+IMAGE_TAGS = {
+    "api": "headless-blender-character-builder-api",
+    "builder": "headless-blender-character-builder",
+    "worker": "headless-blender-character-builder-worker",
+}
+PUBLICATION_FIELDS = {
+    "delivery_method",
+    "public_oci_ready",
+    "publication_gate",
+    "retention",
+    "scope",
+}
+IMAGE_RECORD_FIELDS = {
+    "architecture",
+    "expected_public_tag",
+    "image_id",
+    "labels",
+    "os",
+    "published_digest",
+    "rootfs_layers",
+}
+IMAGE_METADATA_FIELDS = {
+    "distribution_version",
+    "format",
+    "images",
+    "platform",
+    "source_revision",
+}
+SOURCE_INVENTORY_FIELDS = {
+    "delivery_method",
+    "distribution_version",
+    "format",
+    "images",
+    "materials",
+    "public_oci_ready",
+    "publication_gate",
+    "retention",
+    "scope",
+    "source_revision",
+}
+SOURCE_MATERIAL_FIELDS = {
+    "artifact",
+    "bytes",
+    "license",
+    "origin",
+    "sha256",
+    "version",
+}
+SOURCE_POLICY_FIELDS = {"blender", "format", "publication"}
+BLENDER_POLICY_FIELDS = {
+    "archive",
+    "bytes",
+    "license",
+    "official_md5",
+    "sha256",
+    "source_url",
+    "version",
+}
+SOURCE_AUDIT_FIELDS = {
+    "asset_license",
+    "file_count",
+    "files",
+    "format",
+    "git_head",
+    "git_index_sha256",
+    "source_license",
+    "source_tree_sha256",
+    "total_bytes",
+}
+SOURCE_AUDIT_FILE_FIELDS = {"bytes", "git_mode", "path", "sha256"}
+SOURCE_IMAGE_FIELDS = {"image_id", "materials", "notices", "sbom"}
+SOURCE_IMAGE_MATERIALS = {
+    "api": ["project-source"],
+    "builder": ["blender-source", "project-source"],
+    "worker": ["blender-source", "project-source"],
+}
+SOURCE_IMAGE_NOTICES = {
+    "api": ["SERVICE_THIRD_PARTY_NOTICES.txt"],
+    "builder": ["BLENDER_SOURCE_NOTICE.md"],
+    "worker": ["BLENDER_SOURCE_NOTICE.md", "SERVICE_THIRD_PARTY_NOTICES.txt"],
+}
+REQUIRED_SAMPLE_ARTIFACTS = {
+    "sample/diagnostics/back.png",
+    "sample/diagnostics/front.png",
+    "sample/diagnostics/side.png",
+    "sample/manifest.json",
+    "sample/model.blend",
+    "sample/model.glb",
+    "sample/model.stl",
+    "sample/preview.png",
+    "sample/qa.json",
+}
+REQUIRED_STATIC_ARTIFACTS = {
+    "BLENDER_SOURCE_NOTICE.md",
+    "SERVICE_THIRD_PARTY_NOTICES.txt",
+    "api.spdx.json",
+    "builder.spdx.json",
+    "corresponding-source.json",
+    "image-metadata.json",
+    "source-audit.json",
+    "worker.spdx.json",
+} | REQUIRED_SAMPLE_ARTIFACTS
+COMMON_LABEL_FIELDS = {
+    "org.opencontainers.image.licenses",
+    "org.opencontainers.image.revision",
+    "org.opencontainers.image.source",
+    "org.opencontainers.image.title",
+    "org.opencontainers.image.version",
+}
+BUILDER_LABEL_FIELDS = COMMON_LABEL_FIELDS | {
+    "org.blender.download.sha256",
+    "org.blender.download.url",
+    "org.blender.version",
+    "org.opencontainers.image.base.digest",
+    "org.opencontainers.image.base.name",
+    "org.opencontainers.image.description",
+}
+IMAGE_LABEL_FIELDS = {
+    "api": COMMON_LABEL_FIELDS,
+    "builder": BUILDER_LABEL_FIELDS,
+    "worker": BUILDER_LABEL_FIELDS | {"io.hbcb.builder.contract"},
+}
+BUILDER_LABEL_VALUES = {
+    "org.blender.download.sha256": "95e3a2dfedba3bd32ca54fc355eac6b15a11986954ccb02815a07535d0120a25",
+    "org.blender.download.url": "https://download.blender.org/release/Blender4.5/blender-4.5.12-linux-x64.tar.xz",
+    "org.blender.version": "4.5.12 LTS",
+    "org.opencontainers.image.base.digest": "sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241",
+    "org.opencontainers.image.base.name": "debian:bookworm-20260803-slim",
+    "org.opencontainers.image.description": "Deterministic, headless Blender 4.5 LTS character builder",
+}
+ROLE_LABEL_VALUES = {
+    "api": {"org.opencontainers.image.title": "Headless Blender Character Builder service"},
+    "builder": {
+        **BUILDER_LABEL_VALUES,
+        "org.opencontainers.image.title": "Headless Blender Character Builder",
+    },
+    "worker": {
+        **BUILDER_LABEL_VALUES,
+        "io.hbcb.builder.contract": "complete-v1",
+        "org.opencontainers.image.title": "Headless Blender Character Builder supervisor",
+    },
+}
+
+
+class PreflightFailure(RuntimeError):
+    """A bounded, safe-to-display publication-preflight failure."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code) is None:
+            code = "invalid_preflight_failure"
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
+class _FinalizationInterrupted(BaseException):
+    """A CLI-default signal deferred until finalization cleanup completes."""
+
+    def __init__(self, signum: int) -> None:
+        self.signum = int(signum)
+        super().__init__("interrupted")
+
+
+_ACTIVE_FINALIZATION_GUARD: Optional["_FinalizationSignalGuard"] = None
+
+
+class _FinalizationSignalGuard:
+    def __init__(self) -> None:
+        self.received: Optional[int] = None
+        self.previous: Dict[int, object] = {}
+        self.installed = set()
+        self.delegate: Optional["_FinalizationSignalGuard"] = None
+
+    def _record(self, signum: int, _frame: object) -> None:
+        if self.received is None:
+            self.received = int(signum)
+
+    def __enter__(self) -> "_FinalizationSignalGuard":
+        global _ACTIVE_FINALIZATION_GUARD
+        if _ACTIVE_FINALIZATION_GUARD is not None:
+            self.delegate = _ACTIVE_FINALIZATION_GUARD
+            return self
+        _ACTIVE_FINALIZATION_GUARD = self
+        for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+            previous = signal.getsignal(signum)
+            self.previous[signum] = previous
+            if previous == signal.SIG_DFL or (
+                signum == signal.SIGINT and previous == signal.default_int_handler
+            ):
+                signal.signal(signum, self._record)
+                self.installed.add(signum)
+        return self
+
+    def raise_if_pending(self) -> None:
+        received = self.delegate.received if self.delegate is not None else self.received
+        if received is not None:
+            raise _FinalizationInterrupted(received)
+
+    def __exit__(self, kind: object, _value: object, _traceback: object) -> None:
+        global _ACTIVE_FINALIZATION_GUARD
+        if self.delegate is not None:
+            if kind is None:
+                self.raise_if_pending()
+            return
+        for signum in self.installed:
+            signal.signal(signum, self.previous[signum])
+        if _ACTIVE_FINALIZATION_GUARD is self:
+            _ACTIVE_FINALIZATION_GUARD = None
+        if kind is None:
+            self.raise_if_pending()
+
+
+def _strict_object(pairs: Sequence[tuple[str, object]]) -> Dict[str, object]:
+    result: Dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate key")
+        result[key] = value
+    return result
+
+
+def _read_regular(path: Path, maximum: int) -> bytes:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        raise PreflightFailure("input_unavailable", "required release input is unavailable") from None
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise PreflightFailure("unsafe_input", "required release input is not a regular file")
+    if metadata.st_size <= 0 or metadata.st_size > maximum:
+        raise PreflightFailure("input_size_invalid", "required release input is outside size policy")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(str(path), flags)
+        with os.fdopen(descriptor, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if (
+                opened.st_dev != metadata.st_dev
+                or opened.st_ino != metadata.st_ino
+                or opened.st_size != metadata.st_size
+                or not stat.S_ISREG(opened.st_mode)
+            ):
+                raise PreflightFailure("input_changed", "required release input changed during preflight")
+            payload = stream.read(maximum + 1)
+            after = os.fstat(stream.fileno())
+    except OSError:
+        raise PreflightFailure("input_unreadable", "required release input cannot be read") from None
+    opened_identity = (
+        opened.st_dev,
+        opened.st_ino,
+        opened.st_size,
+        opened.st_mtime_ns,
+        opened.st_ctime_ns,
+    )
+    after_identity = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+    if len(payload) != metadata.st_size or after_identity != opened_identity:
+        raise PreflightFailure("input_changed", "required release input changed during preflight")
+    return payload
+
+
+def _json_payload(payload: bytes) -> Mapping[str, object]:
+    try:
+        value = json.loads(
+            payload.decode("utf-8", "strict"),
+            object_pairs_hook=_strict_object,
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("constant")),
+        )
+    except (UnicodeError, ValueError, RecursionError):
+        raise PreflightFailure("invalid_json", "release metadata is not canonical JSON") from None
+    if not isinstance(value, dict):
+        raise PreflightFailure("invalid_json", "release metadata root is not an object")
+    canonical = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode(
+        "utf-8"
+    )
+    if payload != canonical:
+        raise PreflightFailure("invalid_json", "release metadata is not canonical JSON")
+    return value
+
+
+def _json_file(path: Path) -> Mapping[str, object]:
+    return _json_payload(_read_regular(path, MAX_JSON_BYTES))
+
+
+def _source_policy(payload: bytes) -> Mapping[str, object]:
+    """Parse one bounded, duplicate-free corresponding-source policy blob."""
+    try:
+        document = json.loads(
+            payload.decode("utf-8", "strict"),
+            object_pairs_hook=_strict_object,
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("constant")),
+        )
+    except (UnicodeError, ValueError, RecursionError):
+        raise PreflightFailure(
+            "publication_policy_invalid", "tracked publication policy is invalid JSON"
+        ) from None
+    if not isinstance(document, dict):
+        raise PreflightFailure(
+            "publication_policy_invalid", "tracked publication policy is invalid"
+        )
+    publication = document.get("publication")
+    blender = document.get("blender")
+    if (
+        set(document) != SOURCE_POLICY_FIELDS
+        or document.get("format") != "hbcb-corresponding-source-policy/v1"
+        or not isinstance(blender, dict)
+        or set(blender) != BLENDER_POLICY_FIELDS
+        or not isinstance(publication, dict)
+        or set(publication) != PUBLICATION_FIELDS
+        or publication.get("delivery_method") != "co-published-release-assets"
+        or type(publication.get("public_oci_ready")) is not bool
+        or publication.get("publication_gate")
+        not in {
+            "blocked-pending-complete-copyleft-source-review",
+            "reviewed-complete-source-delivery",
+        }
+        or publication.get("public_oci_ready")
+        != (publication.get("publication_gate") == "reviewed-complete-source-delivery")
+        or publication.get("retention")
+        != "retain-with-each-public-image-version-for-its-public-lifetime"
+        or publication.get("scope")
+        not in {"project-and-blender-source-only", "complete-reviewed-image-source"}
+        or publication.get("public_oci_ready")
+        != (publication.get("scope") == "complete-reviewed-image-source")
+    ):
+        raise PreflightFailure(
+            "publication_policy_invalid",
+            "tracked publication policy is invalid or internally inconsistent",
+        )
+    blender_version = blender.get("version")
+    blender_archive = blender.get("archive")
+    if (
+        not isinstance(blender_version, str)
+        or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", blender_version) is None
+        or blender_archive != "blender-" + blender_version + ".tar.xz"
+        or blender.get("source_url")
+        != OFFICIAL_BLENDER_SOURCE_PREFIX + str(blender_archive)
+        or blender.get("license") != "GPL-3.0-or-later"
+        or type(blender.get("bytes")) is not int
+        or not 0 < blender["bytes"] <= MAX_ARTIFACT_BYTES
+        or not isinstance(blender.get("sha256"), str)
+        or SHA256.fullmatch(blender["sha256"]) is None
+        or not isinstance(blender.get("official_md5"), str)
+        or re.fullmatch(r"[0-9a-f]{32}", blender["official_md5"]) is None
+    ):
+        raise PreflightFailure(
+            "publication_policy_invalid", "tracked Blender source policy is invalid"
+        )
+    return {"blender": blender, "publication": publication}
+
+
+def _publication_policy(payload: bytes) -> Mapping[str, object]:
+    policy = _source_policy(payload)
+    publication = policy["publication"]
+    assert isinstance(publication, dict)
+    return publication
+
+
+def _tracked_blob(
+    repo: Path, git: str, revision: str, path: str, maximum: int
+) -> bytes:
+    if (
+        GIT_OID.fullmatch(revision) is None
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,255}", path) is None
+        or path.startswith("/")
+        or ".." in PurePosixPath(path).parts
+    ):
+        raise PreflightFailure("git_identity_invalid", "tracked release path is invalid")
+    return _command(
+        (git, "--no-pager", "show", "--no-textconv", revision + ":" + path),
+        cwd=repo,
+        maximum=maximum,
+    )
+
+
+def current_publication_policy(
+    repo: Path, git: str = "git", revision: Optional[str] = None
+) -> Mapping[str, object]:
+    """Read the reviewed publication decision from the exact commit blob."""
+
+    if revision is None:
+        payload = _read_regular(
+            repo / "release" / "corresponding-source-policy.json", MAX_JSON_BYTES
+        )
+    else:
+        payload = _tracked_blob(
+            repo,
+            git,
+            revision,
+            "release/corresponding-source-policy.json",
+            MAX_JSON_BYTES,
+        )
+    return _publication_policy(payload)
+
+
+def _safe_checksum_path(value: str) -> PurePosixPath:
+    if (
+        not value
+        or "\\" in value
+        or value != str(PurePosixPath(value))
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise PreflightFailure("unsafe_checksum_path", "release checksum path is unsafe")
+    path = PurePosixPath(value)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise PreflightFailure("unsafe_checksum_path", "release checksum path escapes the bundle")
+    return path
+
+
+def verify_checksums(release_dir: Path) -> Mapping[str, tuple[int, str]]:
+    payload = _read_regular(release_dir / "SHA256SUMS", MAX_CHECKSUM_BYTES)
+    try:
+        text = payload.decode("ascii", "strict")
+    except UnicodeError:
+        raise PreflightFailure("invalid_checksums", "release checksum file is not ASCII") from None
+    records: Dict[str, tuple[int, str]] = {}
+    for line in text.splitlines():
+        if len(line) < 67 or line[64:66] != "  ":
+            raise PreflightFailure("invalid_checksums", "release checksum record is malformed")
+        digest, name = line[:64], line[66:]
+        if SHA256.fullmatch(digest) is None or name in records:
+            raise PreflightFailure("invalid_checksums", "release checksum record is invalid")
+        relative = _safe_checksum_path(name)
+        candidate = release_dir.joinpath(*relative.parts)
+        content = _read_regular(candidate, MAX_ARTIFACT_BYTES)
+        if hashlib.sha256(content).hexdigest() != digest:
+            raise PreflightFailure("checksum_mismatch", "release artifact checksum mismatch")
+        records[name] = (len(content), digest)
+    required = {
+        "corresponding-source.json",
+        "image-metadata.json",
+        "release-metadata.json",
+    }
+    if not required.issubset(records):
+        raise PreflightFailure("checksums_incomplete", "release identity metadata is not checksum-bound")
+    actual = set()
+    try:
+        entries = list(release_dir.rglob("*"))
+    except OSError:
+        raise PreflightFailure("release_unavailable", "release directory cannot be inventoried") from None
+    if len(entries) > 4096:
+        raise PreflightFailure("release_too_large", "release directory contains too many entries")
+    for entry in entries:
+        try:
+            metadata = entry.lstat()
+        except OSError:
+            raise PreflightFailure("input_changed", "release directory changed during preflight") from None
+        if entry.is_symlink() or not (stat.S_ISREG(metadata.st_mode) or stat.S_ISDIR(metadata.st_mode)):
+            raise PreflightFailure("unsafe_input", "release directory contains an unsafe entry")
+        if stat.S_ISREG(metadata.st_mode):
+            actual.add(entry.relative_to(release_dir).as_posix())
+    if actual != set(records) | {"SHA256SUMS"}:
+        raise PreflightFailure("checksums_incomplete", "release file set differs from SHA256SUMS")
+    return records
+
+
+def _verify_release_artifact_inventory(
+    release_dir: Path,
+    release_metadata: Mapping[str, object],
+    checksummed: Mapping[str, tuple[int, str]],
+) -> Mapping[str, tuple[int, str]]:
+    raw_artifacts = release_metadata.get("artifacts")
+    if not isinstance(raw_artifacts, list) or len(raw_artifacts) > 4096:
+        raise PreflightFailure("identity_mismatch", "release artifact inventory is invalid")
+    records: Dict[str, tuple[int, str]] = {}
+    for raw in raw_artifacts:
+        if not isinstance(raw, dict) or set(raw) != {"bytes", "name", "sha256"}:
+            raise PreflightFailure("identity_mismatch", "release artifact inventory is invalid")
+        name = raw.get("name")
+        byte_count = raw.get("bytes")
+        digest = raw.get("sha256")
+        if (
+            not isinstance(name, str)
+            or name in records
+            or name in {"SHA256SUMS", "release-metadata.json"}
+            or type(byte_count) is not int
+            or not 0 < byte_count <= MAX_ARTIFACT_BYTES
+            or not isinstance(digest, str)
+            or SHA256.fullmatch(digest) is None
+        ):
+            raise PreflightFailure("identity_mismatch", "release artifact inventory is invalid")
+        # Still enforced even though the bytes below come from the
+        # checksummed map rather than a second read of this path.
+        _safe_checksum_path(name)
+        if checksummed.get(name) != (byte_count, digest):
+            raise PreflightFailure(
+                "identity_mismatch", "release artifact inventory differs from bundled bytes"
+            )
+        records[name] = (byte_count, digest)
+    # verify_checksums already swept release_dir and proved the on-disk file
+    # set equals its own checksummed names plus SHA256SUMS; re-derive the
+    # inventory's set relationship from that map instead of walking the
+    # directory again.
+    if set(records) != set(checksummed) - {"release-metadata.json"}:
+        raise PreflightFailure(
+            "identity_mismatch", "release artifact inventory is incomplete"
+        )
+    return records
+
+
+def _verify_corresponding_source_inventory(
+    source_inventory: Mapping[str, object],
+    artifact_records: Mapping[str, tuple[int, str]],
+    version: str,
+    revision: str,
+    source_policy: Optional[Mapping[str, object]] = None,
+) -> None:
+    if (
+        set(source_inventory) != SOURCE_INVENTORY_FIELDS
+        or source_inventory.get("format")
+        != "hbcb-corresponding-source-inventory/v1"
+        or source_inventory.get("distribution_version") != version
+        or source_inventory.get("source_revision") != revision
+        or source_inventory.get("delivery_method") != "co-published-release-assets"
+        or type(source_inventory.get("public_oci_ready")) is not bool
+        or source_inventory.get("publication_gate")
+        not in {
+            "blocked-pending-complete-copyleft-source-review",
+            "reviewed-complete-source-delivery",
+        }
+        or source_inventory.get("public_oci_ready")
+        != (
+            source_inventory.get("publication_gate")
+            == "reviewed-complete-source-delivery"
+        )
+        or source_inventory.get("retention")
+        != "retain-with-each-public-image-version-for-its-public-lifetime"
+        or source_inventory.get("scope")
+        not in {"project-and-blender-source-only", "complete-reviewed-image-source"}
+        or source_inventory.get("public_oci_ready")
+        != (source_inventory.get("scope") == "complete-reviewed-image-source")
+    ):
+        raise PreflightFailure(
+            "identity_mismatch", "corresponding-source inventory is invalid"
+        )
+
+    materials = source_inventory.get("materials")
+    if not isinstance(materials, dict) or set(materials) != {
+        "blender-source",
+        "project-source",
+    }:
+        raise PreflightFailure(
+            "identity_mismatch", "corresponding-source materials are incomplete"
+        )
+    material_artifacts: Dict[str, str] = {}
+    for material_name in ("blender-source", "project-source"):
+        record = materials.get(material_name)
+        if not isinstance(record, dict) or set(record) != SOURCE_MATERIAL_FIELDS:
+            raise PreflightFailure(
+                "identity_mismatch", "corresponding-source material record is invalid"
+            )
+        artifact = record.get("artifact")
+        byte_count = record.get("bytes")
+        digest = record.get("sha256")
+        material_version = record.get("version")
+        if (
+            not isinstance(artifact, str)
+            or type(byte_count) is not int
+            or not 0 < byte_count <= MAX_ARTIFACT_BYTES
+            or not isinstance(digest, str)
+            or SHA256.fullmatch(digest) is None
+            or not isinstance(material_version, str)
+            or SEMVER.fullmatch(material_version) is None
+            or record.get("license") != "GPL-3.0-or-later"
+        ):
+            raise PreflightFailure(
+                "identity_mismatch", "corresponding-source material record is invalid"
+            )
+        relative = _safe_checksum_path(artifact)
+        if len(relative.parts) != 1:
+            raise PreflightFailure(
+                "identity_mismatch", "corresponding-source material path is invalid"
+            )
+        if material_name == "project-source":
+            expected_artifact = (
+                "headless-blender-character-builder-" + version + ".tar.gz"
+            )
+            expected_origin = CANONICAL_SOURCE_URL
+            expected_version = version
+        else:
+            expected_artifact = "blender-" + material_version + ".tar.xz"
+            expected_origin = OFFICIAL_BLENDER_SOURCE_PREFIX + expected_artifact
+            expected_version = material_version
+        if (
+            artifact != expected_artifact
+            or record.get("origin") != expected_origin
+            or material_version != expected_version
+            or artifact_records.get(artifact) != (byte_count, digest)
+        ):
+            raise PreflightFailure(
+                "identity_mismatch",
+                "corresponding-source material differs from the bundled artifact",
+            )
+        material_artifacts[material_name] = artifact
+
+    if source_policy is not None:
+        blender_policy = source_policy.get("blender")
+        publication_policy = source_policy.get("publication")
+        blender_material = materials["blender-source"]
+        assert isinstance(blender_material, dict)
+        if (
+            not isinstance(blender_policy, dict)
+            or set(blender_policy) != BLENDER_POLICY_FIELDS
+            or not isinstance(publication_policy, dict)
+            or any(
+                source_inventory.get(field) != publication_policy.get(field)
+                for field in PUBLICATION_FIELDS
+            )
+            or blender_material.get("artifact") != blender_policy.get("archive")
+            or blender_material.get("bytes") != blender_policy.get("bytes")
+            or blender_material.get("license") != blender_policy.get("license")
+            or blender_material.get("origin") != blender_policy.get("source_url")
+            or blender_material.get("sha256") != blender_policy.get("sha256")
+            or blender_material.get("version") != blender_policy.get("version")
+        ):
+            raise PreflightFailure(
+                "identity_mismatch",
+                "Blender source material differs from the tracked policy",
+            )
+
+    images = source_inventory.get("images")
+    if not isinstance(images, dict) or set(images) != set(IMAGE_TAGS):
+        raise PreflightFailure(
+            "identity_mismatch", "corresponding-source image inventory is incomplete"
+        )
+    referenced_artifacts = set(material_artifacts.values())
+    for role in sorted(IMAGE_TAGS):
+        record = images.get(role)
+        expected_sbom = role + ".spdx.json"
+        if (
+            not isinstance(record, dict)
+            or set(record) != SOURCE_IMAGE_FIELDS
+            or not isinstance(record.get("image_id"), str)
+            or IMAGE_ID.fullmatch(record["image_id"]) is None
+            or record.get("materials") != SOURCE_IMAGE_MATERIALS[role]
+            or record.get("notices") != SOURCE_IMAGE_NOTICES[role]
+            or record.get("sbom") != expected_sbom
+        ):
+            raise PreflightFailure(
+                "identity_mismatch", "corresponding-source image record is invalid"
+            )
+        referenced_artifacts.add(expected_sbom)
+        referenced_artifacts.update(SOURCE_IMAGE_NOTICES[role])
+
+    project_archive = "headless-blender-character-builder-" + version + ".tar.gz"
+    sample_archive = (
+        "headless-blender-character-builder-" + version + "-sample.tar.gz"
+    )
+    required_artifacts = (
+        REQUIRED_STATIC_ARTIFACTS
+        | referenced_artifacts
+        | {project_archive, sample_archive}
+    )
+    if not required_artifacts.issubset(artifact_records):
+        raise PreflightFailure(
+            "identity_mismatch", "required release artifacts are incomplete"
+        )
+
+
+def _source_audit_records(
+    report: Mapping[str, object], revision: str, index_digest: Optional[str]
+) -> Mapping[str, tuple[str, int, str]]:
+    if (
+        set(report) != SOURCE_AUDIT_FIELDS
+        or report.get("format") != "hbcb-release-audit/v1"
+        or report.get("git_head") != revision
+        or report.get("source_license") != "GPL-3.0-or-later"
+        or report.get("asset_license") != "CC0-1.0"
+        or (
+            index_digest is not None
+            and report.get("git_index_sha256") != index_digest
+        )
+        or not isinstance(report.get("git_index_sha256"), str)
+        or SHA256.fullmatch(report["git_index_sha256"]) is None
+        or not isinstance(report.get("source_tree_sha256"), str)
+        or SHA256.fullmatch(report["source_tree_sha256"]) is None
+    ):
+        raise PreflightFailure("identity_mismatch", "source audit identity is invalid")
+    raw_files = report.get("files")
+    if not isinstance(raw_files, list) or not 1 <= len(raw_files) <= 4096:
+        raise PreflightFailure("identity_mismatch", "source audit inventory is invalid")
+    records: Dict[str, tuple[str, int, str]] = {}
+    tree_digest = hashlib.sha256()
+    total_bytes = 0
+    previous = b""
+    for raw in raw_files:
+        if not isinstance(raw, dict) or set(raw) != SOURCE_AUDIT_FILE_FIELDS:
+            raise PreflightFailure("identity_mismatch", "source audit record is invalid")
+        path = raw.get("path")
+        mode = raw.get("git_mode")
+        byte_count = raw.get("bytes")
+        digest = raw.get("sha256")
+        if not isinstance(path, str):
+            raise PreflightFailure("identity_mismatch", "source audit path is invalid")
+        relative = _safe_checksum_path(path)
+        encoded = path.encode("utf-8")
+        if (
+            ".git" in relative.parts
+            or encoded <= previous
+            or path in records
+            or mode not in {"100644", "100755"}
+            or type(byte_count) is not int
+            or not 0 <= byte_count <= MAX_ARTIFACT_BYTES
+            or not isinstance(digest, str)
+            or SHA256.fullmatch(digest) is None
+        ):
+            raise PreflightFailure("identity_mismatch", "source audit record is invalid")
+        tree_digest.update(
+            mode.encode("ascii")
+            + b"\0"
+            + encoded
+            + b"\0"
+            + str(byte_count).encode("ascii")
+            + b"\0"
+            + digest.encode("ascii")
+            + b"\n"
+        )
+        records[path] = (mode, byte_count, digest)
+        total_bytes += byte_count
+        previous = encoded
+    if (
+        type(report.get("file_count")) is not int
+        or report.get("file_count") != len(records)
+        or type(report.get("total_bytes")) is not int
+        or report.get("total_bytes") != total_bytes
+        or total_bytes > MAX_ARTIFACT_BYTES
+        or report.get("source_tree_sha256") != tree_digest.hexdigest()
+    ):
+        raise PreflightFailure("identity_mismatch", "source audit totals are invalid")
+    return records
+
+
+def _tracked_source_records(
+    repo: Path, git: str, revision: str
+) -> Mapping[str, tuple[str, int, str]]:
+    archive_payload = _command(
+        (git, "archive", "--format=tar", revision),
+        cwd=repo,
+        maximum=MAX_ARTIFACT_BYTES,
+    )
+    records: Dict[str, tuple[str, int, str]] = {}
+    total_bytes = 0
+    member_count = 0
+    try:
+        with tarfile.open(fileobj=io.BytesIO(archive_payload), mode="r:") as archive:
+            for member in archive:
+                member_count += 1
+                if member_count > 8192:
+                    raise PreflightFailure(
+                        "git_identity_invalid", "tracked source tree has too many entries"
+                    )
+                path = member.name.rstrip("/")
+                relative = _safe_checksum_path(path)
+                if ".git" in relative.parts:
+                    raise PreflightFailure(
+                        "git_identity_invalid", "tracked source path is invalid"
+                    )
+                if member.isdir():
+                    continue
+                if (
+                    not member.isfile()
+                    or (member.mode & 0o111) not in {0, 0o111}
+                    or member.size < 0
+                    or member.size > MAX_SOURCE_BYTES
+                    or path in records
+                ):
+                    raise PreflightFailure(
+                        "git_identity_invalid", "tracked source record is invalid"
+                    )
+                stream = archive.extractfile(member)
+                if stream is None:
+                    raise PreflightFailure(
+                        "git_identity_invalid", "tracked source record is unreadable"
+                    )
+                blob = stream.read(member.size + 1)
+                total_bytes += len(blob)
+                if len(blob) != member.size or total_bytes > MAX_ARTIFACT_BYTES:
+                    raise PreflightFailure(
+                        "git_identity_invalid", "tracked source tree is too large"
+                    )
+                records[path] = (
+                    "100755" if member.mode & 0o111 else "100644",
+                    len(blob),
+                    hashlib.sha256(blob).hexdigest(),
+                )
+    except (OSError, tarfile.TarError):
+        raise PreflightFailure(
+            "git_identity_invalid", "tracked source archive is invalid"
+        ) from None
+    if not records:
+        raise PreflightFailure("git_identity_invalid", "tracked source tree is empty")
+    return records
+
+
+def _archive_member_path(name: str, prefix: str) -> Optional[str]:
+    if name == prefix or name == prefix + "/":
+        return None
+    marker = prefix + "/"
+    if not name.startswith(marker):
+        raise PreflightFailure("identity_mismatch", "release archive path is invalid")
+    relative = name[len(marker) :].rstrip("/")
+    _safe_checksum_path(relative)
+    return relative
+
+
+def _verify_project_archive(
+    release_dir: Path,
+    version: str,
+    records: Mapping[str, tuple[str, int, str]],
+) -> None:
+    prefix = "headless-blender-character-builder-" + version
+    path = release_dir / (prefix + ".tar.gz")
+    archive_payload = _read_regular(path, MAX_ARTIFACT_BYTES)
+    expected_directories = {
+        parent.as_posix()
+        for path_name in records
+        for parent in PurePosixPath(path_name).parents
+        if parent.as_posix() != "."
+    }
+    try:
+        with tarfile.open(fileobj=io.BytesIO(archive_payload), mode="r:gz") as archive:
+            actual: Dict[str, tuple[str, int, str]] = {}
+            actual_directories = set()
+            root_seen = False
+            member_count = 0
+            for member in archive:
+                member_count += 1
+                if member_count > len(records) * 4 + 1:
+                    raise PreflightFailure(
+                        "identity_mismatch", "project source archive is invalid"
+                    )
+                relative = _archive_member_path(member.name, prefix)
+                if relative is None:
+                    if not member.isdir() or member.mode != 0o755 or root_seen:
+                        raise PreflightFailure(
+                            "identity_mismatch", "project source archive root is invalid"
+                        )
+                    root_seen = True
+                    continue
+                if member.isdir():
+                    if member.mode != 0o755 or relative in actual_directories:
+                        raise PreflightFailure(
+                            "identity_mismatch", "project source archive directory is invalid"
+                        )
+                    actual_directories.add(relative)
+                    continue
+                if not member.isfile() or relative in actual:
+                    raise PreflightFailure(
+                        "identity_mismatch", "project source archive type is invalid"
+                    )
+                expected = records.get(relative)
+                if expected is None or member.size != expected[1]:
+                    raise PreflightFailure(
+                        "identity_mismatch", "project source archive differs from audit"
+                    )
+                stream = archive.extractfile(member)
+                if stream is None:
+                    raise PreflightFailure(
+                        "identity_mismatch", "project source archive is unreadable"
+                    )
+                payload = stream.read(expected[1] + 1)
+                mode = "100755" if member.mode & 0o111 else "100644"
+                if (
+                    len(payload) != expected[1]
+                    or mode != expected[0]
+                    or member.mode not in {0o644, 0o755}
+                    or hashlib.sha256(payload).hexdigest() != expected[2]
+                ):
+                    raise PreflightFailure(
+                        "identity_mismatch", "project source archive differs from audit"
+                    )
+                actual[relative] = expected
+    except (OSError, tarfile.TarError):
+        raise PreflightFailure(
+            "identity_mismatch", "project source archive is unreadable"
+        ) from None
+    if (
+        not root_seen
+        or set(actual) != set(records)
+        or actual_directories != expected_directories
+    ):
+        raise PreflightFailure(
+            "identity_mismatch", "project source archive file set is incomplete"
+        )
+
+
+def _verify_sample_bundle(
+    release_dir: Path,
+    artifact_records: Mapping[str, tuple[int, str]],
+    release_metadata: Mapping[str, object],
+    version: str,
+    builder_image_id: object,
+) -> None:
+    sample_names = {name[len("sample/") :] for name in REQUIRED_SAMPLE_ARTIFACTS}
+    manifest_payload = _read_regular(
+        release_dir / "sample" / "manifest.json", MAX_JSON_BYTES
+    )
+    manifest = _json_payload(manifest_payload)
+    qa = _json_file(release_dir / "sample" / "qa.json")
+    hashed_names = sample_names - {"manifest.json"}
+    described = manifest.get("artifacts")
+    execution = manifest.get("execution")
+    manifest_qa = manifest.get("qa")
+    if (
+        release_metadata.get("sample_manifest_sha256")
+        != hashlib.sha256(manifest_payload).hexdigest()
+        or manifest.get("manifest_version") != "manifest/v1"
+        or not isinstance(described, dict)
+        or set(described) != hashed_names
+        or not isinstance(execution, dict)
+        or execution.get("mode") != "container"
+        or execution.get("worker_image_id") != builder_image_id
+        or not isinstance(manifest_qa, dict)
+        or manifest_qa.get("status") != "passed"
+        or qa.get("status") != "passed"
+    ):
+        raise PreflightFailure("identity_mismatch", "sample evidence is invalid")
+    for name in hashed_names:
+        item = described.get(name)
+        record = artifact_records.get("sample/" + name)
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"bytes", "sha256"}
+            or record is None
+            or item.get("bytes") != record[0]
+            or item.get("sha256") != record[1]
+        ):
+            raise PreflightFailure(
+                "identity_mismatch", "sample artifact differs from its manifest"
+            )
+    archive_path = release_dir / (
+        "headless-blender-character-builder-" + version + "-sample.tar.gz"
+    )
+    archive_payload = _read_regular(archive_path, MAX_ARTIFACT_BYTES)
+    expected_directories = {
+        parent.as_posix()
+        for name in sample_names
+        for parent in PurePosixPath(name).parents
+        if parent.as_posix() != "."
+    }
+    try:
+        with tarfile.open(fileobj=io.BytesIO(archive_payload), mode="r:gz") as archive:
+            actual: Dict[str, tuple[int, str]] = {}
+            actual_directories = set()
+            root_seen = False
+            member_count = 0
+            for member in archive:
+                member_count += 1
+                if member_count > len(sample_names) * 4 + 1:
+                    raise PreflightFailure("identity_mismatch", "sample archive is invalid")
+                relative = _archive_member_path(member.name, "sample")
+                if relative is None:
+                    if not member.isdir() or member.mode != 0o755 or root_seen:
+                        raise PreflightFailure("identity_mismatch", "sample archive root is invalid")
+                    root_seen = True
+                    continue
+                if member.isdir():
+                    if member.mode != 0o755 or relative in actual_directories:
+                        raise PreflightFailure("identity_mismatch", "sample archive directory is invalid")
+                    actual_directories.add(relative)
+                    continue
+                expected = artifact_records.get("sample/" + relative)
+                if (
+                    not member.isfile()
+                    or member.mode != 0o644
+                    or expected is None
+                    or member.size != expected[0]
+                    or relative in actual
+                ):
+                    raise PreflightFailure("identity_mismatch", "sample archive is invalid")
+                stream = archive.extractfile(member)
+                if stream is None:
+                    raise PreflightFailure("identity_mismatch", "sample archive is unreadable")
+                payload = stream.read(expected[0] + 1)
+                if (
+                    len(payload) != expected[0]
+                    or hashlib.sha256(payload).hexdigest() != expected[1]
+                ):
+                    raise PreflightFailure("identity_mismatch", "sample archive differs from files")
+                actual[relative] = expected
+    except (OSError, tarfile.TarError):
+        raise PreflightFailure("identity_mismatch", "sample archive is unreadable") from None
+    if (
+        not root_seen
+        or set(actual) != sample_names
+        or actual_directories != expected_directories
+    ):
+        raise PreflightFailure("identity_mismatch", "sample archive file set is incomplete")
+
+
+def _verify_supplement_schemas(
+    release_dir: Path, source_policy: Optional[Mapping[str, object]]
+) -> None:
+    expected_packages = {
+        "api.spdx.json": "headless-blender-character-builder-api",
+        "builder.spdx.json": "headless-blender-character-builder",
+        "worker.spdx.json": "headless-blender-character-builder-worker",
+    }
+    for name, expected_package in expected_packages.items():
+        document = _json_file(release_dir / name)
+        packages = document.get("packages")
+        if (
+            document.get("spdxVersion") != "SPDX-2.3"
+            or document.get("dataLicense") != "CC0-1.0"
+            or document.get("SPDXID") != "SPDXRef-DOCUMENT"
+            or not isinstance(packages, list)
+            or not packages
+            or expected_package
+            not in {
+                package.get("name")
+                for package in packages
+                if isinstance(package, dict)
+            }
+        ):
+            raise PreflightFailure("identity_mismatch", "release SBOM is invalid")
+    try:
+        notice = _read_regular(
+            release_dir / "SERVICE_THIRD_PARTY_NOTICES.txt", MAX_ARTIFACT_BYTES
+        ).decode("utf-8", "strict")
+    except UnicodeError:
+        raise PreflightFailure("identity_mismatch", "service notices are invalid") from None
+    if "Lock SHA-256:" not in notice or "License:" not in notice:
+        raise PreflightFailure("identity_mismatch", "service notices are incomplete")
+    try:
+        blender_notice = _read_regular(
+            release_dir / "BLENDER_SOURCE_NOTICE.md", MAX_ARTIFACT_BYTES
+        ).decode("utf-8", "strict")
+    except UnicodeError:
+        raise PreflightFailure("identity_mismatch", "Blender notice is invalid") from None
+    if source_policy is not None:
+        blender = source_policy.get("blender")
+        if not isinstance(blender, dict):
+            raise PreflightFailure("identity_mismatch", "Blender source policy is invalid")
+        required_markers = (
+            "Corresponding source archive: <%s>" % blender.get("source_url"),
+            "Corresponding source bytes: `%s`" % blender.get("bytes"),
+            "Corresponding source SHA-256: `%s`" % blender.get("sha256"),
+            "Upstream-published corresponding source MD5: `%s`"
+            % blender.get("official_md5"),
+        )
+        if any(marker not in blender_notice for marker in required_markers):
+            raise PreflightFailure(
+                "identity_mismatch", "Blender source notice differs from policy"
+            )
+
+
+def _image_records(
+    image_metadata: Mapping[str, object],
+    release_metadata: Mapping[str, object],
+    source_inventory: Mapping[str, object],
+    version: str,
+    revision: str,
+    require_published_digests: bool = False,
+    registry_owner: Optional[str] = None,
+) -> Mapping[str, Mapping[str, object]]:
+    if (
+        set(image_metadata) != IMAGE_METADATA_FIELDS
+        or image_metadata.get("format") != "hbcb-image-evidence/v2"
+        or image_metadata.get("platform") != "linux/amd64"
+        or image_metadata.get("distribution_version") != version
+        or image_metadata.get("source_revision") != revision
+        or release_metadata.get("format") != "hbcb-release-metadata/v2"
+        or release_metadata.get("version") != version
+        or release_metadata.get("git_head") != revision
+        or source_inventory.get("format") != "hbcb-corresponding-source-inventory/v1"
+        or source_inventory.get("distribution_version") != version
+        or source_inventory.get("source_revision") != revision
+        or source_inventory.get("public_oci_ready") is not True
+    ):
+        raise PreflightFailure(
+            "identity_mismatch",
+            "release evidence does not match the current commit and version or remains blocked",
+        )
+    images = image_metadata.get("images")
+    release_ids = release_metadata.get("image_ids")
+    source_images = source_inventory.get("images")
+    if (
+        not isinstance(images, dict)
+        or set(images) != set(IMAGE_TAGS)
+        or not isinstance(release_ids, dict)
+        or set(release_ids) != set(IMAGE_TAGS)
+        or not isinstance(source_images, dict)
+        or set(source_images) != set(IMAGE_TAGS)
+    ):
+        raise PreflightFailure("identity_mismatch", "release image inventory is incomplete")
+    normalized: Dict[str, Mapping[str, object]] = {}
+    for role, repository in IMAGE_TAGS.items():
+        record = images.get(role)
+        source_record = source_images.get(role)
+        expected_tag = (
+            "ghcr.io/" + str(registry_owner) + "/" + repository + ":" + version
+            if require_published_digests
+            else repository + ":" + version
+        )
+        if (
+            not isinstance(record, dict)
+            or set(record) != IMAGE_RECORD_FIELDS
+            or not isinstance(source_record, dict)
+        ):
+            raise PreflightFailure("identity_mismatch", "release image record is invalid")
+        image_id = record.get("image_id")
+        labels = record.get("labels")
+        layers = record.get("rootfs_layers")
+        published_digest = record.get("published_digest")
+        published_digest_valid = (
+            isinstance(published_digest, str)
+            and IMAGE_ID.fullmatch(published_digest) is not None
+            if require_published_digests
+            else published_digest is None
+        )
+        if (
+            not isinstance(image_id, str)
+            or IMAGE_ID.fullmatch(image_id) is None
+            or record.get("architecture") != "amd64"
+            or record.get("os") != "linux"
+            or record.get("expected_public_tag") != expected_tag
+            or not published_digest_valid
+            or "repo_tags" in record
+            or "repo_digests" in record
+            or release_ids.get(role) != image_id
+            or source_record.get("image_id") != image_id
+            or not isinstance(labels, dict)
+            or set(labels) != IMAGE_LABEL_FIELDS[role]
+            or any(
+                not isinstance(value, str)
+                or not value
+                or len(value) > 1024
+                for value in labels.values()
+            )
+            or labels.get("org.opencontainers.image.version") != version
+            or labels.get("org.opencontainers.image.revision") != revision
+            or labels.get("org.opencontainers.image.source") != CANONICAL_SOURCE_URL
+            or labels.get("org.opencontainers.image.licenses") != "GPL-3.0-or-later"
+            or any(labels.get(key) != value for key, value in ROLE_LABEL_VALUES[role].items())
+            or not isinstance(layers, list)
+            or not 1 <= len(layers) <= 256
+            or any(
+                not isinstance(layer, str) or IMAGE_ID.fullmatch(layer) is None
+                for layer in layers
+            )
+        ):
+            raise PreflightFailure("identity_mismatch", "release image evidence is inconsistent")
+        normalized[role] = record
+    image_ids = [str(normalized[role]["image_id"]) for role in sorted(normalized)]
+    if len(set(image_ids)) != len(image_ids):
+        raise PreflightFailure("identity_mismatch", "release image IDs are not distinct")
+    if require_published_digests:
+        published = [
+            str(normalized[role]["published_digest"]) for role in sorted(normalized)
+        ]
+        if len(set(published)) != len(published):
+            raise PreflightFailure(
+                "identity_mismatch", "private-registry manifest digests are not distinct"
+            )
+    return normalized
+
+
+def verify_bundle(
+    release_dir: Path,
+    version: str,
+    revision: str,
+    index_digest: Optional[str] = None,
+    require_published_digests: bool = False,
+    registry_owner: Optional[str] = None,
+    expected_publication: Optional[Mapping[str, object]] = None,
+    source_policy: Optional[Mapping[str, object]] = None,
+    tracked_source_records: Optional[Mapping[str, tuple[str, int, str]]] = None,
+) -> Mapping[str, Mapping[str, object]]:
+    if (
+        SEMVER.fullmatch(version) is None
+        or GIT_OID.fullmatch(revision) is None
+        or (
+            require_published_digests
+            and (
+                registry_owner is None
+                or REGISTRY_OWNER.fullmatch(registry_owner) is None
+            )
+        )
+    ):
+        raise PreflightFailure("invalid_identity", "release version or revision is invalid")
+    original_release_dir = release_dir
+    try:
+        metadata = original_release_dir.lstat()
+    except OSError:
+        raise PreflightFailure("release_unavailable", "release directory is unavailable") from None
+    if original_release_dir.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+        raise PreflightFailure("release_unavailable", "release directory is not a regular directory")
+    try:
+        release_dir = original_release_dir.resolve(strict=True)
+    except OSError:
+        raise PreflightFailure("release_unavailable", "release directory is unavailable") from None
+    checksummed = verify_checksums(release_dir)
+    image_metadata = _json_file(release_dir / "image-metadata.json")
+    release_metadata = _json_file(release_dir / "release-metadata.json")
+    corresponding_source_payload = _read_regular(
+        release_dir / "corresponding-source.json", MAX_JSON_BYTES
+    )
+    source_inventory = _json_payload(corresponding_source_payload)
+    if expected_publication is not None:
+        if (
+            set(expected_publication) != PUBLICATION_FIELDS
+            or any(
+                source_inventory.get(field) != expected_publication.get(field)
+                for field in PUBLICATION_FIELDS
+            )
+        ):
+            raise PreflightFailure(
+                "identity_mismatch",
+                "release inventory differs from the tracked publication policy",
+            )
+    artifact_records = _verify_release_artifact_inventory(
+        release_dir, release_metadata, checksummed
+    )
+    _verify_corresponding_source_inventory(
+        source_inventory, artifact_records, version, revision, source_policy
+    )
+    expected_inventory_digest = release_metadata.get(
+        "corresponding_source_inventory_sha256"
+    )
+    if (
+        not isinstance(expected_inventory_digest, str)
+        or SHA256.fullmatch(expected_inventory_digest) is None
+        or hashlib.sha256(corresponding_source_payload).hexdigest() != expected_inventory_digest
+    ):
+        raise PreflightFailure("identity_mismatch", "corresponding-source inventory is not bound")
+    if index_digest is not None and release_metadata.get("git_index_sha256") != index_digest:
+        raise PreflightFailure("identity_mismatch", "release evidence does not match the current Git index")
+    records = _image_records(
+        image_metadata,
+        release_metadata,
+        source_inventory,
+        version,
+        revision,
+        require_published_digests,
+        registry_owner,
+    )
+    source_audit = _json_file(release_dir / "source-audit.json")
+    source_records = _source_audit_records(source_audit, revision, index_digest)
+    if (source_policy is None) != (tracked_source_records is None):
+        raise PreflightFailure(
+            "identity_mismatch", "tracked source verification inputs are incomplete"
+        )
+    if tracked_source_records is not None and source_records != tracked_source_records:
+        raise PreflightFailure(
+            "identity_mismatch", "source audit differs from the exact tracked commit"
+        )
+    if (
+        release_metadata.get("source_tree_sha256")
+        != source_audit.get("source_tree_sha256")
+        or release_metadata.get("source_file_count") != len(source_records)
+    ):
+        raise PreflightFailure(
+            "identity_mismatch", "release source metadata differs from its audit"
+        )
+    _verify_project_archive(release_dir, version, source_records)
+    _verify_sample_bundle(
+        release_dir,
+        artifact_records,
+        release_metadata,
+        version,
+        records["builder"].get("image_id"),
+    )
+    _verify_supplement_schemas(release_dir, source_policy)
+    return records
+
+
+def _canonical_json(value: object) -> bytes:
+    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode(
+        "utf-8"
+    )
+
+
+def _remote_manifest_digest(
+    payload: bytes, expected_image_id: str, expected_layer_count: int
+) -> str:
+    try:
+        value = json.loads(
+            payload.decode("utf-8", "strict"),
+            object_pairs_hook=_strict_object,
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("constant")),
+        )
+    except (UnicodeError, ValueError, RecursionError):
+        raise PreflightFailure(
+            "remote_manifest_invalid", "reviewed private-registry manifest is invalid"
+        ) from None
+    accepted_manifest_types = {
+        "application/vnd.docker.distribution.manifest.v2+json",
+        "application/vnd.oci.image.manifest.v1+json",
+    }
+    accepted_config_types = {
+        "application/vnd.docker.container.image.v1+json",
+        "application/vnd.oci.image.config.v1+json",
+    }
+    accepted_layer_types = {
+        "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "application/vnd.oci.image.layer.v1.tar",
+        "application/vnd.oci.image.layer.v1.tar+gzip",
+        "application/vnd.oci.image.layer.v1.tar+zstd",
+    }
+    config = value.get("config") if isinstance(value, dict) else None
+    layers = value.get("layers") if isinstance(value, dict) else None
+    if (
+        not isinstance(value, dict)
+        or value.get("schemaVersion") != 2
+        or value.get("mediaType") not in accepted_manifest_types
+        or not isinstance(config, dict)
+        or config.get("mediaType") not in accepted_config_types
+        or config.get("digest") != expected_image_id
+        or type(config.get("size")) is not int
+        or not 0 < config["size"] <= 16 * 1024 * 1024
+        or "urls" in config
+        or not isinstance(layers, list)
+        or len(layers) != expected_layer_count
+    ):
+        raise PreflightFailure(
+            "remote_manifest_mismatch",
+            "reviewed private-registry manifest does not match the local image",
+        )
+    for layer in layers:
+        if (
+            not isinstance(layer, dict)
+            or layer.get("mediaType") not in accepted_layer_types
+            or not isinstance(layer.get("digest"), str)
+            or IMAGE_ID.fullmatch(layer["digest"]) is None
+            or type(layer.get("size")) is not int
+            or not 0 < layer["size"] <= 16 * 1024 * 1024 * 1024
+            or "urls" in layer
+        ):
+            raise PreflightFailure(
+                "remote_manifest_invalid",
+                "reviewed private-registry manifest has an unsafe layer descriptor",
+            )
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _write_new(path: Path, payload: bytes, mode: int = 0o644) -> None:
+    try:
+        with path.open("xb") as stream:
+            stream.write(payload)
+        path.chmod(mode)
+    except OSError:
+        raise PreflightFailure(
+            "finalization_failed", "published release evidence could not be written safely"
+        ) from None
+
+
+def finalize_published_bundle(
+    input_dir: Path,
+    output_dir: Path,
+    records: Mapping[str, Mapping[str, object]],
+    manifest_paths: Mapping[str, Path],
+    registry_owner: str,
+) -> tuple[int, int]:
+    """Create a no-clobber bundle with exact reviewed private manifest digests."""
+
+    with _FinalizationSignalGuard() as termination:
+        if set(manifest_paths) != set(IMAGE_TAGS):
+            raise PreflightFailure(
+                "remote_manifest_incomplete",
+                "builder, API, and worker private-registry manifests are required",
+            )
+        if REGISTRY_OWNER.fullmatch(registry_owner) is None:
+            raise PreflightFailure("invalid_registry_owner", "registry owner is invalid")
+        termination.raise_if_pending()
+        image_metadata = dict(_json_file(input_dir / "image-metadata.json"))
+        version = image_metadata.get("distribution_version")
+        if not isinstance(version, str) or SEMVER.fullmatch(version) is None:
+            raise PreflightFailure("identity_mismatch", "release distribution version is invalid")
+        images = image_metadata.get("images")
+        if not isinstance(images, dict) or set(images) != set(IMAGE_TAGS):
+            raise PreflightFailure("identity_mismatch", "release image inventory is incomplete")
+        finalized_images: Dict[str, object] = {}
+        for role in sorted(IMAGE_TAGS):
+            record = images.get(role)
+            if (
+                not isinstance(record, dict)
+                or record != records.get(role)
+                or record.get("published_digest") is not None
+            ):
+                raise PreflightFailure(
+                    "identity_mismatch",
+                    "release image metadata changed after preflight verification",
+                )
+            manifest_payload = _read_regular(manifest_paths[role], 32 * 1024 * 1024)
+            finalized = dict(record)
+            finalized["expected_public_tag"] = (
+                "ghcr.io/"
+                + registry_owner
+                + "/"
+                + IMAGE_TAGS[role]
+                + ":"
+                + version
+            )
+            finalized["published_digest"] = _remote_manifest_digest(
+                manifest_payload,
+                str(records[role]["image_id"]),
+                len(records[role]["rootfs_layers"]),
+            )
+            finalized_images[role] = finalized
+            termination.raise_if_pending()
+        image_metadata["images"] = finalized_images
+        image_payload = _canonical_json(image_metadata)
+
+        release_metadata = dict(_json_file(input_dir / "release-metadata.json"))
+        artifacts = release_metadata.get("artifacts")
+        if not isinstance(artifacts, list):
+            raise PreflightFailure("identity_mismatch", "release artifact inventory is invalid")
+        finalized_artifacts = []
+        image_records = 0
+        for item in artifacts:
+            if not isinstance(item, dict):
+                raise PreflightFailure("identity_mismatch", "release artifact inventory is invalid")
+            finalized_item = dict(item)
+            if finalized_item.get("name") == "image-metadata.json":
+                image_records += 1
+                finalized_item["bytes"] = len(image_payload)
+                finalized_item["sha256"] = hashlib.sha256(image_payload).hexdigest()
+            finalized_artifacts.append(finalized_item)
+        if image_records != 1:
+            raise PreflightFailure("identity_mismatch", "release image metadata is not inventoried once")
+        release_metadata["artifacts"] = finalized_artifacts
+        release_payload = _canonical_json(release_metadata)
+
+        try:
+            parent = output_dir.parent
+            parent_metadata = parent.lstat()
+            if parent.is_symlink() or not stat.S_ISDIR(parent_metadata.st_mode):
+                raise OSError
+            output_dir.mkdir(mode=0o700)
+            reserved = output_dir.lstat()
+            if output_dir.is_symlink() or not stat.S_ISDIR(reserved.st_mode):
+                raise OSError
+        except FileExistsError:
+            raise PreflightFailure(
+                "output_exists", "published release output must be a new directory"
+            ) from None
+        except OSError:
+            raise PreflightFailure(
+                "finalization_failed", "published release output could not be reserved safely"
+            ) from None
+        owned = True
+        try:
+            entries = sorted(input_dir.rglob("*"))
+            if len(entries) > 4096:
+                raise PreflightFailure("release_too_large", "release directory has too many entries")
+            for source in entries:
+                termination.raise_if_pending()
+                relative = source.relative_to(input_dir)
+                destination = output_dir / relative
+                metadata = source.lstat()
+                if source.is_symlink():
+                    raise PreflightFailure("unsafe_input", "release directory contains an unsafe entry")
+                if stat.S_ISDIR(metadata.st_mode):
+                    destination.mkdir(mode=0o755)
+                    continue
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise PreflightFailure("unsafe_input", "release directory contains an unsafe entry")
+                if relative.as_posix() in {
+                    "SHA256SUMS",
+                    "image-metadata.json",
+                    "release-metadata.json",
+                }:
+                    continue
+                destination.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+                _write_new(destination, _read_regular(source, MAX_ARTIFACT_BYTES))
+            _write_new(output_dir / "image-metadata.json", image_payload)
+            _write_new(output_dir / "release-metadata.json", release_payload)
+            checksum_lines = []
+            for candidate in sorted(output_dir.rglob("*")):
+                termination.raise_if_pending()
+                if not candidate.is_file():
+                    continue
+                relative = candidate.relative_to(output_dir).as_posix()
+                payload = _read_regular(candidate, MAX_ARTIFACT_BYTES)
+                checksum_lines.append(hashlib.sha256(payload).hexdigest() + "  " + relative)
+            _write_new(
+                output_dir / "SHA256SUMS",
+                ("\n".join(checksum_lines) + "\n").encode("ascii"),
+            )
+            termination.raise_if_pending()
+            output_dir.chmod(0o755)
+            termination.raise_if_pending()
+            owned = False
+        finally:
+            if owned:
+                _remove_owned_output(output_dir, (reserved.st_dev, reserved.st_ino))
+        return reserved.st_dev, reserved.st_ino
+
+
+def _directory_identity(path: Path) -> tuple[int, int]:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        raise PreflightFailure(
+            "finalization_failed", "published evidence could not be inspected safely"
+        ) from None
+    if path.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+        raise PreflightFailure(
+            "finalization_failed", "published evidence ownership changed"
+        )
+    return metadata.st_dev, metadata.st_ino
+
+
+def _remove_owned_output(path: Path, identity: tuple[int, int]) -> None:
+    try:
+        current = _directory_identity(path)
+    except PreflightFailure:
+        if not os.path.lexists(path):
+            return
+        raise
+    if current != identity:
+        raise PreflightFailure(
+            "finalization_failed", "failed published evidence ownership changed"
+        )
+    # Rename first, then inspect the moved inode. This closes path replacement
+    # deletion races. We intentionally leave an identity-verified quarantine
+    # directory for manual removal instead of path-deleting after validation.
+    quarantine = path.with_name("." + path.name + ".failed-" + os.urandom(16).hex())
+    try:
+        path.rename(quarantine)
+    except OSError:
+        raise PreflightFailure(
+            "finalization_failed", "failed published evidence could not be removed safely"
+        ) from None
+    moved = _directory_identity(quarantine)
+    if moved != identity:
+        raise PreflightFailure(
+            "finalization_failed", "failed published evidence ownership changed"
+        )
+
+
+def verify_and_commit_published_bundle(
+    output_dir: Path,
+    version: str,
+    revision: str,
+    index_digest: str,
+    registry_owner: str,
+    expected_publication: Mapping[str, object],
+    source_policy: Mapping[str, object],
+    tracked_source_records: Mapping[str, tuple[str, int, str]],
+    expected_identity: tuple[int, int],
+) -> Mapping[str, Mapping[str, object]]:
+    """Verify a finalized bundle, then make that durable bundle the commit point."""
+
+    with _FinalizationSignalGuard() as termination:
+        if _directory_identity(output_dir) != expected_identity:
+            raise PreflightFailure(
+                "finalization_failed", "published evidence ownership changed"
+            )
+        records = verify_bundle(
+            output_dir,
+            version,
+            revision,
+            index_digest,
+            True,
+            registry_owner,
+            expected_publication,
+            source_policy,
+            tracked_source_records,
+        )
+        termination.raise_if_pending()
+        if _directory_identity(output_dir) != expected_identity:
+            raise PreflightFailure(
+                "finalization_failed", "published evidence ownership changed"
+            )
+        return records
+
+
+def _command(
+    arguments: Sequence[str],
+    *,
+    cwd: Path,
+    maximum: int = MAX_JSON_BYTES,
+    timeout: float = COMMAND_TIMEOUT_SECONDS,
+) -> bytes:
+    """Run one secret-silent command and own its complete child process group."""
+
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_TERMINAL_PROMPT": "0",
+            "LC_ALL": "C",
+        }
+    )
+
+    received_signal: Optional[int] = None
+    previous_handlers: Dict[int, object] = {}
+    installed_handlers = set()
+    termination_signals = tuple(
+        signum
+        for signum in (
+            signal.SIGINT,
+            getattr(signal, "SIGHUP", None),
+            signal.SIGTERM,
+        )
+        if isinstance(signum, int)
+    )
+
+    def record_signal(signum: int, _frame: object) -> None:
+        nonlocal received_signal
+        if received_signal is None:
+            received_signal = int(signum)
+
+    def raise_if_interrupted() -> None:
+        if received_signal is None:
+            return
+        if received_signal == signal.SIGINT:
+            raise KeyboardInterrupt
+        raise SystemExit(128 + received_signal)
+
+    def process_group_exists(process_group: int) -> bool:
+        try:
+            os.killpg(process_group, 0)
+        except ProcessLookupError:
+            return False
+        except (OSError, PermissionError):
+            return True
+        return True
+
+    def signal_process_group(
+        process: subprocess.Popen[bytes], selected_signal: int
+    ) -> None:
+        if os.name == "posix" and hasattr(os, "killpg"):
+            try:
+                os.killpg(process.pid, selected_signal)
+                return
+            except ProcessLookupError:
+                return
+            except OSError:
+                pass
+        try:
+            if selected_signal == signal.SIGKILL:
+                process.kill()
+            else:
+                process.terminate()
+        except OSError:
+            pass
+
+    def wait_for_group_exit(
+        process: subprocess.Popen[bytes], deadline: float
+    ) -> bool:
+        while True:
+            try:
+                process.poll()
+            except OSError:
+                pass
+            if os.name != "posix" or not hasattr(os, "killpg"):
+                try:
+                    if process.poll() is not None:
+                        return True
+                except OSError:
+                    pass
+            elif not process_group_exists(process.pid):
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(PROCESS_GROUP_POLL_SECONDS, remaining))
+
+    def terminate_process_group(process: subprocess.Popen[bytes]) -> bool:
+        """Boundedly terminate the isolated group and reap its leader."""
+
+        signal_process_group(process, signal.SIGTERM)
+        group_gone = wait_for_group_exit(
+            process, time.monotonic() + PROCESS_TERM_GRACE_SECONDS
+        )
+        if not group_gone:
+            signal_process_group(process, signal.SIGKILL)
+            group_gone = wait_for_group_exit(
+                process, time.monotonic() + PROCESS_KILL_GRACE_SECONDS
+            )
+        try:
+            leader_reaped = process.poll() is not None
+            if not leader_reaped:
+                process.wait(timeout=PROCESS_KILL_GRACE_SECONDS)
+                leader_reaped = True
+        except (OSError, subprocess.TimeoutExpired):
+            try:
+                leader_reaped = process.poll() is not None
+            except OSError:
+                leader_reaped = False
+        return group_gone and leader_reaped
+
+    try:
+        for signum in termination_signals:
+            previous = signal.getsignal(signum)
+            previous_handlers[signum] = previous
+            # Preserve explicit embedding handlers and ignores. Python's
+            # default SIGINT handler is the normal interactive CLI default.
+            if previous == signal.SIG_DFL or (
+                signum == signal.SIGINT
+                and previous == signal.default_int_handler
+            ):
+                signal.signal(signum, record_signal)
+                installed_handlers.add(signum)
+    except (OSError, RuntimeError, ValueError):
+        for signum in installed_handlers:
+            signal.signal(signum, previous_handlers[signum])
+        raise PreflightFailure(
+            "command_failed", "required local preflight command failed"
+        ) from None
+
+    process: Optional[subprocess.Popen[bytes]] = None
+    cleanup_failed = False
+    try:
+        raise_if_interrupted()
+        process = subprocess.Popen(
+            list(arguments),
+            cwd=str(cwd),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=environment,
+            start_new_session=os.name == "posix",
+        )
+        # The record-only handlers cover the interval after fork but before
+        # Popen returns. Do not unwind until the owned process is published.
+        raise_if_interrupted()
+        deadline = time.monotonic() + timeout
+        while True:
+            raise_if_interrupted()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise PreflightFailure(
+                    "command_failed", "required local preflight command failed"
+                )
+            try:
+                stdout, stderr = process.communicate(
+                    timeout=min(PROCESS_SIGNAL_POLL_SECONDS, remaining)
+                )
+                break
+            except subprocess.TimeoutExpired as error:
+                partial_stdout = error.output or b""
+                partial_stderr = error.stderr or b""
+                if (
+                    len(partial_stdout) > maximum
+                    or len(partial_stderr) > maximum
+                ):
+                    raise PreflightFailure(
+                        "command_failed", "required local preflight command failed"
+                    ) from None
+        raise_if_interrupted()
+        if (
+            process.returncode != 0
+            or len(stdout) > maximum
+            or len(stderr) > maximum
+        ):
+            raise PreflightFailure(
+                "command_failed", "required local preflight command failed"
+            )
+        return stdout
+    except BaseException as error:
+        cleanup_complete = True
+        if process is not None:
+            cleanup_complete = terminate_process_group(process)
+        if not cleanup_complete:
+            cleanup_failed = True
+            raise PreflightFailure(
+                "command_cleanup_failed",
+                "required local preflight command could not be cleaned up safely",
+            ) from None
+        if isinstance(error, (OSError, subprocess.SubprocessError)):
+            raise PreflightFailure(
+                "command_failed", "required local preflight command failed"
+            ) from None
+        raise
+    finally:
+        if process is not None:
+            for stream in (process.stdout, process.stderr):
+                if stream is not None and not stream.closed:
+                    stream.close()
+        for signum in installed_handlers:
+            signal.signal(signum, previous_handlers[signum])
+        # A signal received during teardown takes precedence over an ordinary
+        # command failure, after the complete child group has been handled.
+        if not cleanup_failed:
+            raise_if_interrupted()
+
+
+def current_revision(repo: Path, git: str = "git") -> str:
+    head = _command((git, "rev-parse", "HEAD"), cwd=repo, maximum=1024).decode(
+        "ascii", "strict"
+    ).strip()
+    if GIT_OID.fullmatch(head) is None:
+        raise PreflightFailure("git_identity_invalid", "current Git revision is invalid")
+    if _command((git, "status", "--porcelain"), cwd=repo, maximum=MAX_JSON_BYTES):
+        raise PreflightFailure("worktree_dirty", "publication requires a clean exact checkout")
+    return head
+
+
+def current_index_digest(repo: Path, git: str = "git") -> str:
+    payload = _command((git, "ls-files", "--stage", "-z"), cwd=repo, maximum=32 * 1024 * 1024)
+    digest = hashlib.sha256()
+    seen = set()
+    for record in payload.split(b"\0"):
+        if not record:
+            continue
+        try:
+            prefix, path = record.split(b"\t", 1)
+            mode, oid, stage = prefix.split(b" ", 2)
+        except ValueError:
+            raise PreflightFailure("git_identity_invalid", "current Git index is invalid") from None
+        if (
+            stage != b"0"
+            or mode not in {b"100644", b"100755"}
+            or re.fullmatch(rb"[0-9a-f]{40,64}", oid) is None
+            or not path
+            or b"\0" in path
+            or path in seen
+        ):
+            raise PreflightFailure("git_identity_invalid", "current Git index is invalid")
+        seen.add(path)
+        digest.update(mode + b"\0" + oid + b"\0" + path + b"\n")
+    if not seen:
+        raise PreflightFailure("git_identity_invalid", "current Git index is empty")
+    return digest.hexdigest()
+
+
+def require_normal_index(repo: Path, git: str = "git") -> None:
+    """Reject skip-worktree/assume-unchanged and other non-normal index flags."""
+
+    payload = _command(
+        (git, "ls-files", "-v", "-z"), cwd=repo, maximum=32 * 1024 * 1024
+    )
+    records = [item for item in payload.split(b"\0") if item]
+    if not records or any(
+        len(item) < 3
+        or item[0:1] != b"H"
+        or item[1:2] != b" "
+        or not item[2:]
+        for item in records
+    ):
+        raise PreflightFailure(
+            "git_identity_invalid",
+            "publication requires normal tracked-file index flags",
+        )
+
+
+def _live_image(payload: bytes, role: str, version: str, revision: str) -> Mapping[str, object]:
+    try:
+        value = json.loads(
+            payload.decode("utf-8", "strict"),
+            object_pairs_hook=_strict_object,
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("constant")),
+        )
+    except (UnicodeError, ValueError, RecursionError):
+        raise PreflightFailure("live_image_invalid", "local release image inspect is invalid") from None
+    if isinstance(value, list) and len(value) == 1:
+        value = value[0]
+    config = value.get("Config") if isinstance(value, dict) else None
+    labels = config.get("Labels") if isinstance(config, dict) else None
+    if (
+        not isinstance(value, dict)
+        or value.get("Architecture") != "amd64"
+        or value.get("Os") != "linux"
+        or not isinstance(value.get("Id"), str)
+        or IMAGE_ID.fullmatch(value["Id"]) is None
+        or not isinstance(labels, dict)
+        or labels.get("org.opencontainers.image.version") != version
+        or labels.get("org.opencontainers.image.revision") != revision
+        or labels.get("org.opencontainers.image.source") != CANONICAL_SOURCE_URL
+        or labels.get("org.opencontainers.image.licenses") != "GPL-3.0-or-later"
+    ):
+        raise PreflightFailure("live_image_invalid", "local release image violates identity policy")
+    return value
+
+
+def verify_live_images(
+    records: Mapping[str, Mapping[str, object]],
+    version: str,
+    revision: str,
+    docker: str = "docker",
+    registry_owner: Optional[str] = None,
+    *,
+    runner: Callable[..., bytes] = _command,
+    repo: Path = ROOT,
+) -> None:
+    for role, repository in IMAGE_TAGS.items():
+        tag = repository + ":" + version
+        payload = runner((docker, "image", "inspect", tag), cwd=repo)
+        live = _live_image(payload, role, version, revision)
+        if live.get("Id") != records[role].get("image_id"):
+            raise PreflightFailure("live_image_mismatch", "local release image changed after evidence capture")
+        if registry_owner is not None:
+            destination = "ghcr.io/" + registry_owner + "/" + repository + ":" + version
+            destination_payload = runner(
+                (docker, "image", "inspect", destination), cwd=repo
+            )
+            destination_live = _live_image(
+                destination_payload, role, version, revision
+            )
+            if destination_live.get("Id") != records[role].get("image_id"):
+                raise PreflightFailure(
+                    "live_image_mismatch",
+                    "outgoing registry tag changed after evidence capture",
+                )
+
+
+def _safe_tool(value: str, label: str) -> str:
+    if (
+        not value
+        or value.startswith("-")
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise PreflightFailure("unsafe_tool", label + " selector is unsafe")
+    path = Path(value)
+    if "/" not in value:
+        if SAFE_TOOL.fullmatch(value) is None:
+            raise PreflightFailure("unsafe_tool", label + " selector is unsafe")
+        return value
+    if not path.is_absolute() or path.is_symlink() or not path.is_file() or not os.access(path, os.X_OK):
+        raise PreflightFailure("unsafe_tool", label + " selector is unsafe")
+    return str(path)
+
+
+def _arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--release-dir", type=Path, required=True)
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--repo", type=Path, default=ROOT)
+    parser.add_argument("--docker", default=os.environ.get("DOCKER", "docker"))
+    parser.add_argument("--git", default="git")
+    parser.add_argument(
+        "--registry-owner",
+        help="also bind the three outgoing ghcr.io OWNER tags immediately before push",
+    )
+    parser.add_argument(
+        "--require-published-digests",
+        action="store_true",
+        help="require checksum-bound private-registry manifest digests",
+    )
+    parser.add_argument(
+        "--finalize-output-dir",
+        type=Path,
+        help="write a new checksum-bound bundle with reviewed private manifests",
+    )
+    parser.add_argument(
+        "--remote-manifest",
+        action="append",
+        default=[],
+        metavar="ROLE=PATH",
+        help="raw reviewed private-registry manifest for builder, api, or worker",
+    )
+    parser.add_argument(
+        "--print-image-id",
+        choices=tuple(IMAGE_TAGS),
+        help="after all checks pass, print only this immutable local image ID",
+    )
+    return parser.parse_args(argv)
+
+
+def _manifest_arguments(values: Sequence[str]) -> Mapping[str, Path]:
+    result: Dict[str, Path] = {}
+    for value in values:
+        role, separator, raw_path = value.partition("=")
+        if (
+            not separator
+            or role not in IMAGE_TAGS
+            or role in result
+            or not raw_path
+            or any(ord(character) < 32 or ord(character) == 127 for character in raw_path)
+        ):
+            raise PreflightFailure(
+                "remote_manifest_invalid",
+                "private-registry manifest selectors are invalid",
+            )
+        result[role] = Path(raw_path)
+    return result
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    try:
+        arguments = _arguments(argv)
+        docker = _safe_tool(arguments.docker, "Docker")
+        git = _safe_tool(arguments.git, "Git")
+        if arguments.registry_owner is not None and REGISTRY_OWNER.fullmatch(
+            arguments.registry_owner
+        ) is None:
+            raise PreflightFailure(
+                "invalid_registry_owner", "registry owner is invalid"
+            )
+        manifests = _manifest_arguments(arguments.remote_manifest)
+        if arguments.finalize_output_dir is not None:
+            if (
+                arguments.registry_owner is None
+                or arguments.require_published_digests
+                or set(manifests) != set(IMAGE_TAGS)
+            ):
+                raise PreflightFailure(
+                    "invalid_finalization_request",
+                    "finalization requires one reviewed manifest per role and a registry owner",
+                )
+        elif arguments.require_published_digests and arguments.registry_owner is None:
+            raise PreflightFailure(
+                "invalid_finalization_request",
+                "published-digest verification requires the reviewed registry owner",
+            )
+        elif manifests:
+            raise PreflightFailure(
+                "invalid_finalization_request",
+                "private-registry manifests are accepted only during finalization",
+            )
+        repo = arguments.repo.resolve(strict=True)
+        revision = current_revision(repo, git)
+        require_normal_index(repo, git)
+        index_digest = current_index_digest(repo, git)
+        source_policy_payload = _tracked_blob(
+            repo,
+            git,
+            revision,
+            "release/corresponding-source-policy.json",
+            MAX_JSON_BYTES,
+        )
+        source_policy = _source_policy(source_policy_payload)
+        expected_publication = source_policy["publication"]
+        assert isinstance(expected_publication, dict)
+        tracked_source_records = _tracked_source_records(repo, git, revision)
+        version_file = _tracked_blob(repo, git, revision, "VERSION", 128).decode(
+            "ascii", "strict"
+        ).strip()
+        if version_file != arguments.version:
+            raise PreflightFailure("identity_mismatch", "release version differs from the current VERSION file")
+        records = verify_bundle(
+            arguments.release_dir,
+            arguments.version,
+            revision,
+            index_digest,
+            arguments.require_published_digests,
+            arguments.registry_owner,
+            expected_publication,
+            source_policy,
+            tracked_source_records,
+        )
+        verify_live_images(
+            records,
+            arguments.version,
+            revision,
+            docker,
+            arguments.registry_owner,
+            repo=repo,
+        )
+        if arguments.finalize_output_dir is not None:
+            output_identity: Optional[tuple[int, int]] = None
+            # One outer record-only guard spans reservation, copy, final
+            # verification, Git recheck, ownership handoff, and failure
+            # quarantine. Repeated signals cannot interrupt cleanup.
+            with _FinalizationSignalGuard() as transaction:
+                try:
+                    output_identity = finalize_published_bundle(
+                        arguments.release_dir.resolve(strict=True),
+                        arguments.finalize_output_dir,
+                        records,
+                        manifests,
+                        arguments.registry_owner,
+                    )
+                    verify_and_commit_published_bundle(
+                        arguments.finalize_output_dir,
+                        arguments.version,
+                        revision,
+                        index_digest,
+                        arguments.registry_owner,
+                        expected_publication,
+                        source_policy,
+                        tracked_source_records,
+                        output_identity,
+                    )
+                    if (
+                        current_revision(repo, git) != revision
+                        or current_index_digest(repo, git) != index_digest
+                        or current_publication_policy(repo, git, revision)
+                        != expected_publication
+                    ):
+                        raise PreflightFailure(
+                            "identity_changed",
+                            "Git identity changed during publication finalization",
+                        )
+                    require_normal_index(repo, git)
+                    if _directory_identity(arguments.finalize_output_dir) != output_identity:
+                        raise PreflightFailure(
+                            "finalization_failed", "published evidence ownership changed"
+                        )
+                    transaction.raise_if_pending()
+                except BaseException:
+                    if output_identity is not None:
+                        _remove_owned_output(
+                            arguments.finalize_output_dir, output_identity
+                        )
+                    raise
+        if arguments.finalize_output_dir is None and (
+            current_revision(repo, git) != revision
+            or current_index_digest(repo, git) != index_digest
+            or current_publication_policy(repo, git, revision) != expected_publication
+        ):
+            raise PreflightFailure("identity_changed", "Git identity changed during publication preflight")
+        if arguments.finalize_output_dir is None:
+            require_normal_index(repo, git)
+    except (OSError, UnicodeError, PreflightFailure) as error:
+        if isinstance(error, PreflightFailure):
+            code, detail = error.code, error.detail
+        else:
+            code, detail = "input_unavailable", "publication preflight input is unavailable"
+        print(f"PUBLICATION_PREFLIGHT: FAIL[{code}]: {detail}", file=sys.stderr)
+        return 1
+    except _FinalizationInterrupted as error:
+        print(
+            "PUBLICATION_PREFLIGHT: FAIL[interrupted]: published evidence finalization was interrupted",
+            file=sys.stderr,
+        )
+        return 128 + error.signum
+    except KeyboardInterrupt:
+        print(
+            "PUBLICATION_PREFLIGHT: FAIL[interrupted]: publication preflight was interrupted",
+            file=sys.stderr,
+        )
+        return 130
+    if arguments.finalize_output_dir is not None:
+        print(
+            "PUBLICATION_PREFLIGHT: PASS finalized_private_manifests=3 "
+            "output=published-release-bundle"
+        )
+        return 0
+    if arguments.print_image_id is not None:
+        print(records[arguments.print_image_id]["image_id"])
+        return 0
+    print(
+        "PUBLICATION_PREFLIGHT: PASS local_images=3 platform=linux/amd64 "
+        f"version={arguments.version} revision={revision}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -4,33 +4,73 @@ This backlog records extension ideas after the v0.1 release boundary. It is
 not a promise of implementation, compatibility, hosted availability, or a
 physical-print outcome.
 
+## v0.1 release boundary
+
+- **Supported:** one trusted user building their own models locally with the
+  one-shot Docker builder. A trusted user controls the machine and creates or
+  reviews the bounded JSON request.
+- **Experimental:** the optional Compose service on loopback for one trusted
+  operator.
+- **Out of scope:** Internet-facing, hostile-input, multi-tenant, public OCI,
+  and VPS operation.
+
+Testing an experimental or future path does not make it part of v0.1 support.
+
 ## Good first issues
 
-| Proposed issue | Suggested labels | Acceptance outline |
-|---|---|---|
-| Add a third original `facet-bot` palette example | `good first issue`, `generator`, `documentation` | Valid v1 request, no new schema fields, passes contract tests, builds successfully, and documents visual differences without tracking generated binaries |
-| Improve unsupported-platform troubleshooting | `good first issue`, `documentation` | Add evidence-based Linux/WSL2/Docker Desktop cases without claiming release support |
-| Add bounded manifest-inspection CLI output | `good first issue`, `qa` | Read-only stdlib command, rejects oversized/noncanonical JSON, prints no paths or secrets, and has unit tests |
-| Add a lightweight local service client | `good first issue`, `service`, `documentation` | One request/output command replaces the long first-evaluation block while preserving private-env checks, loopback-only no-proxy/no-redirect downloads, bounded polling/cancellation, exact hashes, and no-clobber publication |
-| Add release-audit failure fixtures | `good first issue`, `security`, `release` | Each fixture proves one prohibited tracked-file or credential pattern fails closed |
-| Clarify one deployment error message | `good first issue`, `deployment` | Preserve exit contract, redact values, add focused test and runbook update |
-| Add quickstart capacity advisories to the doctor | `good first issue`, `documentation`, `qa` | Report bounded, read-only Docker-memory and checkout-disk notes for the documented one-shot baseline without turning imperfect host measurements into false failures |
-| Document exact service-image cleanup | `good first issue`, `documentation`, `deployment` | Give platform-neutral commands for only the wrapper-reported checkout image tags and caches; retain named volumes and explicitly forbid global prune |
+No unclaimed good-first issues remain from the initial v0.1 review.
 
-Starter issues are created manually. Maintainers should copy the relevant row
-into the repository issue template, confirm it still matches current code, and
-apply the maintained labels below.
+### Completed in this change
+
+- added and gate-covered the Tidepool `facet-bot` palette example;
+- expanded evidence-based Linux arm64, WSL2, and Docker Desktop troubleshooting;
+- added bounded, canonical, path-free `make inspect` manifest summaries;
+- added the hardened stdlib `make service-client` first-evaluation path;
+- added runtime-created release-audit failure fixtures for every prohibited
+  tracked-file and credential family;
+- made the missing private storage-network error actionable without reflecting
+  configured values;
+- added read-only 8 GiB memory and 10 GiB disk quickstart advisories to the
+  default doctor; and
+- added exact selected-project service-image listing/removal while retaining
+  named volumes and shared build cache and forbidding global prune.
+
+The maintainer/security pass also:
+
+- added a fail-closed, resumable private-publication transaction with
+  commit-bound readiness, immediate per-push identity checks, checksum-bound
+  registry manifests, isolated credentials, exact recovery inventory, and an
+  explicit role-by-role visibility commit; the tracked public-OCI readiness
+  gate remains false pending complete image source/delivery review and derived-
+  PostgreSQL publication support;
+- reduced public image metadata to the three reviewed, registry-qualified
+  release tags, exact image identities, allowlisted labels, and reviewed raw
+  image-manifest digests, with coherent-removal/replacement and private-alias
+  rejection tests;
+- moved every recovery-drill child into an owned process group and deferred
+  `HUP`, `INT`, and `TERM` until source recovery and disposable-target cleanup
+  are certified;
+- added an independent owner token to every orphan-lifecycle service, volume,
+  and network and restricted cleanup to exact project-and-owner matches; and
+- bound every short MinIO probe to a random owner label and immutable container
+  ID, including ambiguous-create cleanup and same-name foreign-container
+  preservation; and
+- resolved the exact `linux/amd64` release-scan backlog with archive-only image
+  scans, fail-closed UNRATED handling, maintained base/runtime upgrades, and
+  identity-bound 30-day dispositions. Two independent post-PostgreSQL-change
+  candidate scans and a final exact-policy scan passed with 155/155 matches,
+  no unused dispositions, no unresolved blockers, and no scan errors.
+
+Future starter issues are created manually. Maintainers should copy a reviewed
+proposal into the repository issue template and apply the maintained labels
+below.
 
 ## Maintainer and security issues
 
-| Proposed issue | Suggested labels | Acceptance outline |
-|---|---|---|
-| Harden the future public-release transaction | `security`, `release`, `needs-design` | Immediately before any registry push, re-inspect each local image tag against checksum-bound release metadata and the exact current commit/version; document bounded resume/cleanup for partial private-image, Git-tag, or draft-Release state; keep `public_oci_ready` false until independently reviewed |
-| Minimize public image metadata | `security`, `release` | Emit only the expected public release tag and reviewed published digest; prove extra private local aliases or registry names cannot enter uploaded metadata |
-| Resolve exact `linux/amd64` release-scan findings | `security`, `dependencies`, `release` | Run the archive-bound scanner on the exact candidate; upgrade reachable components or add narrow identity-bound, expiring, independently reviewed dispositions; require an exit-zero scan before merge or publication |
-| Harden recovery-drill interruption cleanup | `security`, `deployment`, `release` | Run every bounded child in an owned process group; defer `HUP`, `INT`, and `TERM` through source recovery and target cleanup; prove a signal cannot leave the source quiesced or the disposable recovery project running |
-| Add independent ownership to the orphan-lifecycle project | `security`, `service`, `qa` | Label every disposable service, volume, and network with a second random owner token; compare the project and owner inventories before teardown; prove a foreign same-name resource is never removed |
-| Bind short MinIO probes to owned container identities | `security`, `qa` | Give each version probe a random name and owner label, discover its immutable container ID after ambiguous Docker failures, and verify exact cleanup without touching a same-name foreign container |
+- Before any future VPS/public-OCI release, add the derived PostgreSQL image to
+  release inventory, SBOM, signing, push, corresponding-source/notices, and
+  digest-lock generation. Current publication tooling covers only builder,
+  API, and worker, so `public_oci_ready` must remain false.
 
 ## Candidate extensions
 
@@ -57,7 +97,7 @@ fitness warranty.
 
 - an opt-in OpenAI prompt-to-spec planner with strict structured output and
   user confirmation before a paid or mutating build;
-- a thin MCP adapter exposing create/get/cancel over the public service API;
+- a thin MCP adapter exposing create/get/cancel over the versioned service API;
 - rights-cleared reference ingestion in a separately isolated pipeline;
 - signed webhooks, quotas, and tenant-aware authorization.
 
@@ -84,6 +124,8 @@ Blender child, artifacts, or logs.
 - protected-character packs or automatic IP clearance;
 - general organic sculpting or exact-likeness generation;
 - a public unauthenticated demo;
+- Internet-facing, hostile-input, or multi-tenant service operation in v0.1;
+- production VPS deployment in v0.1;
 - production billing or marketplace behavior in this repository.
 
 ## Issue label catalog

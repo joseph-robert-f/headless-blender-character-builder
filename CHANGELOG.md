@@ -15,6 +15,9 @@ Changelog, and releases use Semantic Versioning.
 - Bounded Redis queue and dead-letter storage, added fail-closed orphaned
   object-version discovery with durable exact-version evidence, and advanced
   the maintained PostgreSQL 16 and Redis 8 server pins.
+- Replaced the Compose PostgreSQL runtime with a project-derived image that
+  removes dormant `gosu`, runs intrinsically as UID/GID 70, and is verified by
+  an immutable-identity, fresh-volume runtime security gate.
 - Added caller-safe request validation details, bounded geometry-QA failure
   summaries, actionable Make preflight markers, and explicit documentation of
   GNU Make versus underlying builder exit statuses.

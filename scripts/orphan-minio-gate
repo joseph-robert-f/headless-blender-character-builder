@@ -38,6 +38,7 @@ command -v "$python_bin" >/dev/null 2>&1 || fail 'Python is unavailable' 3
 hbcb_service_settings >/dev/null || fail 'local service settings are invalid' 3
 service_reference=${HBCB_ORPHAN_SERVICE_IMAGE:-$HBCB_SERVICE_TEST_IMAGE}
 minio_reference=${HBCB_ORPHAN_MINIO_IMAGE:-$HBCB_MINIO_IMAGE}
+postgres_reference=${HBCB_ORPHAN_POSTGRES_IMAGE:-$HBCB_POSTGRES_IMAGE}
 
 image_id() {
   selected_reference=$1
@@ -61,7 +62,9 @@ image_id() {
 
 HBCB_ORPHAN_SERVICE_IMAGE_ID=$(image_id "$service_reference" service-test)
 HBCB_ORPHAN_MINIO_IMAGE_ID=$(image_id "$minio_reference" MinIO)
+HBCB_ORPHAN_POSTGRES_IMAGE_ID=$(image_id "$postgres_reference" PostgreSQL)
 export HBCB_ORPHAN_SERVICE_IMAGE_ID HBCB_ORPHAN_MINIO_IMAGE_ID
+export HBCB_ORPHAN_POSTGRES_IMAGE_ID
 
 random_hex() {
   "$python_bin" -c \
@@ -72,6 +75,13 @@ case "$project" in
   hbcb-orphan-????????????) ;;
   *) fail 'disposable project identity could not be generated' 5 ;;
 esac
+HBCB_ORPHAN_OWNER_TOKEN=$(random_hex 16)
+[ "${#HBCB_ORPHAN_OWNER_TOKEN}" -eq 32 ] || \
+  fail 'disposable owner identity could not be generated' 5
+case "$HBCB_ORPHAN_OWNER_TOKEN" in
+  *[!0-9a-f]*) fail 'disposable owner identity could not be generated' 5 ;;
+esac
+export HBCB_ORPHAN_OWNER_TOKEN
 
 HBCB_ORPHAN_DATABASE_ADMIN_PASSWORD=$(random_hex 32)
 HBCB_ORPHAN_DATABASE_API_PASSWORD=$(random_hex 32)
@@ -109,43 +119,83 @@ compose() {
 }
 
 compose_model=$repo/.orphan-minio-gate.invalid
-compose_source=1
 
-compose_down() {
-  if [ "$compose_source" -eq 1 ]; then
-    if [ -n "${HBCB_COMPOSE_BIN:-}" ]; then
-      "$HBCB_COMPOSE_BIN" \
-        --project-name "$project" \
-        --project-directory "$repo" \
-        --file "$compose_file" \
-        down --volumes --remove-orphans --timeout 30
-    else
-      "$docker_bin" compose \
-        --project-name "$project" \
-        --project-directory "$repo" \
-        --file "$compose_file" \
-        down --volumes --remove-orphans --timeout 30
-    fi
+resource_inventory() {
+  owner_filter=$1
+  if [ -n "$owner_filter" ]; then
+    resource_containers=$("$docker_bin" ps --all --quiet \
+      --filter "label=com.docker.compose.project=$project" \
+      --filter "label=io.hbcb.orphan-owner=$HBCB_ORPHAN_OWNER_TOKEN") || return 1
+    resource_volumes=$("$docker_bin" volume ls --quiet \
+      --filter "label=com.docker.compose.project=$project" \
+      --filter "label=io.hbcb.orphan-owner=$HBCB_ORPHAN_OWNER_TOKEN") || return 1
+    resource_networks=$("$docker_bin" network ls --quiet \
+      --filter "label=com.docker.compose.project=$project" \
+      --filter "label=io.hbcb.orphan-owner=$HBCB_ORPHAN_OWNER_TOKEN") || return 1
   else
-    compose down --volumes --remove-orphans --timeout 30
+    resource_containers=$("$docker_bin" ps --all --quiet \
+      --filter "label=com.docker.compose.project=$project") || return 1
+    resource_volumes=$("$docker_bin" volume ls --quiet \
+      --filter "label=com.docker.compose.project=$project") || return 1
+    resource_networks=$("$docker_bin" network ls --quiet \
+      --filter "label=com.docker.compose.project=$project") || return 1
   fi
+  {
+    for resource_id in $resource_containers; do
+      printf 'container:%s\n' "$resource_id"
+    done
+    for resource_id in $resource_volumes; do
+      printf 'volume:%s\n' "$resource_id"
+    done
+    for resource_id in $resource_networks; do
+      printf 'network:%s\n' "$resource_id"
+    done
+  } | LC_ALL=C sort
 }
 
 project_resources() {
+  resource_inventory ''
+}
+
+owned_resources() {
+  resource_inventory owner
+}
+
+remove_owned_resources() {
+  removal_status=0
   resource_containers=$("$docker_bin" ps --all --quiet \
-    --filter "label=com.docker.compose.project=$project") || return 1
+    --filter "label=com.docker.compose.project=$project" \
+    --filter "label=io.hbcb.orphan-owner=$HBCB_ORPHAN_OWNER_TOKEN") || return 1
   resource_volumes=$("$docker_bin" volume ls --quiet \
-    --filter "label=com.docker.compose.project=$project") || return 1
+    --filter "label=com.docker.compose.project=$project" \
+    --filter "label=io.hbcb.orphan-owner=$HBCB_ORPHAN_OWNER_TOKEN") || return 1
   resource_networks=$("$docker_bin" network ls --quiet \
-    --filter "label=com.docker.compose.project=$project") || return 1
-  printf '%s\n%s\n%s\n' \
-    "$resource_containers" "$resource_volumes" "$resource_networks"
+    --filter "label=com.docker.compose.project=$project" \
+    --filter "label=io.hbcb.orphan-owner=$HBCB_ORPHAN_OWNER_TOKEN") || return 1
+  for resource_id in $resource_containers; do
+    case "$resource_id" in ''|*[!0-9a-f]*) removal_status=1; continue ;; esac
+    "$docker_bin" rm --force "$resource_id" >/dev/null 2>&1 || removal_status=1
+  done
+  for resource_id in $resource_volumes; do
+    case "$resource_id" in ''|*[!A-Za-z0-9_.-]*) removal_status=1; continue ;; esac
+    "$docker_bin" volume rm "$resource_id" >/dev/null 2>&1 || removal_status=1
+  done
+  for resource_id in $resource_networks; do
+    case "$resource_id" in ''|*[!0-9a-f]*) removal_status=1; continue ;; esac
+    "$docker_bin" network rm "$resource_id" >/dev/null 2>&1 || removal_status=1
+  done
+  return "$removal_status"
 }
 
 initial_resources=$(project_resources) || \
   fail 'disposable project resources could not be inspected' 5
+initial_owned_resources=$(owned_resources) || \
+  fail 'disposable owner resources could not be inspected' 5
 if [ -n "$initial_resources" ]; then
   fail 'generated disposable project unexpectedly already exists' 5
+fi
+if [ -n "$initial_owned_resources" ]; then
+  fail 'generated disposable owner unexpectedly already exists' 5
 fi
 
 touched=0
@@ -167,10 +217,26 @@ cleanup() {
   # while the exact random project is torn down and its absence is verified.
   trap - 0
   if [ "$touched" -eq 1 ]; then
-    compose_down >/dev/null 2>&1 || cleanup_status=1
+    before_project=
+    before_owned=
+    before_project=$(project_resources 2>/dev/null) || cleanup_status=1
+    before_owned=$(owned_resources 2>/dev/null) || cleanup_status=1
+    if [ "$before_project" != "$before_owned" ]; then
+      cleanup_status=1
+      printf 'ORPHAN_MINIO_GATE: disposable ownership mismatch (%s)\n' "$project" >&2
+    fi
+    # Delete only the exact conjunction of random project and random owner.
+    # Compose-wide teardown is intentionally avoided after creation because a
+    # foreign resource could acquire the project label between inspections.
+    remove_owned_resources || cleanup_status=1
+    remaining_owned=
+    remaining_owned=$(owned_resources 2>/dev/null) || cleanup_status=1
+    if [ -n "$remaining_owned" ]; then
+      cleanup_status=1
+    fi
     remaining_resources=
     remaining_resources=$(project_resources 2>/dev/null) || cleanup_status=1
-    if [ -n "$remaining_resources" ]; then
+    if [ "$before_project" = "$before_owned" ] && [ -n "$remaining_resources" ]; then
       cleanup_status=1
     fi
   fi
@@ -217,7 +283,6 @@ compose() {
       "$@"
   fi
 }
-compose_source=0
 touched=1
 compose up --detach --wait --wait-timeout 300 \
   postgres minio minio-init database-init

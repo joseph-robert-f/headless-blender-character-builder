@@ -47,6 +47,7 @@ class PublicDocumentationTests(unittest.TestCase):
             "docs/troubleshooting.md",
             "docs/character-spec.md",
             "docs/api.md",
+            "docs/release-process.md",
             "examples/README.md",
         )
         snippets: list[str] = []
@@ -82,6 +83,8 @@ class PublicDocumentationTests(unittest.TestCase):
             "docs/api.md",
             "examples/README.md",
             "scripts/doctor",
+            "scripts/service-client",
+            "scripts/service-images",
         )
         for relative in required:
             self.assertTrue((ROOT / relative).is_file(), relative)
@@ -112,6 +115,7 @@ class PublicDocumentationTests(unittest.TestCase):
         self.assertIn("./scripts/doctor", readme)
         self.assertIn("make build", readme)
         self.assertIn("make verify", readme)
+        self.assertIn("make inspect", readme)
         self.assertIn("OUTPUT_NAME=", readme)
         self.assertIn("No project package is published on PyPI", readme)
 
@@ -119,16 +123,25 @@ class PublicDocumentationTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("no project-published PyPI package", installation)
-        self.assertIn("curl's required flags", installation)
+        self.assertIn("Curl is optional", installation)
         self.assertIn("Linux `amd64`, Python 3.11+, Compose 2.24.4+", installation)
         self.assertIn("export PYTHON=python3.11", installation)
         self.assertIn('"$PYTHON" -m builder_cli build', installation)
         self.assertIn('"$PYTHON" -m builder_cli verify', installation)
+        self.assertIn("make service-image-cleanup", installation)
+        self.assertIn("Never substitute a global", installation)
+        for command in (
+            "docker system prune",
+            "docker builder prune",
+            "docker image prune",
+            "docker volume prune",
+        ):
+            self.assertIn(command, installation)
 
         compatibility = (ROOT / "docs" / "compatibility.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn("`--fail-with-body` and `--noproxy`", compatibility)
+        self.assertIn("manual API protocol example", compatibility)
 
         test_plan = (ROOT / "TEST_PLAN.md").read_text(encoding="utf-8")
         self.assertIn("make test-unit", test_plan)
@@ -188,6 +201,8 @@ class PublicDocumentationTests(unittest.TestCase):
         examples = (ROOT / "examples" / "README.md").read_text(encoding="utf-8")
         self.assertIn("facet-bot.json", examples)
         self.assertIn("**Passes**", examples)
+        self.assertIn("facet-bot-tidepool.json", examples)
+        self.assertIn("teal-and-ice palette", examples)
         self.assertIn("moss-hopper.json", examples)
         self.assertIn("**`needs_review`**", examples)
         self.assertIn("schema-valid", examples.lower().replace(" ", "-"))
@@ -203,6 +218,11 @@ class PublicDocumentationTests(unittest.TestCase):
         self.assertIn("manifest Blender binary provenance mismatch", troubleshooting)
         self.assertIn("README quickstart uses `build/facet-bot`", troubleshooting)
         self.assertIn("`make demo` alias uses\n`build/demo`", troubleshooting)
+        self.assertIn("make inspect OUTPUT_NAME=facet-bot", troubleshooting)
+        self.assertIn("docker: command not found` inside WSL2", troubleshooting)
+        self.assertIn("Native Windows shell or path errors", troubleshooting)
+        self.assertIn("make service-image-cleanup", troubleshooting)
+        self.assertIn("never run a global image, builder, volume, or", troubleshooting)
 
         guide = (ROOT / "docs" / "character-spec.md").read_text(encoding="utf-8")
         for value in (
@@ -319,7 +339,9 @@ class PublicDocumentationTests(unittest.TestCase):
         )
 
         notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
-        self.assertIn("local and VPS-reference state service", notices)
+        self.assertIn("Project-derived gosu-free runtime", notices)
+        self.assertIn("exact `postgres:16.14-alpine3.24` digest-pinned official image", notices)
+        self.assertIn("preserves the upstream filesystem, entrypoint, and notices", notices)
         self.assertIn("local and VPS-reference queue/coordination service", notices)
         self.assertIn("local compatibility fixture only", notices)
 

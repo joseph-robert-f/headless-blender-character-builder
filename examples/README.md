@@ -1,6 +1,7 @@
 # Examples and ideas
 
-The bundled requests show two different outcomes on purpose. A request can be
+The bundled requests show both visual customization and two different QA
+outcomes. A request can be
 schema-valid JSON and still fail the geometry publication gate. That distinction is a
 feature: the builder publishes a success manifest only after the generated
 Blender scene, GLB, and STL pass the complete checks.
@@ -10,6 +11,7 @@ Blender scene, GLB, and STL pass the complete checks.
 | Request | What it demonstrates | Expected result |
 |---|---|---|
 | [`facet-bot.json`](requests/facet-bot.json) | The canonical geometric mascot and release fixture | **Passes** the complete build and fresh-process verification gates |
+| [`facet-bot-tidepool.json`](requests/facet-bot-tidepool.json) | The same reviewed Facet Bot geometry with a teal-and-ice palette | **Passes** the complete build and fresh-process verification gates |
 | [`moss-hopper.json`](requests/moss-hopper.json) | A materially different chibi character and the fail-closed review path | **`needs_review`**; builder code `11`, no output directory, and no success manifest |
 
 Build and independently reopen the passing example without overwriting the
@@ -24,6 +26,22 @@ make verify REQUEST="$PWD/examples/requests/facet-bot.json" OUTPUT_NAME=facet-bo
 The expected final markers are `BUILDER_VALIDATE: PASS`,
 `BUILDER_BUILD: PASS`, and `BUILDER_VERIFY: PASS`. The result is in
 `build/facet-bot-example/`.
+
+To see a known-good color change without changing the geometry, build the
+Tidepool palette into a different output directory:
+
+```sh
+make validate REQUEST="$PWD/examples/requests/facet-bot-tidepool.json"
+make build REQUEST="$PWD/examples/requests/facet-bot-tidepool.json" OUTPUT_NAME=facet-bot-tidepool
+make verify REQUEST="$PWD/examples/requests/facet-bot-tidepool.json" OUTPUT_NAME=facet-bot-tidepool
+```
+
+Facet Bot uses its first palette swatch for the body, base, and limbs, and its
+second for the head, hands, feet, badge, and antenna tips. Tidepool changes
+orange/cream to teal/ice while intentionally keeping every geometry-affecting
+field and the material preset the same; only its palette and request identity
+(name/slug) differ. This makes it a safe starting point for learning which
+visible parts each swatch controls.
 
 To exercise the safe review outcome:
 

@@ -21,11 +21,13 @@ FIXTURE_FILES = (
     ".github/workflows/release-candidate.yml",
     "THIRD_PARTY_NOTICES.md",
     "compose.yaml",
+    "deploy/vps/compose.yaml",
     "deploy/vps/release.lock.env.example",
     "docker/BLENDER_SOURCE_NOTICE.md",
     "docker/blender-download.sha256",
     "docker/builder.Dockerfile",
     "docker/minio.Dockerfile",
+    "docker/postgres.Dockerfile",
     "docker/service.Dockerfile",
     "docker/service-requirements.lock",
     "docker/service-test-requirements.lock",
@@ -43,11 +45,14 @@ FIXTURE_FILES = (
     "scripts/minio-recipe-id",
     "scripts/release-artifacts",
     "scripts/release-check",
+    "scripts/release-publication-preflight",
     "scripts/service-compose",
     "service/pyproject.toml",
     "tests/deployment/g8_recovery_compose.yaml",
     "tests/deployment/g8_caddy_gate.py",
     "tests/deployment/test_g8_recovery_drill.py",
+    "tests/security/postgres_fixture_gate.py",
+    "tests/service_integration/g8_orphan_minio_compose.yaml",
 )
 
 
@@ -803,20 +808,108 @@ class DependencyAuditTests(unittest.TestCase):
             )
 
     def test_compose_and_docker_provenance_mutations_are_detected(self) -> None:
-        with self.subTest(surface="recovery Compose"), tempfile.TemporaryDirectory() as temporary:
+        with self.subTest(surface="PostgreSQL gosu removal"), tempfile.TemporaryDirectory() as temporary:
             root = fixture_root(Path(temporary))
-            compose = (root / "compose.yaml").read_text(encoding="utf-8")
-            reference = audit_tool.compose_service_image(compose, "postgres")
-            changed = reference[:-64] + "f" * 64
             replace_once(
                 root,
-                "tests/deployment/g8_recovery_compose.yaml",
+                "docker/postgres.Dockerfile",
+                "rm -f /usr/local/bin/gosu",
+                "test ! -e /usr/local/bin/gosu",
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "compose-postgres", "does not remove gosu exactly once"
+            )
+
+        with self.subTest(surface="PostgreSQL VPS build reset"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            replace_once(
+                root,
+                "deploy/vps/compose.yaml",
+                "services:\n  postgres:\n    <<: *vps-service\n    build: !reset null",
+                "services:\n  postgres:\n    <<: *vps-service\n    build:\n      context: ../..",
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "compose-postgres", "does not disable local image builds"
+            )
+
+        with self.subTest(surface="recovery Compose"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            relative = "tests/deployment/g8_recovery_compose.yaml"
+            reference = audit_tool.compose_service_image(
+                (root / relative).read_text(encoding="utf-8"), "postgres"
+            )
+            changed = reference.replace("HBCB_G8_POSTGRES_IMAGE", "HBCB_G8_OTHER_IMAGE")
+            replace_once(
+                root,
+                relative,
                 reference,
                 changed,
             )
             report = audit_tool.run_audit(root, online=False)
             self.assert_check_failure(
-                report, "compose-postgres", "Compose image differs"
+                report, "compose-postgres", "local image expression is stale"
+            )
+
+        with self.subTest(surface="orphan Compose"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            relative = "tests/service_integration/g8_orphan_minio_compose.yaml"
+            reference = audit_tool.compose_service_image(
+                (root / relative).read_text(encoding="utf-8"), "postgres"
+            )
+            changed = reference.replace(
+                "HBCB_ORPHAN_POSTGRES_IMAGE_ID", "HBCB_ORPHAN_OTHER_IMAGE_ID"
+            )
+            replace_once(
+                root,
+                relative,
+                reference,
+                changed,
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "compose-postgres", "local image expression is stale"
+            )
+
+        with self.subTest(surface="PostgreSQL runtime gate"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            policy = json.loads(
+                (root / "release/dependency-policy.json").read_text(encoding="utf-8")
+            )
+            reference = next(
+                item["base_reference"]
+                for item in policy["compose_images"]
+                if item["id"] == "postgres"
+            )
+            replace_once(
+                root,
+                "tests/security/postgres_fixture_gate.py",
+                reference[-64:],
+                "d" * 64,
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "compose-postgres", "lacks the exact base image assertion"
+            )
+
+        with self.subTest(surface="Compose policy inventory"), tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            policy_path = root / "release" / "dependency-policy.json"
+            document = json.loads(policy_path.read_text(encoding="utf-8"))
+            postgres = next(
+                item for item in document["compose_images"] if item["id"] == "postgres"
+            )
+            postgres["assertion_files"].remove(
+                "tests/security/postgres_fixture_gate.py"
+            )
+            policy_path.write_text(
+                json.dumps(document, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            report = audit_tool.run_audit(root, online=False)
+            self.assert_check_failure(
+                report, "compose-postgres", "expected inventory"
             )
 
         with self.subTest(surface="builder OCI provenance"), tempfile.TemporaryDirectory() as temporary:
@@ -838,6 +931,32 @@ class DependencyAuditTests(unittest.TestCase):
             )
             report = audit_tool.run_audit(root, online=False)
             self.assert_check_failure(report, "docker-base", "OCI base digest is stale")
+
+    def test_local_build_missing_or_non_string_target_fails_closed(self) -> None:
+        for surface, mutate in (
+            ("missing target", lambda postgres: postgres.pop("target")),
+            ("non-string target", lambda postgres: postgres.__setitem__("target", 7)),
+        ):
+            with self.subTest(surface=surface), tempfile.TemporaryDirectory() as temporary:
+                root = fixture_root(Path(temporary))
+                policy_path = root / "release" / "dependency-policy.json"
+                document = json.loads(policy_path.read_text(encoding="utf-8"))
+                postgres = next(
+                    item
+                    for item in document["compose_images"]
+                    if item["id"] == "postgres"
+                )
+                mutate(postgres)
+                policy_path.write_text(
+                    json.dumps(document, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                report = audit_tool.run_audit(root, online=False)
+                self.assert_check_failure(
+                    report,
+                    "compose-postgres",
+                    "Local-build Compose image recipe is incomplete",
+                )
 
 
 if __name__ == "__main__":

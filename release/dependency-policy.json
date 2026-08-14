@@ -2,16 +2,28 @@
   "compose_images": [
     {
       "assertion_files": [
-        "tests/deployment/test_g8_recovery_drill.py"
+        "tests/security/postgres_fixture_gate.py"
       ],
       "files": [
         "compose.yaml",
-        "tests/deployment/g8_recovery_compose.yaml"
+        "deploy/vps/compose.yaml",
+        "tests/deployment/g8_recovery_compose.yaml",
+        "tests/service_integration/g8_orphan_minio_compose.yaml"
       ],
+      "base_reference": "postgres:16.14-alpine3.24@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
+      "dockerfile": "docker/postgres.Dockerfile",
       "id": "postgres",
+      "image_references": {
+        "compose.yaml": "${HBCB_POSTGRES_IMAGE:-hbcb-postgres-local:16.14-alpine3.24-hbcb.1}",
+        "deploy/vps/compose.yaml": "${HBCB_POSTGRES_IMAGE:?set digest-pinned HBCB_POSTGRES_IMAGE}",
+        "tests/deployment/g8_recovery_compose.yaml": "${HBCB_G8_POSTGRES_IMAGE:?set exact local gosu-free PostgreSQL image ID}",
+        "tests/service_integration/g8_orphan_minio_compose.yaml": "${HBCB_ORPHAN_POSTGRES_IMAGE_ID:?set exact local gosu-free PostgreSQL image ID}"
+      },
       "notice_label": "PostgreSQL",
       "official_image": "postgres",
-      "service": "postgres"
+      "scan_mode": "local-build",
+      "service": "postgres",
+      "target": "postgres"
     },
     {
       "assertion_files": [
@@ -40,6 +52,7 @@
   "dockerfile_frontend": {
     "files": [
       "docker/minio.Dockerfile",
+      "docker/postgres.Dockerfile",
       "docker/service.Dockerfile"
     ],
     "reference": "docker/dockerfile:1.25@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12"
@@ -70,6 +83,7 @@
       "files": [
         "docker/builder.Dockerfile",
         "docker/minio.Dockerfile",
+        "docker/postgres.Dockerfile",
         "docker/service.Dockerfile"
       ],
       "id": "dockerfile-frontend",
@@ -85,6 +99,7 @@
         "scripts/fetch-corresponding-source",
         "scripts/release-artifacts",
         "scripts/release-check",
+        "scripts/release-publication-preflight",
         "THIRD_PARTY_NOTICES.md"
       ],
       "id": "blender",

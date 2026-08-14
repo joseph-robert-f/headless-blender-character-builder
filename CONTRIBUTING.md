@@ -3,7 +3,9 @@
 Thank you for helping improve Headless Blender Character Builder. The v0.1
 scope is intentionally narrow: bounded JSON recipes, one reviewed geometric
 generator, deterministic artifact contracts, fail-closed geometry QA, a
-loopback development service, and a production-oriented deployment reference.
+supported trusted-user one-shot Docker builder, an experimental loopback
+service, and an out-of-scope VPS design reference. Passing tests for an
+experimental or future surface does not add it to v0.1 support.
 
 Start with the [installation guide](docs/installation.md), then use the
 [documentation index](docs/README.md) to find the area you are changing. You do

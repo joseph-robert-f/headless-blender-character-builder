@@ -46,6 +46,35 @@ EXPECTED_IMAGE_TAGS = {
     "builder": "headless-blender-character-builder",
     "worker": "headless-blender-character-builder-worker",
 }
+COMMON_IMAGE_LABELS = {
+    "org.opencontainers.image.licenses": "GPL-3.0-or-later",
+    "org.opencontainers.image.source": CANONICAL_SOURCE_URL,
+}
+BUILDER_IMAGE_LABELS = {
+    "org.blender.download.sha256": "95e3a2dfedba3bd32ca54fc355eac6b15a11986954ccb02815a07535d0120a25",
+    "org.blender.download.url": "https://download.blender.org/release/Blender4.5/blender-4.5.12-linux-x64.tar.xz",
+    "org.blender.version": "4.5.12 LTS",
+    "org.opencontainers.image.base.digest": "sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241",
+    "org.opencontainers.image.base.name": "debian:bookworm-20260803-slim",
+    "org.opencontainers.image.description": "Deterministic, headless Blender 4.5 LTS character builder",
+}
+ROLE_FIXED_LABELS = {
+    "api": {
+        **COMMON_IMAGE_LABELS,
+        "org.opencontainers.image.title": "Headless Blender Character Builder service",
+    },
+    "builder": {
+        **COMMON_IMAGE_LABELS,
+        **BUILDER_IMAGE_LABELS,
+        "org.opencontainers.image.title": "Headless Blender Character Builder",
+    },
+    "worker": {
+        **COMMON_IMAGE_LABELS,
+        **BUILDER_IMAGE_LABELS,
+        "io.hbcb.builder.contract": "complete-v1",
+        "org.opencontainers.image.title": "Headless Blender Character Builder supervisor",
+    },
+}
 SAMPLE_ARTIFACTS = (
     "diagnostics/back.png",
     "diagnostics/front.png",
@@ -166,7 +195,7 @@ def _load_corresponding_source_policy(payload: bytes) -> Dict[str, object]:
         raise PackagingFailure(
             "invalid_source_policy", "corresponding-source policy is invalid JSON"
         ) from None
-    if not isinstance(document, dict) or set(document) != {"blender", "format"}:
+    if not isinstance(document, dict) or set(document) != {"blender", "format", "publication"}:
         raise PackagingFailure(
             "invalid_source_policy", "corresponding-source policy has unsupported fields"
         )
@@ -175,6 +204,7 @@ def _load_corresponding_source_policy(payload: bytes) -> Dict[str, object]:
             "invalid_source_policy", "corresponding-source policy format is unsupported"
         )
     blender = document.get("blender")
+    publication = document.get("publication")
     expected = {
         "archive",
         "bytes",
@@ -187,6 +217,35 @@ def _load_corresponding_source_policy(payload: bytes) -> Dict[str, object]:
     if not isinstance(blender, dict) or set(blender) != expected:
         raise PackagingFailure(
             "invalid_source_policy", "Blender source policy has unsupported fields"
+        )
+    publication_keys = {
+        "delivery_method",
+        "public_oci_ready",
+        "publication_gate",
+        "retention",
+        "scope",
+    }
+    if (
+        not isinstance(publication, dict)
+        or set(publication) != publication_keys
+        or publication.get("delivery_method") != "co-published-release-assets"
+        or type(publication.get("public_oci_ready")) is not bool
+        or publication.get("publication_gate")
+        not in {
+            "blocked-pending-complete-copyleft-source-review",
+            "reviewed-complete-source-delivery",
+        }
+        or publication.get("public_oci_ready")
+        != (publication.get("publication_gate") == "reviewed-complete-source-delivery")
+        or publication.get("retention")
+        != "retain-with-each-public-image-version-for-its-public-lifetime"
+        or publication.get("scope")
+        not in {"project-and-blender-source-only", "complete-reviewed-image-source"}
+        or publication.get("public_oci_ready")
+        != (publication.get("scope") == "complete-reviewed-image-source")
+    ):
+        raise PackagingFailure(
+            "invalid_source_policy", "publication source policy values violate release policy"
         )
     version = blender.get("version")
     archive = blender.get("archive")
@@ -210,10 +269,12 @@ def _load_corresponding_source_policy(payload: bytes) -> Dict[str, object]:
         raise PackagingFailure(
             "invalid_source_policy", "Blender source policy values violate release policy"
         )
-    return blender
+    return {"blender": blender, "publication": publication}
 
 
 def _validate_source_notice(payload: bytes, policy: Mapping[str, object]) -> None:
+    blender = policy["blender"]
+    assert isinstance(blender, dict)
     try:
         notice = payload.decode("utf-8", "strict")
     except UnicodeDecodeError:
@@ -221,11 +282,11 @@ def _validate_source_notice(payload: bytes, policy: Mapping[str, object]) -> Non
             "invalid_source_notice", "Blender source notice is not valid UTF-8"
         ) from None
     required = (
-        "Corresponding source archive: <%s>" % policy["source_url"],
-        "Corresponding source bytes: `%s`" % policy["bytes"],
-        "Corresponding source SHA-256: `%s`" % policy["sha256"],
+        "Corresponding source archive: <%s>" % blender["source_url"],
+        "Corresponding source bytes: `%s`" % blender["bytes"],
+        "Corresponding source SHA-256: `%s`" % blender["sha256"],
         "Upstream-published corresponding source MD5: `%s`"
-        % policy["official_md5"],
+        % blender["official_md5"],
     )
     if any(marker not in notice for marker in required):
         raise PackagingFailure(
@@ -375,43 +436,20 @@ def _normalize_image_inspect(
     labels = config.get("Labels") if isinstance(config, dict) else None
     if not isinstance(labels, dict):
         raise PackagingFailure("invalid_image_metadata", "release image labels are missing: " + role)
-    required_labels = (
-        "org.opencontainers.image.licenses",
-        "org.opencontainers.image.revision",
-        "org.opencontainers.image.source",
-        "org.opencontainers.image.version",
-    )
-    if any(not isinstance(labels.get(key), str) or not labels[key] for key in required_labels):
+    expected_labels = {
+        **ROLE_FIXED_LABELS[role],
+        "org.opencontainers.image.revision": expected_revision,
+        "org.opencontainers.image.version": expected_version,
+    }
+    if any(labels.get(key) != value for key, value in expected_labels.items()):
         raise PackagingFailure("invalid_image_metadata", "release image labels are incomplete: " + role)
-    if (
-        labels["org.opencontainers.image.licenses"] != "GPL-3.0-or-later"
-        or labels["org.opencontainers.image.source"] != CANONICAL_SOURCE_URL
-        or labels["org.opencontainers.image.version"] != expected_version
-        or labels["org.opencontainers.image.revision"] != expected_revision
-    ):
-        raise PackagingFailure("invalid_image_metadata", "release image labels violate policy: " + role)
     expected_tag = EXPECTED_IMAGE_TAGS[role] + ":" + expected_version
     if expected_tag not in tags:
         raise PackagingFailure(
             "invalid_image_metadata", "release image tag does not match distribution identity: " + role
         )
-    if role in {"builder", "worker"}:
-        if (
-            labels.get("org.blender.version") != "4.5.12 LTS"
-            or labels.get("org.blender.download.sha256")
-            != "95e3a2dfedba3bd32ca54fc355eac6b15a11986954ccb02815a07535d0120a25"
-        ):
-            raise PackagingFailure(
-                "invalid_image_metadata", "release Blender identity is invalid: " + role
-            )
-    selected_labels = {
-        key: labels[key]
-        for key in sorted(labels)
-        if key.startswith("org.opencontainers.image.")
-        or key.startswith("org.blender.")
-        or key.startswith("io.hbcb.")
-    }
-    if any(not isinstance(value, str) or len(value) > 1024 for value in selected_labels.values()):
+    selected_labels = {key: labels[key] for key in sorted(expected_labels)}
+    if any(not isinstance(value, str) or not value or len(value) > 1024 for value in selected_labels.values()):
         raise PackagingFailure("invalid_image_metadata", "release image label value is invalid: " + role)
     title = selected_labels.get("org.opencontainers.image.title", "").casefold()
     role_title_valid = (
@@ -434,11 +472,17 @@ def _normalize_image_inspect(
         raise PackagingFailure("invalid_image_metadata", "release image layer inventory is invalid: " + role)
     return {
         "architecture": architecture,
+        "expected_public_tag": expected_tag,
         "image_id": image_id,
         "labels": selected_labels,
         "os": operating_system,
-        "repo_digests": sorted(set(digests)),
-        "repo_tags": sorted(set(tags)),
+        # RepoTags and RepoDigests are daemon-global aliases. An otherwise
+        # identical image may also be tagged for a private registry on the
+        # packaging host, so copying those arrays into a public release would
+        # disclose unrelated repository names. The pre-publication bundle has
+        # no reviewed registry digest yet; that identity is captured only
+        # after the private push and before visibility changes.
+        "published_digest": None,
         "rootfs_layers": layers,
     }
 
@@ -549,9 +593,11 @@ def _corresponding_source(root: Path, policy: Mapping[str, object]) -> Tuple[str
         raise PackagingFailure(
             "unsafe_corresponding_source", "corresponding-source input must be a real directory"
         )
-    archive = policy["archive"]
-    expected_size = policy["bytes"]
-    expected_sha256 = policy["sha256"]
+    blender = policy["blender"]
+    assert isinstance(blender, dict)
+    archive = blender["archive"]
+    expected_size = blender["bytes"]
+    expected_sha256 = blender["sha256"]
     assert isinstance(archive, str)
     assert isinstance(expected_size, int)
     assert isinstance(expected_sha256, str)
@@ -585,14 +631,18 @@ def _corresponding_source_inventory(
     policy: Mapping[str, object],
     image_records: Mapping[str, object],
 ) -> Dict[str, object]:
+    blender = policy["blender"]
+    publication = policy["publication"]
+    assert isinstance(blender, dict)
+    assert isinstance(publication, dict)
     materials = {
         "blender-source": {
             "artifact": blender_archive,
             "bytes": len(blender_payload),
-            "license": policy["license"],
-            "origin": policy["source_url"],
+            "license": blender["license"],
+            "origin": blender["source_url"],
             "sha256": hashlib.sha256(blender_payload).hexdigest(),
-            "version": policy["version"],
+            "version": blender["version"],
         },
         "project-source": {
             "artifact": project_archive,
@@ -625,15 +675,15 @@ def _corresponding_source_inventory(
             "sbom": role + ".spdx.json",
         }
     return {
-        "delivery_method": "co-published-release-assets",
+        "delivery_method": publication["delivery_method"],
         "distribution_version": version,
         "format": "hbcb-corresponding-source-inventory/v1",
         "images": images,
         "materials": materials,
-        "public_oci_ready": False,
-        "publication_gate": "blocked-pending-complete-copyleft-source-review",
-        "retention": "retain-with-each-public-image-version-for-its-public-lifetime",
-        "scope": "project-and-blender-source-only",
+        "public_oci_ready": publication["public_oci_ready"],
+        "publication_gate": publication["publication_gate"],
+        "retention": publication["retention"],
+        "scope": publication["scope"],
         "source_revision": revision,
     }
 
@@ -743,9 +793,7 @@ def package(
             "source_notice_missing", "audited source omits the Blender source notice"
         )
     source_policy = _load_corresponding_source_policy(source_payloads[SOURCE_POLICY_PATH])
-    _validate_source_notice(
-        source_payloads["docker/BLENDER_SOURCE_NOTICE.md"], source_policy
-    )
+    _validate_source_notice(source_payloads["docker/BLENDER_SOURCE_NOTICE.md"], source_policy)
     blender_archive, blender_source_payload = _corresponding_source(
         corresponding_source_dir, source_policy
     )

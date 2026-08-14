@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
 import time
@@ -16,7 +17,11 @@ from typing import Any, Mapping, Sequence
 
 from shared.build_manifest import BuildManifest, REQUIRED_ARTIFACTS
 from shared.character_spec import BuildRequest
-from shared.json_contract import ContractValidationError, MAX_BUILD_REQUEST_BYTES
+from shared.json_contract import (
+    ContractValidationError,
+    MAX_BUILD_REQUEST_BYTES,
+    canonical_json_bytes,
+)
 from shared.source_revision import source_revision
 
 from .exit_codes import APPLICATION_FAILURES, ExitCode
@@ -202,6 +207,90 @@ def validate_request(request_path: str) -> None:
     """Validate one bounded BuildRequest without starting Blender or writing output."""
 
     _request(request_path)
+
+
+def inspect_manifest(manifest_path: str) -> None:
+    """Print one bounded, path-free summary of a canonical success manifest."""
+
+    descriptor: int | None = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(manifest_path, flags)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError("manifest is not a regular file")
+        if metadata.st_size <= 0:
+            raise BuilderCliFailure(
+                int(ExitCode.VERIFICATION), "success manifest is invalid"
+            )
+        if metadata.st_size > MAX_MANIFEST_BYTES:
+            raise BuilderCliFailure(
+                int(ExitCode.VERIFICATION), "success manifest exceeds its size limit"
+            )
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = None
+            payload = stream.read(MAX_MANIFEST_BYTES + 1)
+            after = os.fstat(stream.fileno())
+            if (
+                (
+                    after.st_dev,
+                    after.st_ino,
+                    after.st_size,
+                    after.st_mtime_ns,
+                    after.st_ctime_ns,
+                )
+                != (
+                    metadata.st_dev,
+                    metadata.st_ino,
+                    metadata.st_size,
+                    metadata.st_mtime_ns,
+                    metadata.st_ctime_ns,
+                )
+                or len(payload) != metadata.st_size
+            ):
+                raise OSError("manifest changed while being read")
+    except OSError as exc:
+        raise BuilderCliFailure(
+            int(ExitCode.FILESYSTEM), "could not read success manifest"
+        ) from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    try:
+        manifest = BuildManifest.from_json(payload)
+    except (ContractValidationError, TypeError, ValueError) as exc:
+        raise BuilderCliFailure(
+            int(ExitCode.VERIFICATION), "success manifest is invalid"
+        ) from exc
+    if payload != manifest.canonical_bytes + b"\n":
+        raise BuilderCliFailure(
+            int(ExitCode.VERIFICATION), "success manifest is not canonical"
+        )
+    summary = {
+        "artifact_count": len(manifest.artifacts),
+        "artifact_total_bytes": sum(
+            int(entry["bytes"]) for entry in manifest.artifacts.values()
+        ),
+        "blender_version": manifest.execution["blender_version"],
+        "dimensions_mm": list(manifest.dimensions_mm),
+        "execution_mode": manifest.execution["mode"],
+        "generator_version": manifest.generator_version,
+        "manifest_version": manifest.manifest_version,
+        "project_revision": manifest.execution["project_revision"],
+        "qa": {
+            "connected_shells": manifest.qa["connected_shells"],
+            "manifold": manifest.qa["manifold"],
+            "minimum_feature_mm": manifest.qa["minimum_feature_mm"],
+            "minimum_wall_mm": manifest.qa["minimum_wall_mm"],
+            "status": manifest.qa["status"],
+        },
+        "request_sha256": manifest.request_sha256,
+        "spec_sha256": manifest.spec_sha256,
+    }
+    print(canonical_json_bytes(summary).decode("utf-8", "strict"))
 
 
 def _new_output(raw_path: str) -> Path:

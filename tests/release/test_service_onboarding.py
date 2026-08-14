@@ -42,6 +42,9 @@ class ServiceOnboardingTests(unittest.TestCase):
         assert smoke is not None
         self.assertIn('DOCKER="$(DOCKER)"', smoke.group(1))
         self.assertIn('PYTHON="$(PYTHON)"', smoke.group(1))
+        self.assertRegex(makefile, r"(?m)^service-client:\s*$")
+        self.assertIn("./scripts/service-client --request", makefile)
+        self.assertTrue((ROOT / "scripts" / "service-client").is_file())
 
     def test_public_service_docs_use_project_wrappers_not_raw_compose(self) -> None:
         documents = (
@@ -102,7 +105,8 @@ class ServiceOnboardingTests(unittest.TestCase):
             self.assertIn(marker, api, marker)
         self.assertNotIn("facet-request-0001", api)
         self.assertIn("Omitting `Idempotency-Key`", api)
-        self.assertIn("lightweight custom-request service client", api)
+        self.assertIn("## Lightweight local client", api)
+        self.assertIn("make service-client", api)
         self.assertNotIn(
             'cp "$HBCB_API_TMP/artifacts.json" "$HBCB_STAGE/artifacts.json"',
             api,

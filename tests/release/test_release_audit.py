@@ -39,6 +39,7 @@ class ReleaseAuditTests(unittest.TestCase):
         for name in (
             "fetch-corresponding-source",
             "release-audit",
+            "release-publication-preflight",
             "service-sbom",
             "release-artifacts",
         ):
@@ -90,6 +91,93 @@ class ReleaseAuditTests(unittest.TestCase):
                 self.assertEqual(raised.exception.code, expected)
                 self.assertNotIn(secret, str(raised.exception))
                 self.assertNotIn("HighEntropy987654321", str(raised.exception))
+
+    def test_each_prohibited_publication_pattern_has_a_runtime_failure_fixture(self) -> None:
+        private_key = "-----BEGIN " + "PRIVATE KEY-----\nfixture\n"
+        aws_key = "AK" + "IA" + "A" * 16
+        github_token = "gh" + "p_" + "B" * 32
+        slack_token = "xo" + "xb-" + "D" * 24
+        assignment = "SERVICE_" + "TOKEN=" + "C" * 32 + "\n"
+        windows_path = "C:" + "\\" + "Users" + "\\" + "fixture-person\\work\n"
+        cases = (
+            ("generated_path_tracked", "build/result.txt", b"generated\n", 0o644),
+            (
+                "generated_path_tracked",
+                "src/__pycache__/module.pyc",
+                b"cache\n",
+                0o644,
+            ),
+            ("generated_artifact_tracked", "fixture.blend", b"blend\n", 0o644),
+            ("generated_artifact_tracked", "notes.bak", b"backup\n", 0o644),
+            (
+                "personal_path_tracked",
+                "windows-path.txt",
+                windows_path.encode("ascii"),
+                0o644,
+            ),
+            ("secret_detected", "aws.txt", (aws_key + "\n").encode("ascii"), 0o644),
+            (
+                "secret_detected",
+                "github.txt",
+                (github_token + "\n").encode("ascii"),
+                0o644,
+            ),
+            (
+                "secret_detected",
+                "slack.txt",
+                (slack_token + "\n").encode("ascii"),
+                0o644,
+            ),
+            (
+                "secret_detected",
+                "private-key.txt",
+                private_key.encode("ascii"),
+                0o644,
+            ),
+            (
+                "secret_detected",
+                "assignment.txt",
+                assignment.encode("ascii"),
+                0o644,
+            ),
+            (
+                "oversized_tracked_file",
+                "oversized.txt",
+                b"x" * (audit_tool.MAX_TRACKED_BYTES + 1),
+                0o644,
+            ),
+            (
+                "binary_policy_violation",
+                "unapproved.bin",
+                b"binary\0fixture",
+                0o644,
+            ),
+            (
+                "unsafe_executable",
+                "scripts/no-shebang",
+                b"exit 0\n",
+                0o755,
+            ),
+        )
+        for expected, name, payload, mode in cases:
+            with self.subTest(expected=expected, name=name), tempfile.TemporaryDirectory() as temporary:
+                repository = make_audit_repository(Path(temporary))
+                write(repository / name, payload, mode)
+                git(repository, "add", "--all")
+                export = Path(temporary) / "export"
+                export_index(repository, export)
+                with self.assertRaises(audit_tool.AuditFailure) as raised:
+                    audit_tool.audit(repository, export)
+                self.assertEqual(raised.exception.code, expected)
+                diagnostic = str(raised.exception)
+                for canary in (
+                    aws_key,
+                    github_token,
+                    slack_token,
+                    "C" * 32,
+                    "fixture-person",
+                ):
+                    self.assertNotIn(canary, diagnostic)
 
     def test_export_must_exactly_match_index_and_use_safe_modes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

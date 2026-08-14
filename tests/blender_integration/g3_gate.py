@@ -66,6 +66,7 @@ QA_SCHEMA = ROOT / "schemas" / "qa-v1.schema.json"
 INVALID_REQUEST = ROOT / "tests" / "fixtures" / "rejected" / "outer-extra-property.json"
 EXAMPLES = {
     "facet-bot": ROOT / "examples" / "requests" / "facet-bot.json",
+    "facet-bot-tidepool": ROOT / "examples" / "requests" / "facet-bot-tidepool.json",
     "moss-hopper": ROOT / "examples" / "requests" / "moss-hopper.json",
 }
 
@@ -1293,7 +1294,7 @@ def _write_summary(path: Path, reports: Mapping[str, Mapping[str, Any]]) -> None
             "autoexec_disabled": True,
             "factory_startup": True,
             "network_offline": True,
-            "public_runner_success_processes": 2,
+            "public_runner_success_processes": len(reports),
         },
         "repeat_stable": True,
         "regressions": {"vertex_pinched_shell_rejected": True},
@@ -1321,6 +1322,7 @@ def run_gate(blender: Path, work_dir: Path, timeout_seconds: int) -> None:
     targets = {
         "facet-bot-run-1": work_dir / "facet-bot-run-1",
         "facet-bot-run-2": work_dir / "facet-bot-run-2",
+        "facet-bot-tidepool": work_dir / "facet-bot-tidepool",
     }
     probes = {key: work_dir / f"{key}-probe.json" for key in targets}
     reserved = (
@@ -1349,11 +1351,12 @@ def run_gate(blender: Path, work_dir: Path, timeout_seconds: int) -> None:
     requests = {
         "facet-bot-run-1": EXAMPLES["facet-bot"],
         "facet-bot-run-2": EXAMPLES["facet-bot"],
+        "facet-bot-tidepool": EXAMPLES["facet-bot-tidepool"],
     }
     reports: Dict[str, Dict[str, Any]] = {}
     for key, output in targets.items():
         request_path = requests[key]
-        slug = "facet-bot"
+        slug = BuildRequest.from_json(request_path.read_bytes()).spec.slug
         _run_success(blender, request_path, output, work_dir, timeout_seconds, key)
         _assert_exact_tree(output, key)
         report = _validate_contracts(output, request_path, blender, key)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import re
 import unittest
@@ -123,7 +125,12 @@ class ReleasePolicyTests(unittest.TestCase):
     def test_release_tools_contain_no_network_or_remote_git_operations(self) -> None:
         scripts = [
             (ROOT / "scripts" / name).read_text(encoding="utf-8")
-            for name in ("release-audit", "service-sbom", "release-artifacts")
+            for name in (
+                "release-audit",
+                "service-sbom",
+                "release-artifacts",
+                "release-publication-preflight",
+            )
         ]
         combined = "\n".join(scripts)
         for forbidden in (
@@ -240,22 +247,160 @@ class ReleasePolicyTests(unittest.TestCase):
 
     def test_publication_authenticates_before_any_remote_mutation(self) -> None:
         process = (ROOT / "docs" / "release-process.md").read_text(encoding="utf-8")
-        login = 'docker login ghcr.io -u "$GH_OWNER" --password-stdin'
-        first_image_push = 'docker push "ghcr.io/${GH_OWNER}/headless-blender-character-builder:${RC_VERSION}"'
+        login = '"$HBCB_PUBLISH_DOCKER" login ghcr.io -u "$GH_OWNER" --password-stdin'
+        first_image_push = '"$HBCB_PUBLISH_DOCKER" push "ghcr.io/${GH_OWNER}/headless-blender-character-builder:${RC_VERSION}"'
         tag_push = 'git push origin "v${RC_VERSION}"'
         self.assertEqual(process.count(login), 1)
         self.assertIn(first_image_push, process)
         self.assertIn(tag_push, process)
+        self.assertIn('export HBCB_PUBLISH_DOCKER=${DOCKER:-docker}', process)
+        self.assertIn('command -v "$HBCB_PUBLISH_DOCKER"', process)
         publication_start = process.index("```sh\n(\nset -eu", process.index("Exact registry"))
         self.assertLess(publication_start, process.index("command -v gh", publication_start))
         self.assertLess(process.index(login), process.index(first_image_push))
         self.assertLess(process.index(first_image_push), process.index(tag_push))
         self.assertIn("public_oci_ready: false", process)
         self.assertIn("Public OCI publication remains blocked", process)
-        readiness = 'inventory.get("public_oci_ready") is not True'
+        readiness = 'scripts/release-publication-preflight \\'
         self.assertIn(readiness, process)
+        self.assertLess(process.index(readiness), process.index(login))
         self.assertLess(process.index(readiness), process.index(first_image_push))
+        tag_end = process.index(
+            '"ghcr.io/${GH_OWNER}/headless-blender-character-builder-worker:${RC_VERSION}"',
+            process.index('"$HBCB_PUBLISH_DOCKER" tag "$WORKER_IMAGE_ID"'),
+        )
+        immediate_preflight = process.index(
+            'publication_preflight --registry-owner "$GH_OWNER"', tag_end
+        )
+        self.assertLess(immediate_preflight, process.index(first_image_push))
+        self.assertIn("published_digest: null", process)
+        finalizer = "--finalize-output-dir \"$PUBLISHED_RELEASE_DIR\""
+        final_digest_check = (
+            'publication_preflight --require-published-digests --registry-owner "$GH_OWNER"'
+        )
+        self.assertIn(finalizer, process)
+        self.assertIn(final_digest_check, process)
+        last_image_push = process.index(
+            '"$HBCB_PUBLISH_DOCKER" push "ghcr.io/${GH_OWNER}/headless-blender-character-builder-worker:${RC_VERSION}"'
+        )
+        self.assertLess(last_image_push, process.index(finalizer))
+        self.assertLess(process.index(finalizer), process.index(final_digest_check))
+        self.assertLess(process.index(final_digest_check), process.index(tag_push))
+        self.assertIn("registry-qualified GHCR tag", process)
+        self.assertIn("raw manifest whose config digest matches", process)
+        self.assertIn("RepoTags", process)
+        self.assertIn("RepoDigests", process)
+        self.assertIn('gh release delete "v${RC_VERSION}" --yes', process)
+        self.assertIn('git push origin --delete "v${RC_VERSION}"', process)
+        self.assertIn("exact version ID", process)
+        for role, variable in (
+            ("builder", "BUILDER_IMAGE_ID"),
+            ("api", "API_IMAGE_ID"),
+            ("worker", "WORKER_IMAGE_ID"),
+        ):
+            self.assertIn(
+                f"{variable}=$(publication_preflight --print-image-id {role})",
+                process,
+            )
+            self.assertIn(f'"$HBCB_PUBLISH_DOCKER" tag "${variable}"', process)
         self.assertIn("fail-fast but non-atomic operator transaction", process)
+
+    def test_publication_runbook_is_fail_closed_and_resumable(self) -> None:
+        process = (ROOT / "docs" / "release-process.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"$HBCB_PUBLISH_DOCKER" buildx version', process)
+        self.assertIn('test "$(gh api user --jq .login)" = "$GH_OWNER"', process)
+        self.assertIn("HBCB_CANONICAL_REPOSITORY=joseph-robert-f/", process)
+        self.assertIn('git remote get-url --push origin', process)
+        self.assertIn("SIGNING_PROBE_TAG_OBJECT", process)
+        self.assertIn("SIGNING_PROBE_INTENT=1", process)
+        self.assertIn("assert_remote_release_slot()", process)
+        self.assertIn("assert_package_private()", process)
+        self.assertIn("/user/packages?package_type=container&per_page=100", process)
+        self.assertIn('item.get("visibility") != "private"', process)
+        for package in (
+            "headless-blender-character-builder",
+            "headless-blender-character-builder-api",
+            "headless-blender-character-builder-worker",
+        ):
+            check = f"assert_remote_release_slot {package}"
+            push = (
+                '"$HBCB_PUBLISH_DOCKER" push '
+                f'"ghcr.io/${{GH_OWNER}}/{package}:${{RC_VERSION}}"'
+            )
+            private = f"assert_package_private {package}"
+            self.assertLess(process.index(check, process.index("# Push private")), process.index(push))
+            self.assertLess(process.index(push), process.index(private, process.index(push)))
+        self.assertIn(
+            'cmp -- "$RELEASE_DIR/SHA256SUMS" "$RELEASE_REVIEW_DIR/SHA256SUMS"',
+            process,
+        )
+        self.assertIn("downloaded draft asset set differs from the local bundle", process)
+        self.assertIn("downloaded review tree contains missing or extra paths", process)
+        self.assertIn("fresh disposable VM with an empty Docker daemon", process)
+        self.assertIn("HBCB_CLEAN_REGISTRY_VERIFY: PASS", process)
+        self.assertIn("verify_private_remote_role()", process)
+        self.assertIn("verify_public_remote_role()", process)
+        self.assertIn('existing_image_ids=$("$HBCB_VERIFY_DOCKER" image ls', process)
+        self.assertNotIn("clean verifier already contains a candidate image", process)
+        self.assertIn("HBCB_PUBLIC_VISIBILITY_COMMIT: PASS", process)
+        self.assertIn('test -d "$local_asset" && continue', process)
+        self.assertIn("local_names=sorted(", process)
+        builder_public = (
+            "verify_public_remote_role builder "
+            "headless-blender-character-builder"
+        )
+        api_private = (
+            "verify_private_remote_role api "
+            "headless-blender-character-builder-api"
+        )
+        api_public = (
+            "verify_public_remote_role api "
+            "headless-blender-character-builder-api"
+        )
+        worker_private = (
+            "verify_private_remote_role worker "
+            "headless-blender-character-builder-worker"
+        )
+        final_visibility = process.index("# Before changing the API package:")
+        self.assertLess(
+            process.index(builder_public, final_visibility),
+            process.index(api_private, final_visibility),
+        )
+        worker_visibility = process.index("# Before changing the worker package:")
+        self.assertLess(
+            process.index(builder_public, worker_visibility),
+            process.index(api_public, worker_visibility),
+        )
+        self.assertLess(
+            process.index(api_public, worker_visibility),
+            process.index(worker_private, worker_visibility),
+        )
+        self.assertIn("--draft=false --repo joseph-robert-f/", process)
+        self.assertIn("release.lock.env", process)
+        self.assertIn("PUBLISHED_RELEASE_DIR=\"${ORIGINAL_RELEASE_DIR}.published\"", process)
+        self.assertIn(".failed-<random>", process)
+        self.assertIn("--json assets,isDraft,tagName,url", process)
+        recovery = process.index("Use this bounded recovery inventory")
+        self.assertNotIn("imagetools inspect --raw \"$reference\" |", process[recovery:])
+        self.assertIn('> "$manifest"', process[recovery:])
+        self.assertIn('recovery_docker_config="$recovery_inventory/docker-config"', process[recovery:])
+        self.assertIn('export DOCKER_CONFIG=$recovery_docker_config', process[recovery:])
+        self.assertIn('unset CR_PAT', process[recovery:])
+        self.assertIn('--config "$release_curl_config"', process[recovery:])
+        self.assertNotIn('Authorization: Bearer $(gh auth token)', process[recovery:])
+        self.assertIn('chmod 0600 "$release_curl_config"', process[recovery:])
+        token_writer = (
+            'sys.stdout.write(f"header = \\"Authorization: Bearer '
+            '{token}\\"\\n")'
+        )
+        self.assertIn(token_writer, process[recovery:])
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exec("import sys\ntoken='abc'\n" + token_writer, {})
+        self.assertEqual(output.getvalue(), 'header = "Authorization: Bearer abc"\n')
+        self.assertIn("normal tracked-file index flags", process)
 
 
 if __name__ == "__main__":

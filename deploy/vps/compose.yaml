@@ -18,6 +18,8 @@ x-vps-service: &vps-service
 services:
   postgres:
     <<: *vps-service
+    build: !reset null
+    image: ${HBCB_POSTGRES_IMAGE:?set digest-pinned HBCB_POSTGRES_IMAGE}
     environment: !reset {}
     env_file: !override
       - path: ${HBCB_VPS_SECRETS_DIR:?set HBCB_VPS_SECRETS_DIR}/postgres.env

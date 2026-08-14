@@ -11,15 +11,20 @@ Compose, an AI key, or a provider account for one-shot builds.
 > is useful for source evaluation, but it is not the same as installing a
 > signed versioned release.
 
+The first release (v0.1) supports one trusted user building their own model locally with the
+one-shot Docker path. “Trusted” means that you control the machine and create
+or review the bounded JSON request. The local service is experimental; public,
+multi-tenant, and VPS operation are outside v0.1 support.
+
 ## Choose a path
 
 | Path | Status | Requirements |
 |---|---|---|
-| [Docker with Make](#container-path-recommended) | Recommended local path | Git, current Docker Engine/Desktop with BuildKit and `linux/amd64` support, GNU Make |
+| [Docker with Make](#container-path-recommended) | Supported v0.1 path | Git, current Docker Engine/Desktop with BuildKit and `linux/amd64` support, GNU Make |
 | [Docker without Make](#docker-without-make) | Equivalent manual path | Git, Docker, a POSIX shell, `id`, and `mkdir` |
 | [Native Blender](#native-blender-best-effort) | Best-effort contributor path | Git, Python 3.11+, exact Blender 4.5.12 LTS |
-| [Local asynchronous service](#local-asynchronous-service) | Local integration path | Local Docker daemon/context, Docker Compose 2.24.4+, Python 3.11+, curl, 8 GiB Docker memory, 20 GB free disk, and the container requirements |
-| [VPS reference](deployment.md) | Production-oriented design; not yet published for deployment | Linux `amd64`, Python 3.11+, Compose 2.24.4+, domain/TLS, private storage networking, external versioned S3, role secrets, and a future release lock/image set |
+| [Local asynchronous service](#local-asynchronous-service) | Experimental, local-only | One trusted operator, local Docker daemon/context, Docker Compose 2.24.4+, Python 3.11+, 8 GiB Docker memory, 20 GB free disk, and the container requirements |
+| [VPS reference](deployment.md) | Design reference; outside v0.1 support | Linux `amd64`, Python 3.11+, Compose 2.24.4+, and operations/security expertise; not a v0.1 installation path |
 
 The container runtime limit is four CPUs, 4 GB RAM, 512 PIDs, and 2 GB of
 scratch. Allow about four CPU cores, 8 GB of host RAM, and 10 GB of free disk
@@ -56,9 +61,9 @@ from [blender.org](https://www.blender.org/download/lts/4-5/); Homebrew is still
 not required.
 
 For the optional local service, Docker Desktop supplies the Compose plugin.
-Install Python 3.11+ from python.org, keep the system-provided `curl` current,
+Install Python 3.11+ from python.org,
 and allocate at least 8 GiB to Docker Desktop (12 GiB for `service-smoke`). The
-service doctor verifies Python, Compose, curl's required flags, and the current
+service doctor verifies Python, Compose, and the current
 Docker allocation before any service build.
 
 ### Linux
@@ -89,11 +94,12 @@ docker buildx version
 Do not work around a daemon permission failure by making the Docker socket
 world-writable.
 
-For the optional local service, also install `curl`, a Python 3.11+ interpreter,
-and Docker's Compose plugin inside Linux. Follow Docker's official repository
+For the optional local service, also install a Python 3.11+ interpreter and
+Docker's Compose plugin inside Linux. Follow Docker's official repository
 instructions for `docker-compose-plugin`; a legacy standalone `docker-compose`
-binary is not the documented path. Verify with `python3 --version`,
-`curl --version`, and `docker compose version`.
+binary is not the documented path. Verify with `python3 --version` and
+`docker compose version`. Curl is optional and is used only by the manual API
+protocol example.
 
 Native Linux `amd64` is the reference runtime. Linux `arm64` can emulate the
 release image but is best effort; no official native `arm64` Blender archive is
@@ -105,7 +111,7 @@ The Windows path is non-release-blocking and experimental. Use a WSL2 Linux
 distribution, then either enable Docker Desktop's WSL integration for that
 distribution or install Docker Engine inside it. Install Git and GNU Make in
 the Linux distribution, not only on Windows. For the optional service, install
-Python 3.11+, curl, and the Docker Compose plugin in that same distribution and
+Python 3.11+ and the Docker Compose plugin in that same distribution and
 verify them from the WSL shell.
 
 Keep the repository in the WSL filesystem, such as
@@ -180,6 +186,18 @@ build/facet-bot/
 ├── preview.png
 └── qa.json
 ```
+
+Print a bounded, path-free summary of the success manifest before opening any
+large artifact:
+
+```sh
+make inspect OUTPUT_NAME=facet-bot
+```
+
+This read-only command validates canonical `manifest.json` and reports the
+version, dimensions, QA summary, artifact count/bytes, and provenance hashes.
+It intentionally omits artifact paths and image references. It does not replace
+the fresh-process checks performed by `make verify`.
 
 You can inspect the preview with the file browser or a platform command:
 
@@ -383,6 +401,11 @@ The exported `PYTHON` selector also reaches the existing
 
 ## Local asynchronous service
 
+> **Scope:** this service is an experimental convenience for one trusted local
+> operator. Keep it on loopback and submit only requests you created or
+> reviewed. Do not use it for Internet-facing, multi-user, multi-tenant, or
+> hostile-input workloads.
+
 The local service is optional and requires a Docker daemon on this machine.
 An SSH, TCP, or HTTP Docker context is not supported because the API and
 artifact ports bind to the daemon host while the documented client connects to
@@ -406,8 +429,13 @@ make service-ps
 
 `service-ps` should show `api`, `worker`, PostgreSQL, Redis, and MinIO running.
 The one-shot `database-init` and `minio-init` rows should show `Exited (0)`;
-that is successful initialization, not a crash. Follow [HTTP API v1](api.md),
-then run `make service-down` when finished.
+that is successful initialization, not a crash. Submit a request with the
+lightweight client, then run `make service-down` when finished:
+
+```sh
+make service-client REQUEST="$PWD/examples/requests/facet-bot.json"
+make service-down
+```
 
 Use Python 3.11 or newer consistently. If `python3` is older, select an installed
 interpreter explicitly, for example `PYTHON=python3.11 make service-up`; use the
@@ -450,18 +478,37 @@ a different set of containers and volumes.
 `make service-down` stops containers while preserving the PostgreSQL, Redis,
 and MinIO development volumes. Preserve the ignored `.env` while those volumes
 exist because its generated credentials must continue to match them. The
-[API guide](api.md#copy-paste-local-client-journey) provides the request journey, and
+[API guide](api.md#lightweight-local-client) explains the client and protocol, and
 [troubleshooting](troubleshooting.md) covers safe recovery and evidence to
 include in a report.
+
+To reclaim only the selected service project's local image tags, stop first,
+review the exact list, and then invoke the narrow removal helper:
+
+```sh
+make service-down
+make service-images
+make service-image-cleanup
+```
+
+The helper removes only the six exact builder, derived-PostgreSQL, API, worker,
+MinIO-fixture, and test tags printed by `make service-images`. It keeps `.env` and every named
+volume. It also keeps shared Docker/BuildKit cache because Docker cannot prove
+that every cache record belongs to one checkout. Never substitute a global
+`docker system prune`, `docker builder prune`, `docker image prune`, or
+`docker volume prune`. A legacy `.env` without `HBCB_COMPOSE_PROJECT_NAME` selects shared
+`hbcb-local` tags, so automated removal refuses that identity; inspect the list
+and remove exact tags manually only after every legacy checkout is stopped.
 
 Use `make service-ps` for status and `make service-logs` for the last 100 API and
 worker log lines. These wrappers restore the checkout identity and required
 provenance automatically; do not substitute raw `docker compose` commands.
 
-There is no lightweight custom-request service client yet. For a first custom
-request, copy and validate the example as described in [Build another
-request](#build-another-request), start the stack, and then use that JSON file in
-the [copy-paste API journey](api.md#copy-paste-local-client-journey).
+For a custom request, copy and validate the example as described in [Build
+another request](#build-another-request), start the stack, and pass that JSON
+path as `REQUEST` to `make service-client`.
 
 The local stack is loopback-only and uses a MinIO compatibility fixture. It is
 not the [VPS reference](deployment.md) and must not be exposed to the Internet.
+The VPS material is a design and validation reference, not a supported v0.1
+deployment path.

@@ -49,7 +49,10 @@ class Draft202012RuntimeTests(unittest.TestCase):
     def test_examples_resolve_local_character_spec_ref_and_validate(self) -> None:
         validator = self.validators["build-request-v1.schema.json"]
         examples = sorted((ROOT / "examples" / "requests").glob("*.json"))
-        self.assertEqual([path.name for path in examples], ["facet-bot.json", "moss-hopper.json"])
+        self.assertEqual(
+            [path.name for path in examples],
+            ["facet-bot-tidepool.json", "facet-bot.json", "moss-hopper.json"],
+        )
         for path in examples:
             with self.subTest(path=path.name):
                 validator.validate(json.loads(path.read_text(encoding="utf-8")))

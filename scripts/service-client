@@ -1,0 +1,570 @@
+#!/usr/bin/env python3
+"""Bounded loopback client for one local HBCB service build."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import http.client
+import json
+import os
+import re
+import shutil
+import signal
+import stat
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path, PurePosixPath
+from typing import Any, Mapping, Sequence
+from uuid import UUID
+
+
+MAX_JSON_BYTES = 1024 * 1024
+MAX_REQUEST_BYTES = 64 * 1024
+MAX_ARTIFACT_BYTES = 2 * 1024 * 1024 * 1024
+MAX_POLL_ATTEMPTS = 600
+MAX_POLL_SECONDS = 1200
+REQUIRED_ARTIFACTS = (
+    "model.blend",
+    "model.glb",
+    "model.stl",
+    "preview.png",
+    "diagnostics/front.png",
+    "diagnostics/side.png",
+    "diagnostics/back.png",
+    "qa.json",
+    "manifest.json",
+)
+SAFE_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+SAFE_PORT = re.compile(r"^(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$")
+
+
+class ClientFailure(RuntimeError):
+    """A safe-to-display local client failure."""
+
+
+class _RecordedSignal(RuntimeError):
+    """Stop ordinary work after a signal without interrupting cleanup."""
+
+
+class RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):  # type: ignore[no-untyped-def]
+        return None
+
+
+class Client:
+    def __init__(self, api_port: int, storage_port: int, token: str) -> None:
+        self.api_base = f"http://127.0.0.1:{api_port}"
+        self.storage_port = storage_port
+        self.headers = {"Authorization": "Bearer " + token}
+        self.opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), RejectRedirects()
+        )
+        self.build_id: str | None = None
+        self.terminal = False
+
+    def _json_request(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: bytes | None = None,
+        timeout: float = 15,
+    ) -> Mapping[str, Any]:
+        headers = dict(self.headers)
+        if payload is not None and path == "/v1/builds":
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(
+            self.api_base + path,
+            data=payload,
+            headers=headers,
+            method=method,
+        )
+        try:
+            response = self.opener.open(request, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            try:
+                body = exc.read(MAX_JSON_BYTES + 1)
+            finally:
+                exc.close()
+            code = "http_request_failed"
+            try:
+                document = json.loads(body.decode("utf-8", "strict"))
+                candidate = document["error"]["code"]
+                if isinstance(candidate, str) and SAFE_CODE.fullmatch(candidate):
+                    code = candidate
+            except (UnicodeError, ValueError, KeyError, TypeError):
+                pass
+            raise ClientFailure(f"local API request failed ({code})") from None
+        except (urllib.error.URLError, http.client.HTTPException, OSError, TimeoutError):
+            raise ClientFailure("local API request failed") from None
+        with response:
+            if response.geturl() != request.full_url or response.status not in (200, 201, 202):
+                raise ClientFailure("local API response changed URL or status unexpectedly")
+            body = response.read(MAX_JSON_BYTES + 1)
+        if len(body) > MAX_JSON_BYTES:
+            raise ClientFailure("local API response is unexpectedly large")
+        try:
+            document = json.loads(body.decode("utf-8", "strict"))
+        except (UnicodeError, ValueError):
+            raise ClientFailure("local API response is invalid") from None
+        if not isinstance(document, dict):
+            raise ClientFailure("local API response is invalid")
+        return document
+
+    def submit(self, payload: bytes) -> str:
+        document = self._json_request(
+            "/v1/builds", method="POST", payload=payload, timeout=30
+        )
+        try:
+            build_id = str(UUID(document["build_id"]))
+        except (KeyError, TypeError, ValueError, AttributeError):
+            raise ClientFailure("build submission response is invalid") from None
+        self.build_id = build_id
+        return build_id
+
+    def cancel(self) -> None:
+        if self.build_id is None or self.terminal:
+            return
+        try:
+            self._json_request(
+                f"/v1/builds/{self.build_id}/cancel",
+                method="POST",
+                payload=b"",
+                timeout=15,
+            )
+        except ClientFailure:
+            pass
+
+    def poll(
+        self,
+        interval_seconds: float,
+        stop_requested=lambda: False,
+    ) -> Mapping[str, Any]:
+        assert self.build_id is not None
+        deadline = time.monotonic() + MAX_POLL_SECONDS
+        nonterminal = {"validating", "queued", "running", "geometry_qa", "rendering"}
+        terminal = {"succeeded", "failed", "canceled", "needs_review"}
+        for _attempt in range(MAX_POLL_ATTEMPTS):
+            if stop_requested():
+                raise _RecordedSignal
+            if time.monotonic() >= deadline:
+                break
+            document = self._json_request(f"/v1/builds/{self.build_id}")
+            if stop_requested():
+                raise _RecordedSignal
+            status = document.get("status")
+            code = document.get("terminal_code")
+            if document.get("build_id") != self.build_id or status not in nonterminal | terminal:
+                raise ClientFailure("build status response is invalid")
+            if status in {"failed", "canceled", "needs_review"}:
+                if not isinstance(code, str) or SAFE_CODE.fullmatch(code) is None:
+                    raise ClientFailure("build terminal code is invalid")
+            elif code is not None:
+                raise ClientFailure("build terminal code is invalid")
+            print(f"status: {status}")
+            if status in terminal:
+                self.terminal = True
+                if status != "succeeded":
+                    raise ClientFailure(f"build stopped at {status} ({code})")
+                return document
+            time.sleep(interval_seconds)
+        raise ClientFailure("build polling reached its bounded deadline")
+
+    def artifact_listing(self) -> Sequence[Mapping[str, Any]]:
+        assert self.build_id is not None
+        document = self._json_request(f"/v1/builds/{self.build_id}/artifacts", timeout=30)
+        entries = document.get("artifacts")
+        if (
+            document.get("build_id") != self.build_id
+            or not isinstance(entries, list)
+            or any(not isinstance(item, dict) for item in entries)
+            or tuple(item.get("path") for item in entries) != REQUIRED_ARTIFACTS
+        ):
+            raise ClientFailure("artifact listing is incomplete or out of order")
+        return entries
+
+    def _checked_download_url(self, raw: Any) -> str:
+        if (
+            not isinstance(raw, str)
+            or len(raw) > 8192
+            or any(ord(character) < 33 or ord(character) > 126 for character in raw)
+        ):
+            raise ClientFailure("artifact URL is outside the selected local service")
+        try:
+            parsed = urllib.parse.urlsplit(raw)
+            port = parsed.port
+            query = urllib.parse.parse_qs(parsed.query)
+        except ValueError:
+            raise ClientFailure("artifact URL is outside the selected local service") from None
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname not in ("localhost", "127.0.0.1")
+            or port != self.storage_port
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.fragment
+            or len(query.get("versionId", ())) != 1
+        ):
+            raise ClientFailure("artifact URL is outside the selected local service")
+        return raw
+
+    def download(
+        self,
+        entries: Sequence[Mapping[str, Any]],
+        stage: Path,
+        stop_requested=lambda: False,
+    ) -> None:
+        declared_total = 0
+        validated = []
+        for entry in entries:
+            relative = entry.get("path")
+            expected_bytes = entry.get("bytes")
+            expected_hash = entry.get("sha256")
+            if (
+                relative not in REQUIRED_ARTIFACTS
+                or type(expected_bytes) is not int
+                or expected_bytes < 0
+                or expected_bytes > MAX_ARTIFACT_BYTES
+                or not isinstance(expected_hash, str)
+                or re.fullmatch(r"[0-9a-f]{64}", expected_hash) is None
+            ):
+                raise ClientFailure("artifact evidence is invalid")
+            url = self._checked_download_url(entry.get("download_url"))
+            declared_total += expected_bytes
+            if declared_total > MAX_ARTIFACT_BYTES:
+                raise ClientFailure("artifact set exceeds the v0.1 size budget")
+            validated.append((relative, expected_bytes, expected_hash, url))
+        consumed_total = 0
+        for relative, expected_bytes, expected_hash, url in validated:
+            if stop_requested():
+                raise _RecordedSignal
+            relative_path = PurePosixPath(relative)
+            if relative_path.is_absolute() or any(part in {"", ".", ".."} for part in relative_path.parts):
+                raise ClientFailure("artifact path is invalid")
+            destination = stage.joinpath(*relative_path.parts)
+            destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            digest = hashlib.sha256()
+            consumed = 0
+            try:
+                response = self.opener.open(url, timeout=30)
+            except urllib.error.HTTPError as exc:
+                code = exc.code
+                exc.close()
+                if 300 <= code < 400:
+                    raise ClientFailure("artifact redirect was rejected") from None
+                raise ClientFailure("artifact download returned an HTTP error") from None
+            except (urllib.error.URLError, http.client.HTTPException, OSError, TimeoutError):
+                raise ClientFailure("artifact download failed") from None
+            try:
+                with response:
+                    if self._checked_download_url(response.geturl()) != url or response.status != 200:
+                        raise ClientFailure("artifact response changed URL or status unexpectedly")
+                    with destination.open("xb") as stream:
+                        while True:
+                            if stop_requested():
+                                raise _RecordedSignal
+                            chunk = response.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            consumed += len(chunk)
+                            if consumed > expected_bytes:
+                                raise ClientFailure("artifact exceeded its declared size")
+                            digest.update(chunk)
+                            stream.write(chunk)
+            except (urllib.error.URLError, http.client.HTTPException, OSError, TimeoutError):
+                raise ClientFailure("artifact download failed") from None
+            if consumed != expected_bytes or digest.hexdigest() != expected_hash:
+                raise ClientFailure("artifact evidence did not match its downloaded bytes")
+            destination.chmod(0o600)
+            consumed_total += consumed
+            if consumed_total > MAX_ARTIFACT_BYTES:
+                raise ClientFailure("artifact set exceeds the v0.1 size budget")
+
+
+def _arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--request", type=Path, required=True)
+    parser.add_argument("--output-parent", type=Path, default=Path("build/service-client"))
+    parser.add_argument("--api-port", default=os.environ.get("HBCB_API_HOST_PORT"))
+    parser.add_argument("--storage-port", default=os.environ.get("HBCB_STORAGE_HOST_PORT"))
+    parser.add_argument("--env-file", type=Path, default=Path(".env"))
+    parser.add_argument("--poll-interval-seconds", type=float, default=2.0, help=argparse.SUPPRESS)
+    return parser.parse_args(argv)
+
+
+def _port(raw: str, label: str) -> int:
+    if SAFE_PORT.fullmatch(raw) is None:
+        raise ClientFailure(f"{label} must be a canonical integer from 1 through 65535")
+    return int(raw)
+
+
+def _regular_private_file(path: Path, maximum_bytes: int, *, mode: int | None = None) -> bytes:
+    descriptor: int | None = None
+    try:
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            raise OSError
+        if mode is not None and (stat.S_IMODE(metadata.st_mode) != mode or metadata.st_uid != os.getuid()):
+            raise OSError
+        if metadata.st_size <= 0 or metadata.st_size > maximum_bytes:
+            raise OSError
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+                opened.st_mtime_ns,
+                opened.st_ctime_ns,
+            )
+            != (
+                metadata.st_dev,
+                metadata.st_ino,
+                metadata.st_size,
+                metadata.st_mtime_ns,
+                metadata.st_ctime_ns,
+            )
+            or (mode is not None and (
+                stat.S_IMODE(opened.st_mode) != mode
+                or opened.st_uid != os.getuid()
+            ))
+        ):
+            raise OSError
+        payload = bytearray()
+        while True:
+            chunk = os.read(descriptor, min(1024 * 1024, maximum_bytes + 1 - len(payload)))
+            if not chunk:
+                break
+            payload.extend(chunk)
+            if len(payload) > maximum_bytes:
+                raise OSError
+        after = os.fstat(descriptor)
+        if (
+            (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            )
+            != (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+                opened.st_mtime_ns,
+                opened.st_ctime_ns,
+            )
+            or stat.S_IMODE(after.st_mode) != stat.S_IMODE(opened.st_mode)
+            or after.st_uid != opened.st_uid
+            or len(payload) != opened.st_size
+        ):
+            raise OSError
+    except OSError:
+        raise ClientFailure("required local client input is unavailable or unsafe") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    return bytes(payload)
+
+
+def _local_settings(env_file: Path) -> tuple[str, str, str]:
+    payload = _regular_private_file(env_file, 64 * 1024, mode=0o600)
+    selected: dict[str, list[str]] = {
+        "HBCB_API_TOKEN": [],
+        "HBCB_API_HOST_PORT": [],
+        "HBCB_STORAGE_HOST_PORT": [],
+    }
+    try:
+        for raw_line in payload.decode("utf-8", "strict").splitlines():
+            name, separator, value = raw_line.partition("=")
+            if separator and name in selected:
+                selected[name].append(value)
+    except UnicodeError:
+        raise ClientFailure("private environment file is invalid") from None
+    tokens = selected["HBCB_API_TOKEN"]
+    if len(tokens) != 1 or re.fullmatch(r"[0-9a-f]{64}", tokens[0]) is None:
+        raise ClientFailure("private environment file has no valid unique API token")
+    for name in ("HBCB_API_HOST_PORT", "HBCB_STORAGE_HOST_PORT"):
+        if len(selected[name]) > 1:
+            raise ClientFailure("private environment file has duplicate host-port selectors")
+    api_port = selected["HBCB_API_HOST_PORT"][0] if selected["HBCB_API_HOST_PORT"] else "8080"
+    storage_port = (
+        selected["HBCB_STORAGE_HOST_PORT"][0]
+        if selected["HBCB_STORAGE_HOST_PORT"]
+        else "9000"
+    )
+    return tokens[0], api_port, storage_port
+
+
+def _owned_output_parent(path: Path) -> Path:
+    try:
+        if path.is_symlink():
+            raise OSError
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        resolved = path.resolve(strict=True)
+        metadata = resolved.lstat()
+    except OSError:
+        raise ClientFailure("output parent is unavailable or unsafe") from None
+    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+        raise ClientFailure("output parent is unavailable or unsafe")
+    return resolved
+
+
+def run(argv: Sequence[str] | None = None) -> int:
+    arguments = _arguments(argv)
+    try:
+        token, persisted_api_port, persisted_storage_port = _local_settings(
+            arguments.env_file
+        )
+    except ClientFailure:
+        raise ClientFailure(
+            "private .env is unavailable or unsafe; run make init-env and keep it mode 0600"
+        ) from None
+    api_port = _port(arguments.api_port or persisted_api_port, "API port")
+    storage_port = _port(
+        arguments.storage_port or persisted_storage_port, "storage port"
+    )
+    if api_port == storage_port:
+        raise ClientFailure("API and storage ports must be distinct")
+    try:
+        request = _regular_private_file(arguments.request, MAX_REQUEST_BYTES)
+    except ClientFailure:
+        raise ClientFailure(
+            "request must be a nonempty regular non-symlink file within the 64 KiB limit"
+        ) from None
+    output_parent = _owned_output_parent(arguments.output_parent)
+    client = Client(api_port, storage_port, token)
+    first_signal: int | None = None
+
+    def record_interrupt(_signum: int, _frame: object) -> None:
+        nonlocal first_signal
+        if first_signal is None:
+            first_signal = _signum
+
+    def stop_requested() -> bool:
+        return first_signal is not None
+
+    handled_signals = tuple(
+        item
+        for item in (
+            signal.SIGINT,
+            signal.SIGTERM,
+            getattr(signal, "SIGHUP", None),
+        )
+        if isinstance(item, int)
+    )
+    previous = {item: signal.getsignal(item) for item in handled_signals}
+    for item in previous:
+        signal.signal(item, record_interrupt)
+    reservation: Path | None = None
+    stage: Path | None = None
+    completed = False
+    failure: BaseException | None = None
+    cleanup_failed = False
+    cancel_failed = False
+    try:
+        if stop_requested():
+            raise _RecordedSignal
+        build_id = client.submit(request)
+        if stop_requested():
+            raise _RecordedSignal
+        print(f"queued build {build_id}")
+        status = client.poll(arguments.poll_interval_seconds, stop_requested)
+        if stop_requested():
+            raise _RecordedSignal
+        entries = client.artifact_listing()
+        if stop_requested():
+            raise _RecordedSignal
+        candidate = output_parent / build_id
+        try:
+            candidate.mkdir(mode=0o700)
+        except FileExistsError:
+            raise ClientFailure("verified result already exists; refusing to overwrite it") from None
+        except OSError:
+            raise ClientFailure("verified result could not be reserved safely") from None
+        reservation = candidate
+        stage = Path(tempfile.mkdtemp(prefix=".stage.", dir=reservation))
+        stage.chmod(0o700)
+        client.download(entries, stage, stop_requested)
+        if stop_requested():
+            raise _RecordedSignal
+        build_record = stage / "build.json"
+        build_record.write_text(
+            json.dumps(status, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        build_record.chmod(0o600)
+        result = reservation / "artifacts"
+        if stop_requested():
+            raise _RecordedSignal
+        os.rename(stage, result)
+        stage = None
+        completed = True
+        reservation = None
+    except _RecordedSignal:
+        pass
+    except BaseException as exc:
+        failure = exc
+    finally:
+        try:
+            if not completed:
+                try:
+                    client.cancel()
+                except BaseException:
+                    cancel_failed = True
+        finally:
+            cleanup_targets = tuple(
+                path for path in (stage, reservation) if path is not None
+            )
+            try:
+                for path in cleanup_targets:
+                    try:
+                        shutil.rmtree(path)
+                    except FileNotFoundError:
+                        pass
+                    except OSError:
+                        cleanup_failed = True
+                if any(os.path.lexists(path) for path in cleanup_targets):
+                    cleanup_failed = True
+            finally:
+                for item, handler in previous.items():
+                    signal.signal(item, handler)
+    if first_signal is not None:
+        message = (
+            "client was interrupted and private cleanup could not be confirmed"
+            if cleanup_failed
+            else "client was interrupted"
+        )
+        print(f"SERVICE_CLIENT: FAIL: {message}", file=sys.stderr)
+        return 128 + first_signal
+    if failure is not None:
+        raise failure
+    if cleanup_failed:
+        raise ClientFailure("private client cleanup could not be confirmed")
+    if cancel_failed:
+        raise ClientFailure("build cancellation could not be confirmed")
+    print(f"verified model and evidence saved in {result}")
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    try:
+        return run(argv)
+    except ClientFailure as exc:
+        print(f"SERVICE_CLIENT: FAIL: {exc}", file=sys.stderr)
+        return 1
+    except Exception:
+        print("SERVICE_CLIENT: FAIL: unexpected local client failure", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

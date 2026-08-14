@@ -219,7 +219,16 @@ def image_inspect(
                     **(
                         {
                             "org.blender.download.sha256": "95e3a2dfedba3bd32ca54fc355eac6b15a11986954ccb02815a07535d0120a25",
+                            "org.blender.download.url": "https://download.blender.org/release/Blender4.5/blender-4.5.12-linux-x64.tar.xz",
                             "org.blender.version": "4.5.12 LTS",
+                            "org.opencontainers.image.base.digest": "sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241",
+                            "org.opencontainers.image.base.name": "debian:bookworm-20260803-slim",
+                            "org.opencontainers.image.description": "Deterministic, headless Blender 4.5 LTS character builder",
+                            **(
+                                {"io.hbcb.builder.contract": "complete-v1"}
+                                if role == "worker"
+                                else {}
+                            ),
                         }
                         if role in {"builder", "worker"}
                         else {}

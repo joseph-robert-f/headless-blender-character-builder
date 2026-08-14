@@ -163,6 +163,7 @@ VPS_REQUIRED = frozenset(
 LOCK_REQUIRED = frozenset(
     {
         "HBCB_RELEASE_VERSION",
+        "HBCB_POSTGRES_IMAGE",
         "HBCB_API_IMAGE",
         "HBCB_WORKER_IMAGE",
         "HBCB_CADDY_IMAGE",
@@ -549,7 +550,13 @@ def _validate_release_lock_shape(values: Mapping[str, str]) -> None:
     _require_exact_keys(values, LOCK_REQUIRED, "release lock")
     if SEMVER.fullmatch(values["HBCB_RELEASE_VERSION"]) is None:
         raise OperatorError("release version is outside policy")
-    for name in ("HBCB_API_IMAGE", "HBCB_WORKER_IMAGE", "HBCB_CADDY_IMAGE", "HBCB_BUILDER_IMAGE_REFERENCE"):
+    for name in (
+        "HBCB_POSTGRES_IMAGE",
+        "HBCB_API_IMAGE",
+        "HBCB_WORKER_IMAGE",
+        "HBCB_CADDY_IMAGE",
+        "HBCB_BUILDER_IMAGE_REFERENCE",
+    ):
         match = IMAGE_DIGEST.fullmatch(values[name])
         if match is None or set(match.group(1)) == {"0"}:
             raise OperatorError(f"{name} must be a non-placeholder digest reference")
@@ -1423,7 +1430,10 @@ def _validate_private_storage_network(name: str, environment: Mapping[str, str])
         stderr_limit_bytes=4096,
     )
     if result.returncode != 0:
-        raise OperatorError("private storage network is unavailable")
+        raise OperatorError(
+            "private storage network is unavailable; create the configured "
+            "Docker-internal network and attach the private S3 gateway before live preflight"
+        )
     if result.stdout.strip() != b"true":
         raise OperatorError(
             "storage network must be Docker-internal; attach an operator-managed private S3 gateway"

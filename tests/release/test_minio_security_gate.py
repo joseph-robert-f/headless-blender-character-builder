@@ -91,15 +91,24 @@ class MinioSecurityGateTests(unittest.TestCase):
         recorded: list[tuple[str, ...]] = []
 
         def fake_run(command: tuple[str, ...], **_: object) -> subprocess.CompletedProcess[bytes]:
-            recorded.append(tuple(command))
-            return completed(tuple(command), stdout=b"version DEVELOPMENT.GOGET\n")
+            command = tuple(command)
+            recorded.append(command)
+            if command[1:3] == ("container", "ls"):
+                return completed(command)
+            return completed(command, stdout=b"version DEVELOPMENT.GOGET\n")
 
         with mock.patch.object(GATE, "_run", side_effect=fake_run):
             GATE._runtime_version("docker", "fixture:reviewed", "/usr/local/bin/minio")
 
-        self.assertEqual(len(recorded), 1)
-        command = recorded[0]
+        command = next(item for item in recorded if item[1] == "run")
         self.assertEqual(command[:3], ("docker", "run", "--rm"))
+        name_offset = command.index("--name")
+        self.assertRegex(command[name_offset + 1], r"^hbcb-minio-version-[0-9a-f]{16}$")
+        owner_offset = command.index("--label")
+        self.assertRegex(
+            command[owner_offset + 1],
+            r"^io\.hbcb\.minio-fixture-owner=[0-9a-f]{32}$",
+        )
         for pair in (
             ("--platform", "linux/amd64"),
             ("--network", "none"),
@@ -111,6 +120,63 @@ class MinioSecurityGateTests(unittest.TestCase):
             self.assertEqual(command[offset : offset + 2], pair)
         self.assertIn("--read-only", command)
         self.assertEqual(command[-2:], ("fixture:reviewed", "--version"))
+        ownership_queries = [
+            item for item in recorded if item[1:3] == ("container", "ls")
+        ]
+        self.assertGreaterEqual(len(ownership_queries), 2)
+        self.assertTrue(all("--no-trunc" in item for item in ownership_queries))
+
+    def test_ambiguous_version_probe_failure_removes_only_owned_container_id(self) -> None:
+        calls: list[tuple[str, ...]] = []
+        container_id = "e" * 64
+        owned = True
+
+        def fake_run(command: tuple[str, ...], **_: object) -> subprocess.CompletedProcess[bytes]:
+            nonlocal owned
+            command = tuple(command)
+            calls.append(command)
+            if command[1] == "run":
+                raise GATE.GateError("a bounded Docker operation failed")
+            if command[1:3] == ("container", "ls"):
+                return completed(
+                    command,
+                    stdout=((container_id + "\n").encode("ascii") if owned else b""),
+                )
+            if command[1:3] == ("rm", "--force"):
+                self.assertEqual(command[-1], container_id)
+                owned = False
+                return completed(command)
+            raise AssertionError(command)
+
+        with mock.patch.object(GATE, "_run", side_effect=fake_run):
+            with self.assertRaisesRegex(GATE.GateError, "bounded Docker operation failed"):
+                GATE._runtime_version("docker", "fixture:reviewed", "/usr/local/bin/minio")
+        self.assertFalse(owned)
+        self.assertTrue(any(call[1:3] == ("rm", "--force") for call in calls))
+
+    def test_foreign_same_name_version_probe_conflict_is_never_removed(self) -> None:
+        calls: list[tuple[str, ...]] = []
+
+        def fake_run(command: tuple[str, ...], **_: object) -> subprocess.CompletedProcess[bytes]:
+            command = tuple(command)
+            calls.append(command)
+            if command[1] == "run":
+                raise GATE.GateError("a reviewed MinIO fixture check failed")
+            if command[1:3] == ("container", "ls"):
+                # The exact-name foreign container lacks the second random
+                # owner label, so the conjunction intentionally finds none.
+                return completed(command)
+            raise AssertionError(command)
+
+        with mock.patch.object(GATE, "_run", side_effect=fake_run):
+            with self.assertRaisesRegex(GATE.GateError, "reviewed MinIO fixture check failed"):
+                GATE._runtime_version("docker", "fixture:reviewed", "/usr/local/bin/mc")
+        self.assertFalse(any(call[1] == "rm" for call in calls))
+        for query in (call for call in calls if call[1:3] == ("container", "ls")):
+            self.assertTrue(any(item.startswith("name=^/hbcb-minio-version-") for item in query))
+            self.assertTrue(
+                any(item.startswith("label=io.hbcb.minio-fixture-owner=") for item in query)
+            )
 
     def test_feature_probe_is_isolated_and_always_removed(self) -> None:
         recorded: list[tuple[str, ...]] = []

@@ -16,8 +16,13 @@ x-service-build: &service-build
 
 services:
   postgres:
-    image: postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419af0382b19953706149f9872fbd0f438efa8
+    build:
+      context: .
+      dockerfile: docker/postgres.Dockerfile
+      target: postgres
+    image: ${HBCB_POSTGRES_IMAGE:-hbcb-postgres-local:16.14-alpine3.24-hbcb.1}
     platform: linux/amd64
+    user: "70:70"
     restart: unless-stopped
     labels:
       io.hbcb.release-service-owner: ${HBCB_RELEASE_OWNER:-local}
@@ -40,7 +45,7 @@ services:
     cpus: 1.0
 
   redis:
-    image: redis:8.2.8-bookworm@sha256:2f7462b9e93e0a7ae2edf3a0a0babc8a4d29f8bfc50849b906b7caaef925edc1
+    image: redis:8.2.8-alpine3.22@sha256:a7859ed111db3c1f5404a973a4747505d559fb5ca32d37e447afc0ef845a2103
     platform: linux/amd64
     restart: unless-stopped
     labels:
