@@ -4,12 +4,13 @@ The recommended path builds a pinned `linux/amd64` Blender image from this
 repository and runs it through Docker. You do not need Blender, Python, Docker
 Compose, an AI key, or a provider account for one-shot builds.
 
-> **Availability:** this repository currently ships source and container build
-> definitions only. There is no published GitHub Release or container image.
-> There is also no project-published PyPI package or supported `pip install`
-> path; do not substitute a similarly named package from PyPI. Cloning `main`
-> is useful for source evaluation, but it is not the same as installing a
-> signed versioned release.
+> **Availability:** this repository ships source and container build
+> definitions only. The signed `v0.1.0-rc.1` tag has a published source-only
+> GitHub Release with checksummed source assets; no container image is
+> published. There is also no project-published PyPI package or supported
+> `pip install` path; do not substitute a similarly named package from PyPI.
+> Cloning `main` is useful for source evaluation, but it is not the same as
+> installing the signed versioned release.
 
 The first release (v0.1) supports one trusted user building their own model locally with the
 one-shot Docker path. “Trusted” means that you control the machine and create

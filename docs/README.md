@@ -43,8 +43,9 @@ for one trusted operator; it is not an Internet-facing v0.1 service contract.
 ## I want to operate or release it
 
 The VPS material is a future design and validation reference outside v0.1
-support, not a currently published deployment product. There is no release
-archive, release lock, or published image set yet.
+support, not a currently published deployment product. The source-only
+`v0.1.0-rc.1` GitHub Release publishes the checksummed source archives; there
+is still no release lock or published image set.
 
 - [VPS deployment and recovery](deployment.md) — availability, topology,
   verified source installation, TLS, external S3, permissions, lifecycle,
