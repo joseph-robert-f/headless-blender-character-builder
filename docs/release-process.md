@@ -129,12 +129,125 @@ machine-readable readiness flag through review. The existing assets must still
 be co-published and retained with each eventual public image version. This is a
 conservative release policy, not legal advice; obtain qualified review.
 
+## Source-only v0.1 release
+
+The v0.1 support boundary ships reviewed source for one trusted user building
+locally; it does not promise a published container image. This transaction
+publishes the signed `v0.1.0-rc.1` Git tag and a source-bearing GitHub
+Release. It never authenticates to GHCR, never pushes an image, and never
+changes any package visibility. It is the authorized v0.1 publication path
+while `public_oci_ready` is `false` in
+`release/corresponding-source-policy.json`.
+
+This transaction does not run `scripts/release-publication-preflight`: that
+preflight exists to verify local image identity immediately before a GHCR
+push and, by design, fails unless `public_oci_ready` is `true`, so it would
+reject a source-only run for a reason unrelated to publishing source. Skipping
+it here does not weaken it or the Conditional publication gate below, which is
+unchanged and stays hard-blocked until its own requirements are met.
+
+Use a dedicated, single-operator release checkout for this transaction too. It
+does not defend its temporary paths, Git references, or Release draft against
+a concurrent local process that already has the same push authority or GitHub
+CLI session; any such concurrency invalidates the run.
+
+A release operator:
+
+1. verifies branch protection, required checks, CODEOWNERS, secret scanning,
+   push protection, and private vulnerability reporting;
+2. reruns the complete local release check on the exact intended commit with a
+   fresh run ID (`HBCB_RELEASE_RUN_ID=<unique-safe-run-id> make
+   release-check`), then confirms `git status --short`, `git diff --check`,
+   and `scripts/release-audit` remain clean afterward, and records the exact
+   evidence path and run ID in `docs/progress.md`;
+3. runs `make dependency-scan` from that exact commit using a new output
+   directory; requires exit `0`; reviews the retained reports; and performs
+   publication no more than seven days after that scan. The dependency
+   policy's per-finding `expires_on` disposition still enforces itself on its
+   own schedule at scan time regardless of when this transaction runs:
+   ```sh
+   release_commit=$(git rev-parse HEAD)
+   dependency_evidence="$PWD/build/dependency-audit-release-${release_commit}"
+   test ! -e "$dependency_evidence"
+   make dependency-scan DEPENDENCY_OUTPUT="$dependency_evidence"
+   test "$(git rev-parse HEAD)" = "$release_commit"
+   ```
+4. selects the release assets directly from the `release/` directory that
+   `make release-check` printed as `evidence=.../release-check/<run-id>`
+   (`scripts/release-artifacts` populates
+   `build/release-check/<run-id>/release/`). Never use a `.published`
+   finalized bundle: `scripts/release-publication-preflight
+   --finalize-output-dir` only creates one after a private image push, so it
+   cannot exist for a source-only run. The evidence directory's top-level
+   regular files are exactly:
+   - `headless-blender-character-builder-0.1.0-rc.1.tar.gz` — the
+     deterministic project source archive;
+   - `headless-blender-character-builder-0.1.0-rc.1-sample.tar.gz` — the
+     deterministic sample bundle (the `sample/` evidence subdirectory is
+     represented by this archive so GitHub asset naming does not flatten its
+     paths, the same convention the draft-release upload below uses);
+   - `blender-4.5.12.tar.xz` — the checksum-verified official Blender source
+     archive;
+   - `BLENDER_SOURCE_NOTICE.md` and `SERVICE_THIRD_PARTY_NOTICES.txt`;
+   - `api.spdx.json`, `builder.spdx.json`, and `worker.spdx.json`;
+   - `corresponding-source.json`, `source-audit.json`, `image-metadata.json`,
+     and `release-metadata.json`;
+   - `SHA256SUMS`.
+
+   `image-metadata.json` in this unfinalized bundle records each of the
+   builder, API, and worker roles' local `image_id` and `expected_public_tag`
+   with `published_digest: null`. This Release therefore publishes
+   local-image identity evidence — proof of what the release check built and
+   labeled on the release machine — and carries no published-image digest for
+   any role, plainly, because no image is pushed;
+5. verifies every selected asset against the evidence directory's own
+   `SHA256SUMS` before upload:
+   ```sh
+   (
+     cd "$RELEASE_DIR"
+     if command -v sha256sum >/dev/null 2>&1; then
+       sha256sum --check SHA256SUMS
+     else
+       shasum -a 256 --check SHA256SUMS
+     fi
+   )
+   ```
+6. creates and verifies the signed tag only after steps 1-5 pass:
+   `git tag -s "v0.1.0-rc.1" -m "Headless Blender Character Builder
+   0.1.0-rc.1"`, then `git tag -v "v0.1.0-rc.1"`, then `git push origin
+   "v0.1.0-rc.1"`. Any failure before the tag push aborts the transaction with
+   nothing published. A pushed tag is never reused or force-moved; a
+   superseded or failed candidate gets a new release, never a moved tag;
+7. creates a draft GitHub Release for the tag with `gh release create
+   "v0.1.0-rc.1" --repo joseph-robert-f/headless-blender-character-builder
+   --draft --verify-tag --title "Headless Blender Character Builder
+   0.1.0-rc.1" --notes-file docs/release-notes/v0.1.0-rc.1.md`, uploads every
+   asset from step 4 with `gh release upload`, then re-downloads every asset
+   into a clean empty directory and reverifies the downloaded set — names and
+   `SHA256SUMS` — against the local evidence before publishing with `gh
+   release edit "v0.1.0-rc.1" --draft=false --repo
+   joseph-robert-f/headless-blender-character-builder`. Abort and `gh release
+   delete` the draft on any name, count, or checksum mismatch;
+8. updates the now-superseded "no release" statements in
+   `docs/installation.md`, `docs/architecture.md`, and `docs/README.md` to
+   record that a source-only Release exists and that container images remain
+   unpublished, and records the publication in `docs/progress.md`, through the
+   same commit-reviewed flow as any other documentation change.
+
+The Conditional publication transaction below remains the future
+image-publication path. It is unchanged by this section and stays blocked
+until its own requirements — derived PostgreSQL image support and an
+independent copyleft/source review that flips `public_oci_ready` to `true` —
+are met.
+
 ## Conditional publication
 
 > **Do not execute this transaction today.** It handles only builder, API, and
 > worker. `public_oci_ready` must remain false until the derived PostgreSQL image
 > has matching inventory, SBOM, signing, publication, source/notice, and
 > digest-lock support in addition to the independent source/delivery review.
+> The currently authorized v0.1 path is
+> [Source-only v0.1 release](#source-only-v01-release) above.
 
 Publication requires explicit owner authorization, an installed and
 authenticated GitHub CLI, authenticated GHCR access, and a tested Git tag-
@@ -1254,6 +1367,11 @@ verified pre-upgrade backup into a validated empty namespace. See
 [deployment.md](deployment.md).
 
 ## Final operator checklist
+
+The items below gate the Conditional publication (image) transaction above.
+The Source-only v0.1 release transaction is gated by its own steps 1-7 instead;
+confirm those passed and that step 8's documentation updates are recorded
+before considering that transaction complete.
 
 - [ ] Mandatory fresh-VM image pull/config-ID verification completed and its
       transcript retained.
