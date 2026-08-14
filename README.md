@@ -115,7 +115,7 @@ and this is the entire interface to the generator:
 ```
 
 *(Excerpt from [`examples/requests/facet-bot.json`](examples/requests/facet-bot.json);
-the full request also sets `slug`, `pose`, `material_preset`, `eye_preset`,
+the full request also sets `spec_version`, `slug`, `pose`, `material_preset`, `eye_preset`,
 `components`, `base`, and the output/render/quality profiles — see the
 [character contract](docs/character-spec.md).)*
 
