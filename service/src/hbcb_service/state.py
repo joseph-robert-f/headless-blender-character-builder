@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from threading import RLock
-from typing import Callable, Dict, Mapping, Optional, Protocol, Sequence, Tuple, Union
+from typing import Callable, Dict, Mapping, Optional, Sequence, Tuple, Union
 from uuid import UUID, uuid4
 
 from shared.character_spec import BuildRequest
@@ -108,85 +108,6 @@ class AttemptCompletion:
     attempt: AttemptRecord
     requeued: bool
     exhausted: bool
-
-
-class BuildStateStore(Protocol):
-    def submit(
-        self, request: Union[BuildRequest, bytes, str], idempotency_key: Optional[str]
-    ) -> BuildReservation:
-        ...
-
-    def get_build(self, build_id: UUID) -> BuildRecord:
-        ...
-
-    def transition(
-        self,
-        build_id: UUID,
-        expected_version: int,
-        target: BuildStatus,
-        *,
-        reason_code: Optional[str] = None,
-    ) -> BuildRecord:
-        ...
-
-    def request_cancel(self, build_id: UUID, expected_version: int) -> BuildRecord:
-        ...
-
-    def publish_success(
-        self,
-        build_id: UUID,
-        expected_version: int,
-        artifacts: Sequence[ArtifactRecord],
-    ) -> BuildRecord:
-        ...
-
-    def register_running_attempt(self, attempt: AttemptRecord) -> AttemptRecord:
-        ...
-
-    def lease_build(
-        self,
-        build_id: UUID,
-        worker_id: str,
-        lease_token: str,
-        *,
-        lease_seconds: int,
-    ) -> Optional[AttemptLease]:
-        ...
-
-    def heartbeat_attempt(
-        self,
-        attempt_id: UUID,
-        lease_token: str,
-        *,
-        lease_seconds: int,
-    ) -> AttemptHeartbeat:
-        ...
-
-    def complete_attempt(
-        self,
-        attempt_id: UUID,
-        lease_token: str,
-        *,
-        status: AttemptStatus,
-        exit_code: Optional[int],
-        reason_code: str,
-        retryable: bool,
-        retry_delay_seconds: int = 0,
-    ) -> AttemptCompletion:
-        ...
-
-    def publish_attempt_success(
-        self,
-        attempt_id: UUID,
-        lease_token: str,
-        artifacts: Sequence[ArtifactRecord],
-    ) -> BuildRecord:
-        ...
-
-    def recover_expired_attempts(
-        self, *, retry_delay_seconds: int = 0, limit: int = 100
-    ) -> Tuple[AttemptCompletion, ...]:
-        ...
 
 
 class InMemoryStateStore:

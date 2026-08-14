@@ -34,6 +34,9 @@ for one trusted operator; it is not an Internet-facing v0.1 service contract.
   trust boundaries, persistence, recovery, and repository map
 - [Threat model](threat-model.md) — assets, actors, threats, controls, and
   review triggers
+- [Vulnerability review](security/vulnerability-review-2026-08-12.md) —
+  finding-by-finding record supporting the checked-in vulnerability policy's
+  temporary dispositions
 - [Licensing guide](licensing.md) — project, Blender, asset, output,
   dependency, and contribution licensing boundaries
 

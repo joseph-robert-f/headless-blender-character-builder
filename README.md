@@ -1,7 +1,10 @@
 # Headless Blender Character Builder
 
-Build an original geometric character from bounded JSON, then open the real
-Blender scene, use the GLB, or inspect a print-oriented STL. The primary path
+You describe a small character in a short text file; the system builds it
+with Blender and returns a preview image, files for 3D tools, and a
+3D-printable model. Build an original geometric character from bounded JSON,
+then open the real Blender scene, use the GLB (a portable 3D-model format), or
+inspect a print-oriented STL (the common 3D-printing format). The primary path
 runs headlessly in Docker: no host Blender installation, AI key, or provider
 account is required.
 
@@ -14,19 +17,29 @@ views, geometry QA, and a hash manifest. The tracked
 [asset manifest](docs/assets/manifest.json) records its provenance and CC0
 license.
 
-> **First-release support boundary:** v0.1.0-rc.1 is a source candidate for a trusted user building
-> their own models locally with the one-shot Docker builder. Here, “trusted”
-> means that you control the machine and create or review the bounded JSON
-> request. The optional Compose service is experimental, local-only, and for
-> one trusted operator. Internet-facing, multi-tenant, and VPS operation are
-> outside v0.1 support. The repository does **not** yet publish a GitHub Release,
-> container images, or a hosted service. No project package is published on PyPI,
-> and installing a similarly named package from PyPI is not supported.
+> **v0.1 support boundary:** built for one trusted person building models on
+> their own machine, with requests they create or review. The optional
+> Compose service is experimental and local-only, with no hosted service or
+> published container images. No project package is published on PyPI, and
+> installing a similarly named package is not supported. See
+> [Installation](docs/installation.md) for the fuller boundary statement.
 
 ## Build your first model
 
-You need Git, Docker Engine or Docker Desktop, GNU Make, about four CPU cores,
-8 GB RAM, and 10 GB of free disk. Start Docker, then run:
+Before you start, check:
+
+- Git — `git --version`
+- Docker Engine or Docker Desktop, running — `docker info`
+- GNU Make — `make --version`
+- About 4 CPU cores, 8 GB RAM, and 10 GB of free disk
+
+macOS: see [macOS without Homebrew](docs/installation.md#macos-without-homebrew)
+for a Docker Desktop-only setup. Linux: see
+[Linux](docs/installation.md#linux) for Docker Engine install commands.
+Windows: only via WSL2, and experimental — see
+[Windows with WSL2](docs/installation.md#windows-with-wsl2-experimental).
+
+Start Docker, then run:
 
 ```sh
 git clone https://github.com/joseph-robert-f/headless-blender-character-builder.git
@@ -36,9 +49,15 @@ make build REQUEST="$PWD/examples/requests/facet-bot.json" OUTPUT_NAME=facet-bot
 make verify REQUEST="$PWD/examples/requests/facet-bot.json" OUTPUT_NAME=facet-bot
 ```
 
-The first build needs network access while Docker downloads the pinned base
-image, Blender 4.5.12 LTS, and Debian packages. Model generation and
-verification run later in fresh containers with networking disabled.
+If any step fails, re-run `./scripts/doctor` — it checks Git, Docker, and Make
+and prints what to fix, ending with `HBCB_DOCTOR: PASS` when it's happy — and
+see the [troubleshooting guide](docs/troubleshooting.md).
+
+The first build downloads several gigabytes (the pinned base image and
+Blender 4.5.12 LTS), so it needs network access; depending on your connection
+and hardware, it can take a long time. Generation and verification then run in
+fresh containers with networking disabled, and later builds reuse Docker's
+cache and are much faster.
 
 A successful run ends with:
 
@@ -78,10 +97,30 @@ commands without Make, native Blender, updates, and cleanup, follow the
 
 ## Make it yours
 
-Requests choose a reviewed generator and bounded modeling parameters; they do
-not contain code, paths, URLs, add-ons, or Blender flags. Copy the example into
-the ignored build area, edit the documented fields, and give each run a unique
-lowercase, hyphenated output name:
+A request is bounded JSON — no code, paths, URLs, add-ons, or Blender flags —
+and this is the entire interface to the generator:
+
+```json
+{
+  "request_version": "build/v1",
+  "generator": "geometric-character@1.0.0",
+  "spec": {
+    "name": "Facet Bot",
+    "style": "geometric",
+    "height_mm": 95,
+    "palette": ["#E87532", "#FFF3D6"],
+    "proportions": { "head_scale": 1.2, "body_scale": 0.95, "limb_scale": 0.95 }
+  }
+}
+```
+
+*(Excerpt from [`examples/requests/facet-bot.json`](examples/requests/facet-bot.json);
+the full request also sets `spec_version`, `slug`, `pose`, `material_preset`, `eye_preset`,
+`components`, `base`, and the output/render/quality profiles — see the
+[character contract](docs/character-spec.md).)*
+
+Copy the example into the ignored build area, edit the documented fields, and
+give each run a unique lowercase, hyphenated output name:
 
 ```sh
 mkdir -p build/requests
@@ -174,20 +213,17 @@ submit the bundled request and save one verified result:
 make service-client REQUEST="$PWD/examples/requests/facet-bot.json"
 ```
 
-When finished, stop this
-checkout's stack with `make service-down`.
+When finished, stop this checkout's stack with `make service-down`.
 
-`make init-env` creates an ignored mode-`0600` `.env` once and refuses to
-overwrite it. It records a checkout-specific Compose project name, so two fresh
-checkouts do not share containers or named volumes. Move the checkout together
-with its `.env` to retain that identity; existing `.env` files created before
-this field was added continue to use the legacy `hbcb-local` project and preserve
-their volumes. The API and artifact downloads bind to host loopback;
-PostgreSQL and Redis are not published. The worker container has only its
-required internal service networks. Its fresh Blender child receives a
-scrubbed environment without API, database, queue, storage, provider, or
-Docker credentials, but it shares the supervisor container's network
-namespace—it is not separately network-isolated.
+`make init-env` creates an ignored mode-`0600` `.env` once, refuses to
+overwrite it, and prints no secret. See
+[configuration](docs/configuration.md#local-service-env) for the
+checkout-identity and legacy-volume details. The API and artifact downloads
+bind to host loopback; PostgreSQL and Redis are not published. The worker
+container has only its required internal service networks. Its fresh Blender
+child receives a scrubbed environment without API, database, queue, storage,
+provider, or Docker credentials, but it shares the supervisor container's
+network namespace—it is not separately network-isolated.
 
 The local MinIO image is a pinned compatibility fixture, not a production
 object-store recommendation. Do not expose this stack publicly. Read
@@ -252,17 +288,29 @@ Release, deploys infrastructure, or reads registry credentials. See the
 
 ## Documentation
 
+### User-facing docs
+
 - [Installation](docs/installation.md) — setup, first build, artifacts,
   cleanup, updates, no-Make Docker, and native use
-- [Examples and ideas](examples/README.md) and
-  [configuration](docs/configuration.md) — safe starting requests, use cases,
-  Make variables, and service configuration
+- [Examples and ideas](examples/README.md) — safe starting requests and use
+  cases
+- [Configuration](docs/configuration.md) — Make variables and service
+  configuration
+- [Character and request contract](docs/character-spec.md) — every supported
+  JSON field
 - [Documentation index](docs/README.md) — routes for users, integrators,
   contributors, and operators
+- [Troubleshooting](docs/troubleshooting.md) — success markers and common
+  failures
+
+### Project and contributor material
+
 - [Architecture](docs/architecture.md) and [threat model](docs/threat-model.md)
 - [PLAN.md](PLAN.md), [TEST_PLAN.md](TEST_PLAN.md), and
   [progress evidence](docs/progress.md)
 - [Backlog](docs/backlog.md) — post-v0.1 work, including prompt planning and MCP
+- [Contributing](CONTRIBUTING.md) — focused changes, applicable tests, and DCO
+  sign-off
 
 OpenAI, Codex, and MCP are not v0.1 dependencies. A prompt planner or MCP
 adapter may eventually sit in front of the bounded JSON/API contract; neither
