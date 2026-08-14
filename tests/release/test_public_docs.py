@@ -195,6 +195,12 @@ class PublicDocumentationTests(unittest.TestCase):
             "PYTHON=python3.11 HBCB_RELEASE_RUN_ID=review-1 make release-check",
             release_process,
         )
+        self.assertIn("## Source-only v0.1 release", release_process)
+        self.assertIn(
+            "It never authenticates to GHCR, never pushes an image, and never\n"
+            "changes any package visibility.",
+            release_process,
+        )
 
     def test_examples_and_contract_guide_do_not_overclaim_qa(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
