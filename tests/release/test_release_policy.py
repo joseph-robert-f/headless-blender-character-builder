@@ -245,7 +245,7 @@ class ReleasePolicyTests(unittest.TestCase):
             self.assertIn(required, wrapper)
 
     def test_publication_upload_preserves_checksum_sample_paths(self) -> None:
-        process = (ROOT / "docs" / "release-process.md").read_text(encoding="utf-8")
+        process = (ROOT / "docs" / "oci-publication.md").read_text(encoding="utf-8")
         self.assertIn('for asset in "$RELEASE_DIR"/*', process)
         self.assertIn('gh release download "v${RC_VERSION}"', process)
         self.assertIn(
@@ -256,7 +256,7 @@ class ReleasePolicyTests(unittest.TestCase):
         self.assertNotIn('find "$RELEASE_DIR" -type f', process)
 
     def test_publication_authenticates_before_any_remote_mutation(self) -> None:
-        process = (ROOT / "docs" / "release-process.md").read_text(encoding="utf-8")
+        process = (ROOT / "docs" / "oci-publication.md").read_text(encoding="utf-8")
         login = '"$HBCB_PUBLISH_DOCKER" login ghcr.io -u "$GH_OWNER" --password-stdin'
         first_image_push = '"$HBCB_PUBLISH_DOCKER" push "ghcr.io/${GH_OWNER}/headless-blender-character-builder:${RC_VERSION}"'
         tag_push = 'git push origin "v${RC_VERSION}"'
@@ -316,7 +316,7 @@ class ReleasePolicyTests(unittest.TestCase):
         self.assertIn("fail-fast but non-atomic operator transaction", process)
 
     def test_publication_runbook_is_fail_closed_and_resumable(self) -> None:
-        process = (ROOT / "docs" / "release-process.md").read_text(
+        process = (ROOT / "docs" / "oci-publication.md").read_text(
             encoding="utf-8"
         )
         self.assertIn('"$HBCB_PUBLISH_DOCKER" buildx version', process)
@@ -410,7 +410,6 @@ class ReleasePolicyTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             exec("import sys\ntoken='abc'\n" + token_writer, {})
         self.assertEqual(output.getvalue(), 'header = "Authorization: Bearer abc"\n')
-        self.assertIn("normal tracked-file index flags", process)
 
 
 if __name__ == "__main__":

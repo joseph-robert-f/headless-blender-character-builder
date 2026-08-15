@@ -48,6 +48,7 @@ class PublicDocumentationTests(unittest.TestCase):
             "docs/character-spec.md",
             "docs/api.md",
             "docs/release-process.md",
+            "docs/oci-publication.md",
             "examples/README.md",
         )
         snippets: list[str] = []
@@ -196,6 +197,7 @@ class PublicDocumentationTests(unittest.TestCase):
             release_process,
         )
         self.assertIn("## Source-only v0.1 release", release_process)
+        self.assertIn("normal tracked-file index flags", release_process)
         self.assertIn(
             "It never authenticates to GHCR, never pushes an image, and never\n"
             "changes any package visibility.",

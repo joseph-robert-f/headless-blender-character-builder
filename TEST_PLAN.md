@@ -357,7 +357,7 @@ project and Blender source only and sets `public_oci_ready: false` until an
 actual-final-image review completes every applicable native, base-image, and
 copyleft source/delivery obligation and the transaction gains inventory, SBOM,
 signing, publication, and digest-lock support for the derived PostgreSQL image,
-as described in `docs/release-process.md`.
+as described in `docs/oci-publication.md`.
 
 The historical final G9 index passed the complete gate on August 3, 2026. The staged
 rehearsal covered 23 release tests, 64 builder unit/contract/container/security

@@ -557,3 +557,20 @@ Conditions and scope:
 
 G9 gate result: **passed locally**. G0–G9 are complete for the local v0.1
 release candidate.
+
+### Release-process right-sizing (D-070)
+
+Before the first publication run, the operative release process was trimmed
+to solo-maintainer scale on 2026-08-15. The source-only transaction in
+`docs/release-process.md` now consists of green GitHub-hosted CI on the exact
+commit, one fresh `make release-check`, a reviewed `make dependency-scan`,
+`SHA256SUMS` verification of the evidence assets, a signed tag (any
+configured Git signing method, SSH included), and a draft-then-published
+GitHub Release confirmed with `gh release view`. The per-release settings
+re-verification, the seven-day scan window, the hand-enumerated asset list,
+and the draft re-download round trip were removed from the operative path.
+The conditional image-publication transaction, clean-environment digest
+verification, visibility commit, and recovery inventory moved verbatim to
+`docs/oci-publication.md`, remain blocked behind `public_oci_ready`, and the
+release-policy tests now pin that document. No gate was run for this change;
+it is documentation and test re-pinning only.

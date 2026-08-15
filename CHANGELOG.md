@@ -7,6 +7,12 @@ Changelog, and releases use Semantic Versioning.
 
 ### Changed
 
+- Right-sized the operative release process for a solo maintainer (D-070):
+  the source-only transaction now consists of green GitHub-hosted CI, one
+  fresh `make release-check`, a reviewed dependency scan, `SHA256SUMS`
+  verification, a signed tag (GPG or SSH signing), and a draft-then-published
+  GitHub Release, while the unchanged, still-blocked conditional
+  image-publication transaction moved verbatim to `docs/oci-publication.md`.
 - Documented a dedicated, fail-closed source-only v0.1 release transaction
   (D-069) that publishes the signed `v0.1.0-rc.1` Git tag and a
   source-bearing GitHub Release without authenticating to GHCR, pushing an
