@@ -367,6 +367,7 @@ class ReleaseWrapperTests(unittest.TestCase):
             "docs/dependency-maintenance.md",
             "docs/licensing.md",
             "docs/release-process.md",
+            "docs/oci-publication.md",
             "docs/release-notes/v0.1.0-rc.1.md",
             ".github/CODEOWNERS",
             ".github/pull_request_template.md",

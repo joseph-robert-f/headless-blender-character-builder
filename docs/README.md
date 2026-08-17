@@ -49,8 +49,11 @@ archive, release lock, or published image set yet.
 - [VPS deployment and recovery](deployment.md) — availability, topology,
   verified source installation, TLS, external S3, permissions, lifecycle,
   backup, restore, and upgrades
-- [Release process](release-process.md) — local release proof, conditional
-  publication, corresponding source, and operator checklist
+- [Release process](release-process.md) — local release proof, the source-only
+  release transaction, corresponding source, and the release-day checklist
+- [Conditional OCI image publication](oci-publication.md) — the blocked,
+  fully specified future image-publication transaction, its clean-room
+  verification, and its recovery procedures
 - [Dependency maintenance](dependency-maintenance.md) — offline consistency,
   scheduled vulnerability reports, and coordinated manual updates
 - [v0.1.0-rc.1 release notes](release-notes/v0.1.0-rc.1.md) — candidate scope
