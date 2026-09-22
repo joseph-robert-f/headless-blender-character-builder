@@ -14,6 +14,7 @@ import urllib.error
 from pathlib import Path
 from unittest import mock
 
+from shared.build_manifest import MAX_PUBLISHED_ARTIFACT_BYTES
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "service-client"
@@ -41,6 +42,32 @@ class FakeResponse(io.BytesIO):
 
 
 class ServiceClientTests(unittest.TestCase):
+    def test_standalone_client_budget_matches_the_build_contract(self) -> None:
+        self.assertEqual(CLIENT.MAX_ARTIFACT_BYTES, MAX_PUBLISHED_ARTIFACT_BYTES)
+
+    def test_download_budget_includes_the_manifest(self) -> None:
+        client = CLIENT.Client(8080, 9000, "a" * 64)
+        payload = b"x"
+        url = "http://127.0.0.1:9000/local?versionId=fixture"
+        entries = [
+            {"path": path, "bytes": 1, "sha256": hashlib.sha256(payload).hexdigest(),
+             "download_url": url}
+            for path in CLIENT.REQUIRED_ARTIFACTS
+        ]
+        client.opener.open = mock.Mock(side_effect=lambda *_args, **_kwargs: FakeResponse(payload, url))
+        for limit in (9, 8):
+            with self.subTest(limit=limit), tempfile.TemporaryDirectory() as temporary, mock.patch.object(
+                CLIENT, "MAX_ARTIFACT_BYTES", limit
+            ):
+                client.opener.open.reset_mock()
+                if limit == 9:
+                    client.download(entries, Path(temporary))
+                    self.assertEqual((Path(temporary) / "manifest.json").read_bytes(), payload)
+                else:
+                    with self.assertRaisesRegex(CLIENT.ClientFailure, "exceeds the v0.1 size budget"):
+                        client.download(entries, Path(temporary))
+                    client.opener.open.assert_not_called()
+
     def test_script_is_safe_executable_and_stdlib_only(self) -> None:
         mode = stat.S_IMODE(SCRIPT.stat().st_mode)
         self.assertEqual(mode & 0o111, 0o111)

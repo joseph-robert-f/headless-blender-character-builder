@@ -27,6 +27,7 @@ from .idempotency import (
 )
 from .models import (
     MAX_DISPATCH_COUNT,
+    MAX_PUBLISHED_BYTES,
     REQUIRED_PUBLISHED_ARTIFACTS,
     AttemptRecord,
     AttemptStatus,
@@ -409,6 +410,8 @@ class InMemoryStateStore:
             AttemptStatus.TIMED_OUT,
         ):
             raise StateConflict("invalid_attempt_outcome", "attempt outcome is outside policy")
+        if not isinstance(retryable, bool):
+            raise StateConflict("invalid_retry_policy", "retry policy is outside policy")
         require_safe_code(reason_code, "reason_code", required=True)
         with self._lock:
             attempt = self.attempt_for(attempt_id)
@@ -430,7 +433,7 @@ class InMemoryStateStore:
             can_retry = (
                 not cancel_wins
                 and status in (AttemptStatus.FAILED, AttemptStatus.TIMED_OUT)
-                and bool(retryable)
+                and retryable
                 and attempt.attempt_number < build.max_attempts
             )
             if can_retry:
@@ -819,7 +822,7 @@ class InMemoryStateStore:
                     raise StateConflict(
                         "artifact_key_mismatch", "artifact object key is not canonical"
                     )
-            if sum(record.bytes for record in records) > 2 * 1024 * 1024 * 1024:
+            if sum(record.bytes for record in records) > MAX_PUBLISHED_BYTES:
                 raise StateConflict("artifact_budget", "published artifacts exceed the aggregate budget")
             if build_id in self._artifacts:
                 raise StateConflict("artifacts_already_published", "build artifacts are immutable")

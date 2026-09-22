@@ -5,8 +5,19 @@ Changelog, and releases use Semantic Versioning.
 
 ## Unreleased
 
+### Fixed
+
+- Made the in-memory state store reject non-boolean retry flags, matching
+  PostgreSQL validation before any state change.
+- Included the canonical manifest and its final newline in the builder's
+  2 GiB publication limit, matching service uploads and client downloads.
+
 ### Changed
 
+- Moved maintenance database and file-storage operations into separate modules.
+  Existing imports from `hbcb_service.maintenance` remain available.
+- Shared one-shot Make command setup through `scripts/builder-container`, with
+  separate resource limits and mount permissions for each operation.
 - Right-sized the operative release process for a solo maintainer (D-070):
   the source-only transaction now consists of green GitHub-hosted CI, one
   fresh `make release-check`, a reviewed dependency scan, `SHA256SUMS`

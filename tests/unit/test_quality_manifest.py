@@ -4,7 +4,7 @@ import copy
 import unittest
 
 from shared.build_manifest import BuildManifest, MAX_PUBLISHED_ARTIFACT_BYTES, validate_manifest
-from shared.json_contract import ContractValidationError
+from shared.json_contract import ContractValidationError, canonical_json_bytes
 from shared.quality_report import (
     QA_STATUS_BUILD_MAPPING,
     QualityReport,
@@ -191,6 +191,16 @@ class ManifestTests(unittest.TestCase):
         exact_share = MAX_PUBLISHED_ARTIFACT_BYTES // len(raw["artifacts"])
         for artifact in raw["artifacts"].values():
             artifact["bytes"] = exact_share
+        # The eight hashed files cannot use the space needed by the ninth file.
+        with self.assertRaisesRegex(ContractValidationError, "artifact_budget_exceeded"):
+            BuildManifest.from_mapping(raw)
+        manifest_size = len(canonical_json_bytes(raw)) + 1
+        raw["artifacts"]["model.blend"]["bytes"] -= manifest_size
+        self.assertEqual(len(canonical_json_bytes(raw)) + 1, manifest_size)
+        self.assertEqual(
+            sum(entry["bytes"] for entry in raw["artifacts"].values()) + manifest_size,
+            MAX_PUBLISHED_ARTIFACT_BYTES,
+        )
         BuildManifest.from_mapping(raw)
         raw["artifacts"]["qa.json"]["bytes"] += 1
         with self.assertRaisesRegex(ContractValidationError, "artifact_budget_exceeded"):

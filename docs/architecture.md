@@ -153,5 +153,10 @@ alternate Blender execution engines.
 | `docs/` | Categorized user/operator guides plus scope, evidence, and decision records |
 | `docs/assets/` | Only the optimized, separately licensed static documentation preview |
 
+Maintenance orchestration remains in `hbcb_service.maintenance`. Database
+operations are in `maintenance_postgres`. MinIO and backup-file operations are
+in `maintenance_storage`. Shared records and checks are in `maintenance_common`.
+Existing imports from `hbcb_service.maintenance` still work.
+
 The binding contracts and historical decisions are in [character-spec.md](character-spec.md),
 [api.md](api.md), and [decisions.md](decisions.md).

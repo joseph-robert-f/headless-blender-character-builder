@@ -14,12 +14,11 @@ from shared.build_manifest import BuildManifest, REQUIRED_ARTIFACTS
 from shared.json_contract import ContractValidationError
 
 from .errors import WorkerError
-from .models import ARTIFACT_CONTENT_TYPES, ArtifactRecord, utc_now
+from .models import ARTIFACT_CONTENT_TYPES, MAX_PUBLISHED_BYTES, ArtifactRecord, utc_now
 from .storage import artifact_object_key
 
 
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
-MAX_PUBLISHED_BYTES = 2 * 1024 * 1024 * 1024
 EXACT_FILES = frozenset((*REQUIRED_ARTIFACTS, "manifest.json"))
 EXACT_DIRECTORIES = frozenset({"diagnostics"})
 

@@ -267,7 +267,7 @@ class ReleaseWrapperTests(unittest.TestCase):
             r"(?m)^check:.*\bworker-boundary-check\b",
         )
         boundary_recipe = makefile[
-            makefile.index("worker-boundary-image:") : makefile.index("validate:")
+            makefile.index("worker-boundary-image:") : makefile.index("validate build inspect:")
         ]
         for required in (
             "--target worker",

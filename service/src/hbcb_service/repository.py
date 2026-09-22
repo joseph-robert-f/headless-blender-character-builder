@@ -25,6 +25,7 @@ from .idempotency import (
     require_same_request,
 )
 from .models import (
+    MAX_PUBLISHED_BYTES,
     REQUIRED_PUBLISHED_ARTIFACTS,
     AttemptRecord,
     AttemptStatus,
@@ -791,7 +792,7 @@ class PostgresRepository:
             )
             if record.object_key != expected_key:
                 raise StateConflict("artifact_key_mismatch", "artifact object key is not canonical")
-        if sum(record.bytes for record in records) > 2 * 1024 * 1024 * 1024:
+        if sum(record.bytes for record in records) > MAX_PUBLISHED_BYTES:
             raise StateConflict("artifact_budget", "published artifacts exceed the aggregate budget")
         return records
 

@@ -1,0 +1,144 @@
+#!/bin/sh
+# Internal Make helper for the four one-shot builder operations. No .env loads.
+# Make owns image rebuilds between preflight and run; the remaining run arguments
+# are PLATFORM, BUILDER_IMAGE, and the Docker command as separate shell words.
+set -eu
+
+phase=${1-}
+if test "$phase" = check-output-name; then
+  LC_ALL=C; export LC_ALL
+  output_name=${OUTPUT_NAME-}
+  case "$output_name" in
+    ''|-*|*-|*--*|*[!a-z0-9-]*)
+      echo "OUTPUT_NAME must be a 1-48 character lowercase safe slug" >&2
+      exit 2
+      ;;
+  esac
+  if test "${#output_name}" -gt 48; then
+    echo "OUTPUT_NAME must be a 1-48 character lowercase safe slug" >&2
+    exit 2
+  fi
+  exit 0
+fi
+
+operation=${2-}
+case "$phase:$operation" in
+  preflight:validate|preflight:build|preflight:verify|preflight:inspect|\
+  run:validate|run:build|run:verify|run:inspect) ;;
+  *) echo "HBCB_MAKE: expected preflight or run and a builder operation" >&2; exit 2 ;;
+esac
+shift 2
+
+case "$operation" in
+  validate|build|verify)
+    request=$REQUEST
+    case "$request" in /*) ;; *) request="$(pwd -P)/$request" ;; esac
+    ;;
+esac
+case "$operation" in
+  build|verify|inspect)
+    output_parent=$BUILD_PARENT; output_name=$OUTPUT_NAME
+    output_path=$output_parent/$output_name
+    ;;
+esac
+if test "$operation" = inspect; then
+  manifest_path=$output_path/manifest.json
+fi
+
+if test "$phase" = preflight; then
+  case "$operation" in
+    validate|build|verify)
+      if ! test -f "$request"; then
+        echo "HBCB_MAKE: FAIL[request_missing]: set REQUEST to an existing regular JSON file" >&2
+        exit 2
+      fi
+      ;;
+  esac
+  case "$operation" in
+    build)
+      if test -e "$output_path" || test -L "$output_path"; then
+        echo "HBCB_MAKE: FAIL[output_exists]: the selected build output already exists; choose a new OUTPUT_NAME or move the existing output aside" >&2
+        exit 2
+      fi
+      ;;
+    verify|inspect)
+      if test -L "$output_path" || ! test -d "$output_path"; then
+        if test "$operation" = verify; then
+          echo "HBCB_MAKE: FAIL[output_missing]: the selected build output is not an existing non-symlink directory; run make build with the same REQUEST and OUTPUT_NAME first" >&2
+        else
+          echo "HBCB_MAKE: FAIL[output_missing]: the selected build output is not an existing non-symlink directory; run make build with the same OUTPUT_NAME first" >&2
+        fi
+        exit 2
+      fi
+      ;;
+  esac
+  if test "$operation" = inspect; then
+    if test -L "$manifest_path" || ! test -f "$manifest_path"; then
+      echo "HBCB_MAKE: FAIL[manifest_missing]: the selected build has no regular non-symlink manifest.json" >&2
+      exit 2
+    fi
+  fi
+  exit 0
+fi
+
+platform=$1; builder_image=$2
+shift 2
+if test "$operation" = build; then mkdir -p "$output_parent"; fi
+host_uid=$(id -u); runtime_uid=$host_uid; runtime_gid=$(id -g)
+if test "$runtime_uid" = 0; then runtime_uid=65532; fi
+if test "$runtime_gid" = 0; then runtime_gid=65532; fi
+if test "$operation" = build && test "$host_uid" = 0; then
+  chown "$runtime_uid:$runtime_gid" "$output_parent"
+fi
+
+case "$operation" in
+  build|verify)
+    image_metadata=$("$@" image inspect --format '{{.Os}}/{{.Architecture}}|{{.Id}}' "$builder_image")
+    image_platform=${image_metadata%%|*}; image_id=${image_metadata#*|}
+    test "$image_platform" = "$platform"
+    ;;
+esac
+
+set -- "$@" run \
+  --rm \
+  --init \
+  --platform "$platform" \
+  --network none \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true
+
+# Keep the lightweight and Blender resource envelopes visible and distinct.
+case "$operation" in
+  validate|inspect)
+    set -- "$@" --pids-limit 64 --cpus 1 --memory 512m \
+      --user "$runtime_uid:$runtime_gid" \
+      --tmpfs /work:rw,nosuid,nodev,noexec,size=64m,mode=1777
+    ;;
+  build|verify)
+    set -- "$@" --pids-limit 512 --cpus 4 --memory 4g \
+      --user "$runtime_uid:$runtime_gid" \
+      --tmpfs /work:rw,nosuid,nodev,noexec,size=2g,mode=1777
+    ;;
+esac
+case "$operation" in
+  validate|build|verify)
+    set -- "$@" --mount "type=bind,source=$request,target=/input/request.json,readonly"
+    ;;
+esac
+case "$operation" in
+  build) set -- "$@" --mount "type=bind,source=$output_parent,target=/output" ;;
+  verify) set -- "$@" --mount "type=bind,source=$output_parent,target=/output,readonly" ;;
+  inspect) set -- "$@" --mount "type=bind,source=$manifest_path,target=/input/manifest.json,readonly" ;;
+esac
+case "$operation" in
+  build|verify)
+    set -- "$@" --env HBCB_EXECUTION_MODE=container \
+      --env "HBCB_WORKER_IMAGE_REFERENCE=$builder_image" \
+      --env "HBCB_WORKER_IMAGE_ID=$image_id" \
+      "$builder_image" "$operation" --request /input/request.json --output "/output/$output_name"
+    ;;
+  validate) set -- "$@" "$builder_image" validate --request /input/request.json ;;
+  inspect) set -- "$@" "$builder_image" inspect-manifest --manifest /input/manifest.json ;;
+esac
+exec "$@"

@@ -109,6 +109,11 @@ The following are release invariants, not optional recommendations:
   success manifest.
 - Successful artifacts are hash verified, tied to exact object versions, and
   published only after fresh reload/re-import evidence passes.
+- The 2 GiB publication limit includes all nine files, including the canonical
+  manifest and its final newline. Local validation and service publication
+  enforce the same total. The standalone client checks the total before download.
+- Both state adapters reject retry flags that are not booleans before they
+  change an attempt or build.
 - Normal API and worker identities cannot administer database or storage
   permissions; the worker cannot delete artifacts.
 - The worker has no Docker socket, host home, device mount, or general public
