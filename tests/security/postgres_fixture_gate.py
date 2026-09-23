@@ -117,16 +117,7 @@ def _json_document(payload: bytes, label: str) -> Mapping[str, object]:
 
 def _inspect_image(docker: str, image: str) -> Mapping[str, object]:
     return _json_document(
-        _run(
-            (
-                docker,
-                "image",
-                "inspect",
-                "--platform",
-                "linux/amd64",
-                image,
-            )
-        ).stdout,
+        _run((docker, "image", "inspect", image)).stdout,
         "the PostgreSQL image identity",
     )
 
@@ -220,11 +211,10 @@ def _validate_selected_image(docker: str, image: str, config_id: str) -> str:
     selected = _inspect_tag(docker, image)
     if _tag_descriptor_id(selected) != image:
         raise GateError("the PostgreSQL image selection changed during inspection")
-    configured = _inspect_image(docker, image)
-    configured_id = configured.get("Id")
-    if not isinstance(configured_id, str):
-        raise GateError("the PostgreSQL linux/amd64 image identity is invalid")
-    _validate_image(configured, configured_id)
+    # The exact-ID inspection already contains the config and platform. A
+    # second platform-selected inspect needs Docker CLI >=28.1 and adds no
+    # evidence; old hosted runners reject that flag.
+    _validate_image(selected, image)
     if _exported_config_id(docker, image) != config_id:
         raise GateError("the PostgreSQL linux/amd64 config identity changed")
     return image
