@@ -10,10 +10,11 @@ trusted Blender build contract.
 > its self-hosted/public form and all VPS or multi-tenant operation are future
 > design references outside v0.1 support.
 
-> The code and container definitions for both lanes are present. No container
-> image, GitHub Release, or hosted service is published yet. The VPS material
-> describes a future target architecture, not a v0.1-supported or currently
-> installable public deployment.
+> The code and container definitions for both lanes are present. The signed
+> `v0.1.0-rc.1` tag has a published source-only GitHub Release; no container
+> image or hosted service is published. The VPS material describes a future
+> target architecture, not a v0.1-supported or currently installable public
+> deployment.
 
 ```text
 Lane A: keyless one-shot builder
