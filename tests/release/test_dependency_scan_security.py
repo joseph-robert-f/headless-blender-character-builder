@@ -277,7 +277,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
     def test_policy_image_identifiers_are_safe_unique_and_complete(self) -> None:
         expected = scan_tool.expected_external_image_ids()
         self.assertEqual(
-            set(expected), {"caddy", "docker-base", "redis-server"}
+            set(expected), {"docker-base", "redis-server"}
         )
         self.assertTrue(all(scan_tool.SAFE_ID.fullmatch(item) for item in expected))
 
@@ -291,6 +291,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
             "caddy": (
                 "deploy/vps/Caddyfile",
                 "deploy/vps/compose.yaml",
+                "docker/caddy.Dockerfile",
             ),
             "minio": (
                 "compose.yaml",
@@ -462,6 +463,11 @@ class DependencyScanSecurityTests(unittest.TestCase):
                 "reference": "postgres:16@sha256:" + digest,
                 "scan_mode": "local-build",
             },
+            {
+                "id": "caddy",
+                "reference": "caddy:2.11.4-alpine@sha256:" + digest,
+                "scan_mode": "local-build",
+            },
             {"id": "docker-base", "reference": "debian:12@sha256:" + digest},
         ]
         self.assertEqual(
@@ -472,7 +478,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
             valid + [valid[0]],
             valid + [{"id": "../escape", "reference": "postgres:16@sha256:" + digest}],
             [valid[0], {"id": "docker-base", "reference": "debian:12"}],
-            [dict(valid[0], scan_mode="external"), valid[1]],
+            [dict(valid[0], scan_mode="external"), valid[1], valid[2]],
             [valid[0]],
         )
         for inventory in invalid_inventories:
@@ -1382,6 +1388,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
                 "osv-source",
                 "osv-image-api",
                 "osv-image-builder",
+                "osv-image-caddy",
                 "osv-image-minio",
                 "osv-image-postgres",
                 "osv-image-worker",
@@ -1927,7 +1934,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
             self.assertTrue(
                 scan_tool.build_images(records, first, recipe, attempted)
             )
-        self.assertEqual(len(commands), 5)
+        self.assertEqual(len(commands), len(scan_tool.LOCAL_IMAGE_IDS))
         first_references = dict(first)
         second_references = {reference for _identifier, reference in second}
         for identifier, command in zip(scan_tool.LOCAL_IMAGE_IDS, commands):
@@ -1950,6 +1957,10 @@ class DependencyScanSecurityTests(unittest.TestCase):
             command for command in commands if "docker/postgres.Dockerfile" in command
         )
         self.assertEqual(postgres[postgres.index("--target") + 1], "postgres")
+        caddy = next(
+            command for command in commands if "docker/caddy.Dockerfile" in command
+        )
+        self.assertEqual(caddy[caddy.index("--target") + 1], "caddy")
 
     def test_parallel_build_references_do_not_change_local_policy_identity(self) -> None:
         labels = {"org.opencontainers.image.revision": "uncommitted"}

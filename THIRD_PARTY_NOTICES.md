@@ -65,7 +65,7 @@ These services are separate programs and retain their own licenses:
 | MinIO server | Final Community source revision `7aac2a2c5b7c882e68c1ce017d8256be2feea27f`, with Go security modules updated 2026-09-23, on digest-pinned `alpine:3.22.6`; local compatibility fixture only | `AGPL-3.0-or-later`; the image copies upstream `LICENSE` and `CREDITS` to `/licenses/minio/` and retains Alpine's installed package notices. The modified module graph is reproducibly hash checked in `docker/minio.Dockerfile`; this archived Community line is not the recommended production object store. |
 | MinIO client (`mc`) | Final Community source revision `77f82e18b5401a65958f1619df6ebb994634bd88`, with the same reviewed Go security-module set; health, initialization, and recovery helper only | `AGPL-3.0-or-later`; the image retains the upstream client license and credits under `/licenses/minio/`. |
 | Go toolchain | 1.26.8, MinIO and `mc` build stage only | Go's BSD-style license; the toolchain is not copied into the MinIO runtime stage. |
-| Caddy | `caddy:2.11.4-alpine`, operator-supplied digest-pinned VPS edge image | `Apache-2.0`; the repository does not vendor or publish a Caddy image. |
+| Caddy | `caddy:2.11.4-alpine` runtime base for the local `v2.11.4-hbcb.1` source-built edge image | `Apache-2.0`; the custom image is not published. A future VPS release requires its own reviewed digest. |
 
 The source-built MinIO server is a development compatibility fixture only. The
 future, out-of-scope VPS overlay instead requires an operator-managed external

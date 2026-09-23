@@ -51,6 +51,7 @@
   },
   "dockerfile_frontend": {
     "files": [
+      "docker/caddy.Dockerfile",
       "docker/minio.Dockerfile",
       "docker/postgres.Dockerfile",
       "docker/service.Dockerfile"
@@ -60,8 +61,12 @@
   "format": "hbcb-dependency-policy/v1",
   "literal_images": [
     {
+      "custom_version_variable": "CADDY_CUSTOM_VERSION",
       "digest_variable": "CADDY_DIGEST",
+      "dockerfile": "docker/caddy.Dockerfile",
       "example_file": "deploy/vps/release.lock.env.example",
+      "example_repository": "ghcr.io/joseph-robert-f/hbcb-caddy",
+      "example_tag": "v2.11.4-hbcb.1",
       "example_variable": "HBCB_CADDY_IMAGE",
       "file": "tests/deployment/g8_caddy_gate.py",
       "id": "caddy",
@@ -73,8 +78,10 @@
       "platform_reference_list_count": 2,
       "platform_variable": "CADDY_PLATFORM",
       "reference_variable": "CADDY_REFERENCE",
+      "scan_mode": "local-build",
       "tag_suffix": "-alpine",
       "tag_variable": "CADDY_TAG",
+      "target": "caddy",
       "version_variable": "CADDY_VERSION"
     }
   ],
@@ -82,6 +89,7 @@
     {
       "files": [
         "docker/builder.Dockerfile",
+        "docker/caddy.Dockerfile",
         "docker/minio.Dockerfile",
         "docker/postgres.Dockerfile",
         "docker/service.Dockerfile"

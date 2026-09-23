@@ -103,8 +103,8 @@ OCI_CONFIG_MEDIA_TYPES = frozenset(
         "application/vnd.oci.image.config.v1+json",
     }
 )
-LOCAL_IMAGE_IDS = ("builder", "minio", "postgres", "api", "worker")
-DEPENDENCY_AUDIT_LOCAL_IMAGE_IDS = frozenset({"postgres"})
+LOCAL_IMAGE_IDS = ("builder", "minio", "postgres", "api", "worker", "caddy")
+DEPENDENCY_AUDIT_LOCAL_IMAGE_IDS = frozenset({"postgres", "caddy"})
 DISPOSITION_CONTEXT_FILES = {
     "api": (
         "compose.yaml",
@@ -114,6 +114,7 @@ DISPOSITION_CONTEXT_FILES = {
     "caddy": (
         "deploy/vps/Caddyfile",
         "deploy/vps/compose.yaml",
+        "docker/caddy.Dockerfile",
     ),
     "minio": (
         "compose.yaml",
@@ -301,7 +302,10 @@ def expected_external_image_ids(root: Path = ROOT) -> tuple:
             if scan_mode not in {"external", "local-build"}:
                 raise ScanError("dependency policy %s scan mode is invalid" % key)
             if scan_mode == "local-build":
-                if key != "compose_images" or identifier not in DEPENDENCY_AUDIT_LOCAL_IMAGE_IDS:
+                if (key, identifier) not in {
+                    ("compose_images", "postgres"),
+                    ("literal_images", "caddy"),
+                }:
                     raise ScanError("dependency policy local-build image is invalid")
                 continue
             identifiers.append(identifier)
@@ -2332,6 +2336,23 @@ def build_images(
                 "HBCB_BUILDER_IMAGE=" + builder,
                 "--tag",
                 references["worker"],
+                "--platform",
+                "linux/amd64",
+                ".",
+            ],
+        ),
+        (
+            "caddy",
+            1800,
+            [
+                "docker",
+                "build",
+                "--file",
+                "docker/caddy.Dockerfile",
+                "--target",
+                "caddy",
+                "--tag",
+                references["caddy"],
                 "--platform",
                 "linux/amd64",
                 ".",

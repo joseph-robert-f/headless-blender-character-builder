@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Validate the VPS Caddyfile with the exact reviewed linux/amd64 image."""
+"""Validate the VPS Caddyfile with the reviewed local Caddy build."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -18,6 +20,7 @@ CADDYFILE = ROOT / "deploy" / "vps" / "Caddyfile"
 CADDY_VERSION = "2.11.4"
 CADDY_TAG = f"{CADDY_VERSION}-alpine"
 CADDY_OCI_VERSION = f"v{CADDY_VERSION}"
+CADDY_CUSTOM_VERSION = f"v{CADDY_VERSION}-hbcb.1"
 CADDY_PLATFORM = "linux/amd64"
 CADDY_DIGEST = "6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b"
 CADDY_REFERENCE = f"caddy:{CADDY_TAG}@sha256:{CADDY_DIGEST}"
@@ -27,7 +30,9 @@ class GateFailure(RuntimeError):
     pass
 
 
-def _run(command: Sequence[str], *, label: str) -> subprocess.CompletedProcess[bytes]:
+def _run(
+    command: Sequence[str], *, label: str, timeout: int = 120
+) -> subprocess.CompletedProcess[bytes]:
     try:
         completed = subprocess.run(
             list(command),
@@ -37,7 +42,7 @@ def _run(command: Sequence[str], *, label: str) -> subprocess.CompletedProcess[b
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
-            timeout=120,
+            timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise GateFailure(f"{label} could not complete ({type(exc).__name__})") from None
@@ -163,6 +168,86 @@ def _runtime_identity(docker: str) -> None:
         raise GateFailure("pinned Caddy runtime identity is invalid")
 
 
+def _build_custom(docker: str) -> tuple[str, str]:
+    tag = "hbcb-caddy-g8:scan-" + secrets.token_hex(12)
+    _run(
+        [
+            docker,
+            "build",
+            "--file",
+            "docker/caddy.Dockerfile",
+            "--target",
+            "caddy",
+            "--tag",
+            tag,
+            "--platform",
+            CADDY_PLATFORM,
+            ".",
+        ],
+        label="custom Caddy build",
+        timeout=1800,
+    )
+    completed = _run([docker, "image", "inspect", tag], label="custom Caddy inspection")
+    try:
+        payload = json.loads(completed.stdout.decode("utf-8", "strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise GateFailure("custom Caddy identity is invalid") from None
+    if not isinstance(payload, list) or len(payload) != 1 or not isinstance(payload[0], dict):
+        raise GateFailure("custom Caddy identity is invalid")
+    image = payload[0]
+    image_id = image.get("Id")
+    labels = image.get("Config", {}).get("Labels", {}) if isinstance(image.get("Config"), dict) else None
+    if (
+        not isinstance(image_id, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None
+        or image.get("Os") != "linux"
+        or image.get("Architecture") != "amd64"
+        or not isinstance(labels, dict)
+        or labels.get("org.opencontainers.image.version") != CADDY_CUSTOM_VERSION
+    ):
+        raise GateFailure("custom Caddy identity is invalid")
+    return tag, image_id
+
+
+def _custom_runtime(docker: str, image_id: str, command: Sequence[str]) -> list[str]:
+    return [
+        docker,
+        "run",
+        "--rm",
+        "--platform",
+        str(CADDY_PLATFORM),
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--cap-add",
+        "NET_BIND_SERVICE",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--pids-limit",
+        "64",
+        "--memory",
+        "256m",
+        "--cpus",
+        "1",
+        "--env",
+        "HBCB_API_DOMAIN=builder.example.com",
+        "--env",
+        "HBCB_ACME_EMAIL=operator@example.com",
+        "--mount",
+        f"type=bind,source={CADDYFILE},target=/etc/caddy/Caddyfile,readonly",
+        "--tmpfs",
+        "/tmp:rw,nosuid,nodev,noexec,size=16m",
+        "--tmpfs",
+        "/data:rw,nosuid,nodev,noexec,size=16m",
+        "--tmpfs",
+        "/config:rw,nosuid,nodev,noexec,size=16m",
+        image_id,
+        *command,
+    ]
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--docker", default="docker")
@@ -180,20 +265,48 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
     _inspect_digest(docker)
     _runtime_identity(docker)
-
-    formatted = _run(
-        _runtime(docker, ["caddy", "fmt", "/etc/caddy/Caddyfile"]),
-        label="Caddyfile formatting",
-    )
-    if formatted.stdout != CADDYFILE.read_bytes() or formatted.stderr:
-        raise GateFailure("Caddyfile is not canonically formatted")
-    _run(
-        _runtime(
-            docker,
-            ["caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
-        ),
-        label="Caddyfile validation",
-    )
+    tag, image_id = _build_custom(docker)
+    try:
+        custom_identity = _run(
+            _custom_runtime(docker, image_id, ["caddy", "version"]),
+            label="custom Caddy version",
+        )
+        try:
+            version_line = custom_identity.stdout.decode("utf-8", "strict").splitlines()
+        except UnicodeDecodeError:
+            raise GateFailure("custom Caddy version is invalid") from None
+        if (
+            custom_identity.stderr
+            or len(version_line) != 1
+            or not version_line[0].split()
+            or version_line[0].split()[0] != CADDY_OCI_VERSION
+        ):
+            raise GateFailure("custom Caddy version is invalid")
+        formatted = _run(
+            _custom_runtime(docker, image_id, ["caddy", "fmt", "/etc/caddy/Caddyfile"]),
+            label="Caddyfile formatting",
+        )
+        if formatted.stdout != CADDYFILE.read_bytes() or formatted.stderr:
+            raise GateFailure("Caddyfile is not canonically formatted")
+        _run(
+            _custom_runtime(
+                docker,
+                image_id,
+                ["caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
+            ),
+            label="Caddyfile validation",
+        )
+    finally:
+        subprocess.run(
+            [docker, "image", "rm", tag],
+            cwd=ROOT,
+            env=os.environ.copy(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=120,
+        )
     print(
         json.dumps(
             {
@@ -201,6 +314,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "gate": "G8_CADDY_GATE",
                 "platform": CADDY_PLATFORM,
                 "result": "PASS",
+                "custom_image_id": image_id,
+                "custom_version": CADDY_CUSTOM_VERSION,
                 "version": CADDY_VERSION,
             },
             sort_keys=True,

@@ -26,6 +26,7 @@ FIXTURE_FILES = (
     "docker/BLENDER_SOURCE_NOTICE.md",
     "docker/blender-download.sha256",
     "docker/builder.Dockerfile",
+    "docker/caddy.Dockerfile",
     "docker/minio.Dockerfile",
     "docker/postgres.Dockerfile",
     "docker/service.Dockerfile",
@@ -156,6 +157,13 @@ class DependencyAuditTests(unittest.TestCase):
             {item.get("id") for item in images if isinstance(item, dict)},
             {"caddy", "docker-base", "postgres", "redis-server"},
         )
+        caddy = next(item for item in images if item.get("id") == "caddy")
+        self.assertEqual(caddy["scan_mode"], "local-build")
+        gate_constants = audit_tool.python_string_assignments(
+            (ROOT / "tests/deployment/g8_caddy_gate.py").read_text(encoding="utf-8"),
+            "tests/deployment/g8_caddy_gate.py",
+        )
+        self.assertEqual(caddy["reference"], gate_constants["CADDY_REFERENCE"])
         manual = first.get("manual_review")
         self.assertIsInstance(manual, list)
         self.assertEqual(
@@ -180,6 +188,31 @@ class DependencyAuditTests(unittest.TestCase):
         rendered = audit_tool.markdown(first)
         self.assertIn("Status: **pass**", rendered)
         self.assertIn("Mode: `offline`", rendered)
+
+    def test_custom_caddy_source_and_operator_example_cannot_drift(self) -> None:
+        mutations = (
+            (
+                "docker/caddy.Dockerfile",
+                "releases/download/v2.11.4/caddy_2.11.4_buildable-artifact.tar.gz",
+                "releases/download/v2.11.3/caddy_2.11.3_buildable-artifact.tar.gz",
+                "custom Caddy recipe source or version is stale",
+            ),
+            (
+                "deploy/vps/release.lock.env.example",
+                "ghcr.io/joseph-robert-f/hbcb-caddy:v2.11.4-hbcb.1@sha256:",
+                "caddy:2.11.4-alpine@sha256:",
+                "does not preserve the reviewed tag",
+            ),
+        )
+        for relative, old, new, detail in mutations:
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as temporary:
+                root = fixture_root(Path(temporary))
+                replace_once(root, relative, old, new)
+                self.assert_check_failure(
+                    audit_tool.run_audit(root, online=False),
+                    "literal-image-caddy",
+                    detail,
+                )
 
     def test_service_runtime_parser_covers_all_six_direct_dependencies(self) -> None:
         values = audit_tool.parse_toml_string_array(

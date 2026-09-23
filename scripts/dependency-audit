@@ -52,6 +52,7 @@ EXPECTED_MANUAL_REVIEW_FILES = {
     },
     "dockerfile-frontend": {
         "docker/builder.Dockerfile",
+        "docker/caddy.Dockerfile",
         "docker/minio.Dockerfile",
         "docker/postgres.Dockerfile",
         "docker/service.Dockerfile",
@@ -89,6 +90,7 @@ EXPECTED_MANUAL_REVIEW_NAMES = {
     "python-build-backend": "Python build backend",
 }
 EXPECTED_DOCKERFILE_FRONTEND_FILES = {
+    "docker/caddy.Dockerfile",
     "docker/minio.Dockerfile",
     "docker/postgres.Dockerfile",
     "docker/service.Dockerfile",
@@ -1238,6 +1240,7 @@ def audit_literal_images(root: Path, policy: Mapping[str, object], report: Dict[
         platform_variable = str(raw.get("platform_variable", ""))
         tag_suffix = str(raw.get("tag_suffix", ""))
         oci_version_prefix = str(raw.get("oci_version_prefix", ""))
+        scan_mode = raw.get("scan_mode", "external")
         expected_platform_lists = raw.get("platform_reference_list_count")
         expected_inspect_lists = raw.get("inspect_reference_list_count")
         if (
@@ -1257,6 +1260,8 @@ def audit_literal_images(root: Path, policy: Mapping[str, object], report: Dict[
             raise AuditInputError("literal image version/platform policy is invalid: " + identifier)
         reference = assignments.get(reference_variable, "")
         failures: List[str] = []
+        if scan_mode not in {"external", "local-build"}:
+            failures.append("literal image scan mode is unsupported")
         try:
             parsed = parse_image_reference(reference)
         except AuditInputError as failure:
@@ -1307,7 +1312,45 @@ def audit_literal_images(root: Path, policy: Mapping[str, object], report: Dict[
         example_variable = str(raw.get("example_variable", ""))
         example_text = read_text(root, example_relative)
         example_match = re.search(r"(?m)^" + re.escape(example_variable) + r"=([^\s]+)$", example_text)
-        expected_example = str(parsed["repository"]) + ":" + str(parsed["tag"]) + "@sha256:" + ("0" * 64)
+        if scan_mode == "local-build":
+            dockerfile = raw.get("dockerfile")
+            target = raw.get("target")
+            example_repository = raw.get("example_repository")
+            example_tag = raw.get("example_tag")
+            if (
+                identifier != "caddy"
+                or dockerfile != "docker/caddy.Dockerfile"
+                or target != "caddy"
+                or not isinstance(example_repository, str)
+                or not isinstance(example_tag, str)
+                or not example_tag.startswith("v" + version + "-hbcb.")
+                or assignments.get(str(raw.get("custom_version_variable", ""))) != example_tag
+            ):
+                failures.append("local Caddy image policy is invalid")
+            try:
+                recipe = read_text(root, str(dockerfile))
+            except AuditInputError as failure:
+                failures.append(str(failure))
+                recipe = ""
+            expected_runtime_from = (
+                "FROM --platform=linux/amd64 " + reference + " AS " + str(target)
+            )
+            if recipe.splitlines().count(expected_runtime_from) != 1:
+                failures.append("custom Caddy recipe does not pin the reviewed runtime base")
+            expected_source = (
+                "https://github.com/caddyserver/caddy/releases/download/v"
+                + version
+                + "/caddy_"
+                + version
+                + "_buildable-artifact.tar.gz"
+            )
+            if expected_source not in recipe or (
+                'org.opencontainers.image.version="' + str(example_tag) + '"'
+            ) not in recipe:
+                failures.append("custom Caddy recipe source or version is stale")
+            expected_example = str(example_repository) + ":" + str(example_tag) + "@sha256:" + ("0" * 64)
+        else:
+            expected_example = str(parsed["repository"]) + ":" + str(parsed["tag"]) + "@sha256:" + ("0" * 64)
         if example_match is None or example_match.group(1) != expected_example:
             failures.append(example_relative + " does not preserve the reviewed tag with an explicit digest placeholder")
         tag_reference = str(parsed["repository"]) + ":" + str(parsed["tag"])
@@ -1321,6 +1364,7 @@ def audit_literal_images(root: Path, policy: Mapping[str, object], report: Dict[
                     "official_image": str(raw.get("official_image", "")),
                     "reference": reference,
                     "repository": str(parsed["repository"]),
+                    "scan_mode": str(scan_mode),
                     "tag": str(parsed["tag"]),
                 }
             )

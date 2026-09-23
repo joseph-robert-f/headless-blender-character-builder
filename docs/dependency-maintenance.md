@@ -17,7 +17,7 @@ reviewed authentication design.
 |---|---:|---:|---|
 | `make dependency-check` | No | No | Fail when declarations, locks, hashes, notices, provenance, Compose recovery pins, or exact assertions disagree. |
 | `make dependency-audit` | Yes | No | Run the offline gate, then report PyPI candidates, Docker Official Image support status, and tag-to-digest drift. It never edits files. |
-| `make dependency-scan DEPENDENCY_OUTPUT=build/dependency-audit-review` | Yes | Yes | Download a checksum-pinned OSV-Scanner, build the five project images—including the gosu-free PostgreSQL derivative—scan all three Python locks and every release image, run the isolated PostgreSQL runtime proof, then enforce the checked-in UNRATED/HIGH/CRITICAL disposition policy while retaining the detailed reports. |
+| `make dependency-scan DEPENDENCY_OUTPUT=build/dependency-audit-review` | Yes | Yes | Download a checksum-pinned OSV-Scanner, build the six project images—including the gosu-free PostgreSQL and source-built Caddy derivatives—scan all three Python locks and every release image, run the isolated PostgreSQL runtime proof, then enforce the checked-in UNRATED/HIGH/CRITICAL disposition policy while retaining the detailed reports. |
 
 `make postgres-security-check` reruns only the exact PostgreSQL fresh-volume
 proof. It is useful while diagnosing that fixture, but it does not replace the
@@ -248,10 +248,21 @@ empty-queue reconstruction path even though PostgreSQL remains authoritative.
 
 ### Caddy
 
-Keep the exact Caddy tag and digest in `tests/deployment/g8_caddy_gate.py`
-synchronized with the tag and explicit zero-digest placeholder in
-`deploy/vps/release.lock.env.example` and the notice table. Run `make g8-caddy`
-and the full dependency scan before selecting the updated operator example.
+The exact upstream Caddy tag and digest in `tests/deployment/g8_caddy_gate.py`
+are build inputs, not the release image. `docker/caddy.Dockerfile` builds a
+custom Caddy binary and copies it into that pinned runtime base. The dependency
+scan builds and scans the resulting image; `make g8-caddy` checks both the
+upstream base identity and the custom binary and validates the Caddyfile with
+the custom image. Update the source, Go modules, build recipe, runtime base,
+notice, and both checks together.
+
+The `HBCB_CADDY_IMAGE` entry in `deploy/vps/release.lock.env.example` is a
+placeholder for a future published digest of the custom image. It is not a
+working deployment reference. This project is local-only for now. Do not
+replace the placeholder with the official Caddy digest or deploy the VPS stack
+until the custom image has a reviewed, published digest and the full scan has
+passed. A scan finding still requires an independent disposition review; a
+source rebuild does not approve a risk decision.
 
 ### Manually reviewed inputs
 

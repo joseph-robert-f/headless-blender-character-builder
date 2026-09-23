@@ -194,5 +194,82 @@ class CaddyRuntimeIdentityTests(unittest.TestCase):
                 gate._runtime_identity("docker")
 
 
+class CaddyCustomBuildTests(unittest.TestCase):
+    def test_build_inspects_exact_local_image_and_binds_runtime_to_id(self) -> None:
+        image_id = "sha256:" + "a" * 64
+        tag = "hbcb-caddy-g8:scan-" + "b" * 24
+        payload = [
+            {
+                "Id": image_id,
+                "Os": "linux",
+                "Architecture": "amd64",
+                "Config": {
+                    "Labels": {
+                        "org.opencontainers.image.version": gate.CADDY_CUSTOM_VERSION
+                    }
+                },
+            }
+        ]
+        calls: list[tuple[list[str], str, int]] = []
+
+        def run(command: list[str], *, label: str, timeout: int = 120):
+            calls.append((list(command), label, timeout))
+            return completed(
+                stdout=json.dumps(payload).encode("utf-8")
+                if label == "custom Caddy inspection"
+                else b""
+            )
+
+        with mock.patch.object(gate.secrets, "token_hex", return_value="b" * 24), mock.patch.object(
+            gate, "_run", side_effect=run
+        ):
+            self.assertEqual(gate._build_custom("docker"), (tag, image_id))
+        self.assertEqual(len(calls), 2)
+        build, label, timeout = calls[0]
+        self.assertEqual(label, "custom Caddy build")
+        self.assertEqual(timeout, 1800)
+        self.assertEqual(build[build.index("--file") + 1], "docker/caddy.Dockerfile")
+        self.assertEqual(build[build.index("--target") + 1], "caddy")
+        self.assertEqual(build[build.index("--platform") + 1], gate.CADDY_PLATFORM)
+        self.assertEqual(build[build.index("--tag") + 1], tag)
+        self.assertEqual(calls[1][0], ["docker", "image", "inspect", tag])
+
+        runtime = gate._custom_runtime("docker", image_id, ["caddy", "version"])
+        self.assertIn(image_id, runtime)
+        self.assertNotIn(tag, runtime)
+        self.assertEqual(runtime[runtime.index("--network") + 1], "none")
+        self.assertIn("--read-only", runtime)
+        self.assertEqual(runtime[runtime.index("--cap-drop") + 1], "ALL")
+        self.assertEqual(runtime[runtime.index("--platform") + 1], gate.CADDY_PLATFORM)
+
+    def test_custom_build_rejects_wrong_platform_or_version(self) -> None:
+        valid = {
+            "Id": "sha256:" + "a" * 64,
+            "Os": "linux",
+            "Architecture": "amd64",
+            "Config": {
+                "Labels": {"org.opencontainers.image.version": gate.CADDY_CUSTOM_VERSION}
+            },
+        }
+        for mutation in (
+            {"Architecture": "arm64"},
+            {"Os": "darwin"},
+            {"Id": "latest"},
+            {"Config": {"Labels": {"org.opencontainers.image.version": "v2.11.3"}}},
+        ):
+            with self.subTest(mutation=mutation):
+                document = dict(valid, **mutation)
+
+                def run(_command: list[str], *, label: str, timeout: int = 120):
+                    return completed(
+                        stdout=json.dumps([document]).encode("utf-8")
+                        if label == "custom Caddy inspection"
+                        else b""
+                    )
+
+                with mock.patch.object(gate, "_run", side_effect=run):
+                    with self.assertRaisesRegex(gate.GateFailure, "custom Caddy identity"):
+                        gate._build_custom("docker")
+
 if __name__ == "__main__":
     unittest.main()
