@@ -220,10 +220,8 @@ class CaddyCustomBuildTests(unittest.TestCase):
                 else b""
             )
 
-        with mock.patch.object(gate.secrets, "token_hex", return_value="b" * 24), mock.patch.object(
-            gate, "_run", side_effect=run
-        ):
-            self.assertEqual(gate._build_custom("docker"), (tag, image_id))
+        with mock.patch.object(gate, "_run", side_effect=run):
+            self.assertEqual(gate._build_custom("docker", tag), image_id)
         self.assertEqual(len(calls), 2)
         build, label, timeout = calls[0]
         self.assertEqual(label, "custom Caddy build")
@@ -269,7 +267,42 @@ class CaddyCustomBuildTests(unittest.TestCase):
 
                 with mock.patch.object(gate, "_run", side_effect=run):
                     with self.assertRaisesRegex(gate.GateFailure, "custom Caddy identity"):
-                        gate._build_custom("docker")
+                        gate._build_custom("docker", "hbcb-caddy-g8:scan-test")
+
+    def test_failed_build_still_removes_temporary_tag(self) -> None:
+        tag = "hbcb-caddy-g8:scan-" + "b" * 24
+        with mock.patch.object(gate, "_inspect_digest"), mock.patch.object(
+            gate, "_runtime_identity"
+        ), mock.patch.object(gate.secrets, "token_hex", return_value="b" * 24), mock.patch.object(
+            gate, "_build_custom", side_effect=gate.GateFailure("custom Caddy build failed")
+        ), mock.patch.object(gate, "_remove_custom") as remove:
+            with self.assertRaisesRegex(gate.GateFailure, "custom Caddy build failed"):
+                gate.main(["--skip-pull"])
+        remove.assert_called_once_with("docker", tag)
+
+    def test_final_binary_must_match_builder_digest(self) -> None:
+        image_id = "sha256:" + "a" * 64
+        tag = "hbcb-caddy-g8:scan-" + "b" * 24
+
+        def run(command: list[str], *, label: str, timeout: int = 120):
+            if label == "custom Caddy version":
+                return completed(stdout=b"v2.11.4 h1:reviewed-runtime-hash\n")
+            if label == "custom Caddy binary provenance":
+                self.assertIn(image_id, command)
+                self.assertIn("sha256sum -c /usr/share/licenses/caddy/caddy.sha256", command)
+                return completed(stdout=b"/usr/bin/caddy: FAILED\n")
+            self.fail(f"unexpected validation after bad binary: {label}")
+
+        with mock.patch.object(gate, "_inspect_digest"), mock.patch.object(
+            gate, "_runtime_identity"
+        ), mock.patch.object(gate.secrets, "token_hex", return_value="b" * 24), mock.patch.object(
+            gate, "_build_custom", return_value=image_id
+        ), mock.patch.object(gate, "_remove_custom") as remove, mock.patch.object(
+            gate, "_run", side_effect=run
+        ):
+            with self.assertRaisesRegex(gate.GateFailure, "binary provenance is invalid"):
+                gate.main(["--skip-pull"])
+        remove.assert_called_once_with("docker", tag)
 
 if __name__ == "__main__":
     unittest.main()

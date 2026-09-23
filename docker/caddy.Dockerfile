@@ -98,6 +98,7 @@ RUN set -eux; \
         -ldflags='-s -w -buildid=' -o /out/caddy .; \
     /out/caddy version | grep -F 'v2.11.4'; \
     go version -m /out/caddy | grep -F 'go1.26.8'; \
+    sha256sum /out/caddy | sed 's|  /out/caddy$|  /usr/bin/caddy|' > /out/caddy.sha256; \
     cp go.mod /out/go.mod; \
     cp go.sum /out/go.sum; \
     cp LICENSE /out/LICENSE
@@ -120,6 +121,7 @@ LABEL org.opencontainers.image.title="Caddy v2.11.4 (HBCB patched build)" \
       io.hbcb.scope="local-development-only"
 
 COPY --from=caddy-build /out/caddy /usr/bin/caddy
+COPY --from=caddy-build /out/caddy.sha256 /usr/share/licenses/caddy/caddy.sha256
 COPY --from=caddy-build /out/go.mod /usr/share/licenses/caddy/go.mod
 COPY --from=caddy-build /out/go.sum /usr/share/licenses/caddy/go.sum
 COPY --from=caddy-build /out/LICENSE /usr/share/licenses/caddy/LICENSE
@@ -131,4 +133,5 @@ RUN set -eux; \
     chmod 0755 /usr/bin/caddy; \
     setcap cap_net_bind_service=+ep /usr/bin/caddy; \
     getcap /usr/bin/caddy | grep -F 'cap_net_bind_service=ep'; \
+    sha256sum -c /usr/share/licenses/caddy/caddy.sha256; \
     caddy version | grep -F 'v2.11.4'

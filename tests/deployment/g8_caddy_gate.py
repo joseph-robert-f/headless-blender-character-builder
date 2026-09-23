@@ -168,8 +168,7 @@ def _runtime_identity(docker: str) -> None:
         raise GateFailure("pinned Caddy runtime identity is invalid")
 
 
-def _build_custom(docker: str) -> tuple[str, str]:
-    tag = "hbcb-caddy-g8:scan-" + secrets.token_hex(12)
+def _build_custom(docker: str, tag: str) -> str:
     _run(
         [
             docker,
@@ -206,7 +205,23 @@ def _build_custom(docker: str) -> tuple[str, str]:
         or labels.get("org.opencontainers.image.version") != CADDY_CUSTOM_VERSION
     ):
         raise GateFailure("custom Caddy identity is invalid")
-    return tag, image_id
+    return image_id
+
+
+def _remove_custom(docker: str, tag: str) -> None:
+    try:
+        subprocess.run(
+            [docker, "image", "rm", tag],
+            cwd=ROOT,
+            env=os.environ.copy(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def _custom_runtime(docker: str, image_id: str, command: Sequence[str]) -> list[str]:
@@ -265,8 +280,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
     _inspect_digest(docker)
     _runtime_identity(docker)
-    tag, image_id = _build_custom(docker)
+    tag = "hbcb-caddy-g8:scan-" + secrets.token_hex(12)
     try:
+        image_id = _build_custom(docker, tag)
         custom_identity = _run(
             _custom_runtime(docker, image_id, ["caddy", "version"]),
             label="custom Caddy version",
@@ -282,6 +298,19 @@ def main(argv: Sequence[str] | None = None) -> None:
             or version_line[0].split()[0] != CADDY_OCI_VERSION
         ):
             raise GateFailure("custom Caddy version is invalid")
+        binary_provenance = _run(
+            _custom_runtime(
+                docker,
+                image_id,
+                ["/bin/sh", "-c", "sha256sum -c /usr/share/licenses/caddy/caddy.sha256"],
+            ),
+            label="custom Caddy binary provenance",
+        )
+        if (
+            binary_provenance.stdout != b"/usr/bin/caddy: OK\n"
+            or binary_provenance.stderr
+        ):
+            raise GateFailure("custom Caddy binary provenance is invalid")
         formatted = _run(
             _custom_runtime(docker, image_id, ["caddy", "fmt", "/etc/caddy/Caddyfile"]),
             label="Caddyfile formatting",
@@ -297,16 +326,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             label="Caddyfile validation",
         )
     finally:
-        subprocess.run(
-            [docker, "image", "rm", tag],
-            cwd=ROOT,
-            env=os.environ.copy(),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-            timeout=120,
-        )
+        _remove_custom(docker, tag)
     print(
         json.dumps(
             {

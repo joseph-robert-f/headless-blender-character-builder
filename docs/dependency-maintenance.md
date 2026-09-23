@@ -258,7 +258,9 @@ bounded compatibility change to Caddy's two CEL `NewCall` argument slices so
 the pinned release source builds with the patched CEL module. The recipe checks
 that both original call sites exist before it changes them and builds only the
 updated vendor tree. Update the source, Go modules, build recipe, runtime base,
-notice, and both checks together.
+notice, and both checks together. The build stage records the binary SHA-256.
+The final image and G8 gate both compare the installed binary to that record,
+so a missing binary copy cannot pass the gate on version text alone.
 
 The `HBCB_CADDY_IMAGE` entry in `deploy/vps/release.lock.env.example` is a
 placeholder for a future published digest of the custom image. It is not a
