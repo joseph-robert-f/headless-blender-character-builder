@@ -109,6 +109,12 @@ nested-process cancellation still works after the process protection is set.
 
 Bring all of the following before a live preflight:
 
+- A complete `make dependency-scan` with exit `0` for the exact release commit
+  and image set. Review its retained reports and resolve or document each
+  blocking finding in the release vulnerability policy before deployment.
+  The scheduled report-only audit is not a substitute for this gate. See
+  [Dependency maintenance](dependency-maintenance.md) and
+  [Release process](release-process.md).
 - A dedicated `linux/amd64` VPS with a maintained Docker Engine and
   Docker Compose 2.24.4 or newer. The minimum is required for the `!reset` and
   `!override` tags used by the overlay; see Docker's

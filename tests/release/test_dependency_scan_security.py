@@ -12,7 +12,6 @@ import tarfile
 import tempfile
 import time
 import unittest
-from collections import Counter
 from datetime import date
 from pathlib import Path
 from unittest import mock
@@ -201,45 +200,112 @@ class DependencyScanSecurityTests(unittest.TestCase):
         self.assertNotIn("make image\n", documentation)
         self.assertNotIn("headless-blender-character-builder:dev \\", recipe)
 
-    def test_checked_in_vulnerability_policy_is_valid(self) -> None:
-        policy = scan_tool.load_vulnerability_policy()
-        self.assertEqual(policy["format"], "hbcb-vulnerability-policy/v1")
-        self.assertEqual(policy["default_action"], "deny")
-        dispositions = policy["dispositions"]
-        self.assertEqual(len(dispositions), 155)
-        self.assertEqual(
-            Counter(
-                (item["target"], item["disposition"])
-                for item in dispositions
-            ),
-            Counter(
-                {
-                    ("osv-image-api", "accepted-risk"): 40,
-                    ("osv-image-builder", "accepted-risk"): 32,
-                    ("osv-image-caddy", "accepted-risk"): 13,
-                    ("osv-image-caddy", "not-affected"): 3,
-                    ("osv-image-docker-base", "accepted-risk"): 27,
-                    ("osv-image-minio", "mitigated"): 2,
-                    ("osv-image-minio", "not-affected"): 6,
-                    ("osv-image-worker", "accepted-risk"): 32,
-                }
-            ),
-        )
-        expected_evidence = [
-            {
-                "path": "docs/security/vulnerability-review-2026-08-12.md",
-                "sha256": "6baa0a692b0a6b69aa6252db636e30240f3fe5ac8c590b67d5b5a07a3bec7638",
-            }
-        ]
-        self.assertTrue(
-            all(
-                item["reviewed_on"] == "2026-08-12"
-                and item["expires_on"] == "2026-09-11"
-                and item["evidence"] == expected_evidence
-                and item["image_identity"] is not None
-                for item in dispositions
+    def test_checked_in_vulnerability_policy_has_release_contract(self) -> None:
+        # PR checks do not require the release decisions to be current. The
+        # enforced deployment scan validates dates, evidence, and identities.
+        policy = scan_tool.strict_json_loads(
+            (scan_tool.ROOT / scan_tool.VULNERABILITY_POLICY_PATH).read_text(
+                encoding="utf-8"
             )
         )
+        self.assertEqual(
+            set(policy), {"default_action", "dispositions", "format"}
+        )
+        self.assertEqual(policy["format"], "hbcb-vulnerability-policy/v1")
+        self.assertEqual(policy["default_action"], "deny")
+        self.assertIsInstance(policy["dispositions"], list)
+
+    def test_report_only_scan_skips_release_decisions_but_keeps_other_gates(self) -> None:
+        audit_status = "pass"
+        seen_policies = []
+
+        def fake_audit(command, **_kwargs):
+            report = Path(command[command.index("--json") + 1])
+            markdown = Path(command[command.index("--markdown") + 1])
+            report.write_text(
+                json.dumps(
+                    {
+                        "format": "hbcb-dependency-audit/v1",
+                        "images": [],
+                        "mode": "online",
+                        "status": audit_status,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            markdown.write_text("# Dependency audit\n", encoding="utf-8")
+            return {"pass": 0, "findings": 1, "incomplete": 2}[audit_status]
+
+        def fake_source(_scanner, output, records, policy):
+            seen_policies.append(policy)
+            (output / "osv-source.json").write_text("{}\n", encoding="utf-8")
+            records.append(
+                {
+                    "exit_code": 1,
+                    "id": "osv-source",
+                    "report": "osv-source.json",
+                    "status": "findings",
+                    "type": "vulnerability-scan",
+                    "vulnerabilities": {
+                        "blocking": 1,
+                        "dispositioned": 0,
+                        "families": 1,
+                        "severity": {name: 0 for name in scan_tool.SEVERITY_ORDER},
+                    },
+                }
+            )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                mock.patch.object(
+                    scan_tool,
+                    "load_vulnerability_policy",
+                    side_effect=scan_tool.ScanError("expired release decisions"),
+                ) as load_policy,
+                mock.patch.object(scan_tool, "run", side_effect=fake_audit),
+                mock.patch.object(scan_tool, "expected_external_image_ids", return_value=()),
+                mock.patch.object(scan_tool, "validate_external_images", return_value=[]),
+                mock.patch.object(scan_tool, "scanner_asset", return_value=("test", "0" * 64)),
+                mock.patch.object(scan_tool, "download_scanner"),
+                mock.patch.object(scan_tool, "verify_scanner"),
+                mock.patch.object(scan_tool, "scan_source", side_effect=fake_source),
+            ):
+                advisory = root / "advisory"
+                self.assertEqual(
+                    scan_tool.execute(advisory, False, None, report_only=True), 0
+                )
+                load_policy.assert_not_called()
+                summary = json.loads(
+                    (advisory / "scan-summary.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(summary["mode"], "report-only")
+                self.assertEqual(summary["status"], "findings")
+                self.assertEqual(summary["vulnerability_policy"]["status"], "not-applied")
+                self.assertTrue((advisory / "osv-source.json").is_file())
+                self.assertEqual(seen_policies[-1]["dispositions"], [])
+                self.assertIn(
+                    "Vulnerability findings are advisory",
+                    (advisory / "scan-summary.md").read_text(encoding="utf-8"),
+                )
+
+                audit_status = "findings"
+                self.assertEqual(
+                    scan_tool.execute(root / "maintenance-findings", False, None, report_only=True),
+                    1,
+                )
+                load_policy.assert_not_called()
+
+                audit_status = "incomplete"
+                self.assertEqual(
+                    scan_tool.execute(root / "incomplete", False, None, report_only=True),
+                    2,
+                )
+                load_policy.assert_not_called()
+
+                audit_status = "pass"
+                self.assertEqual(scan_tool.execute(root / "enforced", False, None), 2)
+                load_policy.assert_called_once()
 
     def test_vulnerability_policy_rejects_symlink_oversize_and_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

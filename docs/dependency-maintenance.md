@@ -1,23 +1,25 @@
 # Dependency maintenance without Dependabot
 
 This repository contains no configuration that asks Dependabot to rewrite
-dependency files. Maintainers use one offline consistency gate and one
-read-only networked audit so version discovery, security review, lock
-regeneration, licensing, recovery evidence, and migration planning stay
-coordinated.
+dependency files. Maintainers use an offline consistency gate, read-only
+version discovery, and a report-only vulnerability audit for routine work.
+A strict vulnerability decision gate applies before deployment or publication,
+so lock regeneration, licensing, recovery evidence, and migration planning
+stay coordinated without requiring new decisions for each pull request.
 
 No provider key, registry credential, GitHub personal access token, or paid
 service is required for the public-repository workflow. GitHub Actions supplies
 its own read-only checkout token. Private registries would require a separately
 reviewed authentication design.
 
-## Three levels of checking
+## Four levels of checking
 
 | Command | Network | Docker | Purpose |
 |---|---:|---:|---|
 | `make dependency-check` | No | No | Fail when declarations, locks, hashes, notices, provenance, Compose recovery pins, or exact assertions disagree. |
 | `make dependency-audit` | Yes | No | Run the offline gate, then report PyPI candidates, Docker Official Image support status, and tag-to-digest drift. It never edits files. |
-| `make dependency-scan DEPENDENCY_OUTPUT=build/dependency-audit-review` | Yes | Yes | Download a checksum-pinned OSV-Scanner, build the six project images—including the gosu-free PostgreSQL and source-built Caddy derivatives—scan all three Python locks and every release image, run the isolated PostgreSQL runtime proof, then enforce the checked-in UNRATED/HIGH/CRITICAL disposition policy while retaining the detailed reports. |
+| `./scripts/dependency-scan --report-only --output build/dependency-audit-review --images` | Yes | Yes | Build and scan all release images and Python locks, run the PostgreSQL runtime proof, and retain reports. Vulnerability findings alone do not fail this scan; checked-in dispositions are not loaded or enforced. Use a fresh output directory for each run. |
+| `make dependency-scan DEPENDENCY_OUTPUT=build/dependency-audit-release` | Yes | Yes | Run the same full scan in strict/default mode before deployment or publication. UNRATED/HIGH/CRITICAL findings require exact, active, evidence-backed dispositions; retain and review the reports. |
 
 `make postgres-security-check` reruns only the exact PostgreSQL fresh-volume
 proof. It is useful while diagnosing that fixture, but it does not replace the
@@ -34,8 +36,9 @@ descendants to `SIGKILL`, and reaps the group leader before returning.
 
 The offline check is part of `make check` and the clean-index release gate. It
 is deterministic and makes no vulnerability-database or registry requests.
-The online commands are advisory discovery tools: they can identify work, but
-they never select or install an update.
+Routine pull-request checks do not enforce vulnerability decisions. The online
+commands never select or install an update; the report-only scan can identify
+work without making an expired or missing disposition block a pull request.
 
 ## Hosted audit
 
@@ -45,12 +48,13 @@ manual runs use the maintainer-selected ref. The workflow receives
 `contents: read`, persists no checkout credentials, has no issue or pull-request
 write permission, and is never triggered by a contributor pull request.
 
-Besides the scan itself, every run enforces a disposition expiry runway: it
-fails with `DEPENDENCY_AUDIT: DISPOSITIONS EXPIRE SOON` once the earliest
-`expires_on` in `release/vulnerability-policy.json` is fourteen days away or
-less, so the weekly failure notification arrives while there is still time to
-rerun the vulnerability review and refresh the dispositions before the scan
-itself starts failing closed on their expiry.
+The scheduled/manual workflow runs `dependency-scan --report-only`. It retains
+the detailed report artifact for seven days and fails if the audit cannot
+complete, the artifact is missing, or a dependency-maintenance or runtime
+security gate fails. It does not load dispositions or check their expiry;
+a vulnerability finding alone does not fail this workflow.
+Review the findings before the next deployment or publication, when the
+strict/default scan applies.
 
 After adopting this workflow, enable GitHub Actions and manually dispatch
 `Dependency audit` once. Forks start with scheduled workflows disabled, and
@@ -74,8 +78,8 @@ The workflow:
    link/device metadata, and non-time PAX metadata plus the complete runtime
    config and labels. Wall-clock config/history and tar timestamps are excluded
    so two otherwise identical clean BuildKit rebuilds have one identity. The
-   final disposition identity additionally hashes the exact repository runtime
-   controls used by that target's review. API and worker bind the base/VPS
+   strict-mode disposition identity additionally hashes the exact repository
+   runtime controls used by that target's review. API and worker bind the base/VPS
    Compose models and Caddyfile; MinIO binds those models, both disposable
    integration models, and its runtime security gate; PostgreSQL binds its
    Dockerfile, every Compose model that can start it, and its fresh-volume
@@ -97,19 +101,18 @@ The workflow:
    volume, including after failure or interruption;
 5. retains per-file and aggregate size-capped JSON and Markdown reports for
    seven days; and
-6. normalizes aliases into advisory families, reports every severity, and fails
-   for an undispositioned UNRATED/HIGH/CRITICAL family, an unmaintained image tag,
-   mutable-tag digest drift, inconsistent repository evidence, an invalid or
-   expired disposition, a failed PostgreSQL runtime proof, or an incomplete
-   scan.
+6. normalizes aliases into advisory families and reports every severity.
+   Complete scans with vulnerability findings still succeed in report-only
+   mode. An incomplete build, scan, report, or PostgreSQL runtime proof fails
+   the workflow; strict/default mode additionally enforces exact vulnerability
+   dispositions before deployment or publication.
 
-An informational newer version or a LOW or MODERATE advisory family does not
-fail the workflow by itself. UNRATED fails closed because absence of a score is
-not evidence of absence of impact. Every family remains counted in
-`scan-summary.md`, and the complete OSV JSON remains in the artifact. A failed
-run therefore means either an actionable policy/security finding or that the
-audit could not complete; inspect the summary first and then the named raw
-report.
+Every family remains counted in `scan-summary.md`, and the complete OSV JSON
+remains in the artifact. A report-only success means the scan completed, not
+that the images are free of vulnerabilities or approved for deployment.
+Inspect the summary first and then the named raw report. In strict/default
+mode, UNRATED fails closed because absence of a score is not evidence of
+absence of impact.
 
 The workflow pins `actions/checkout` v6.0.2 at
 `de0fac2e4500dabe0009e67214ff5f5447ce83dd` and `actions/upload-artifact`
@@ -142,9 +145,11 @@ version from an automated report directly into one file.
    `release/service-dependency-licenses.json`, including the lock SHA-256 and
    reviewed license/source metadata.
 4. Update the direct-dependency table in `THIRD_PARTY_NOTICES.md`.
-5. Run `make dependency-check`, `make check`, the service smoke gate when
-   applicable, a full `make dependency-scan` using a new output path, and
-   `make release-check` before merge.
+5. Before a normal pull-request merge, run `make dependency-check`, `make check`,
+   the service smoke gate when applicable, and `make release-check`. A
+   report-only scan can show new findings, but neither that scan nor disposition
+   renewal is a PR merge requirement. Run strict `make dependency-scan` before
+   deployment or publication.
 
 `psycopg[binary]` deliberately binds both the `psycopg` and
 `psycopg-binary` distributions to the same version. Test-only locks remain
@@ -213,8 +218,10 @@ incomplete or stale inventory.
 Update all literal Debian `FROM` references together across the builder,
 service, and MinIO Dockerfiles. In the same change, update the snapshot
 arguments, builder OCI base labels, embedded SPDX base package checksum, and
-Debian notice. Then rebuild and vulnerability-scan every affected final image.
-The full `make dependency-scan` result is required before merge.
+Debian notice. Rebuild the affected final images and inspect a report-only scan
+when available. Do not require vulnerability decisions or a full scan for a
+normal pull-request merge; run strict `make dependency-scan` before deployment
+or publication.
 
 ### Dockerfile frontend
 
@@ -231,9 +238,11 @@ For PostgreSQL, update the exact official base in `docker/postgres.Dockerfile`,
 its provenance labels, `release/dependency-policy.json`, every local/recovery
 Compose image expression, the digest-pinned VPS lock example, the runtime gate,
 and `THIRD_PARTY_NOTICES.md` together. Redis remains a direct external image;
-update its Compose pins and recovery assertions together. Run the service and
-G8 recovery gates plus a full `make dependency-scan` using a new output path
-before merge.
+update its Compose pins and recovery assertions together. Before a normal
+pull-request merge, run the service and G8 recovery gates. Inspect a report-only
+scan when available, but do not require vulnerability decisions or a full scan
+for the merge. Run strict `make dependency-scan` before deployment or
+publication.
 
 Do not treat a PostgreSQL major release as an image update. It requires a
 separately designed backup, migration, rollback, and existing-volume rehearsal.
@@ -266,9 +275,10 @@ The `HBCB_CADDY_IMAGE` entry in `deploy/vps/release.lock.env.example` is a
 placeholder for a future published digest of the custom image. It is not a
 working deployment reference. This project is local-only for now. Do not
 replace the placeholder with the official Caddy digest or deploy the VPS stack
-until the custom image has a reviewed, published digest and the full scan has
-passed. A scan finding still requires a documented, evidence-backed
-disposition; a source rebuild does not approve a risk decision.
+until the custom image has a reviewed, published digest and a strict
+`make dependency-scan` has passed on the exact release commit. A blocking
+finding at that gate requires a documented, evidence-backed disposition; a
+source rebuild does not approve a risk decision.
 
 ### Manually reviewed inputs
 
@@ -291,12 +301,13 @@ graph to reuse stale scan/release identity.
 ## Vulnerability decision policy
 
 `release/vulnerability-policy.json` is deliberately separate from the
-dependency inventory. The scanner owns the enforcement rules: UNRATED, HIGH,
-and CRITICAL block by default, and the policy cannot weaken that threshold.
-LOW, MODERATE, and NONE remain counted in each target's summary and remain
-present in the detailed OSV report. The checked-in policy starts with no
-dispositions and an immutable `"default_action": "deny"`; do not populate it
-merely to make a scheduled scan green.
+dependency inventory. Only the strict/default scan loads and reconciles this
+policy. Before deployment or publication, UNRATED, HIGH, and CRITICAL block
+by default, and the policy cannot weaken that threshold. LOW, MODERATE, and
+NONE remain counted in each target's summary and detailed OSV report. The
+checked-in policy has an immutable `"default_action": "deny"`; do not add or
+renew dispositions merely to make routine pull-request or scheduled scans
+green. Report-only scans ignore the checked-in decisions and expiry dates.
 
 OSV can publish the same issue under ecosystem, CVE, GHSA, and language IDs.
 The evaluator uses OSV-Scanner's package groups, validates their coverage, and
@@ -398,24 +409,26 @@ runtime control produces a different final policy identity even when the image
 bytes are unchanged.
 
 The raw scanner exit remains recorded. Exit `1` from OSV-Scanner only means it
-found at least one family; after evaluation, that target may pass when every
-UNRATED/HIGH/CRITICAL family has an exact active disposition and all remaining
-families are lower. A scanner/report disagreement, malformed inner report,
-missing policy, bad evidence digest, or expired disposition is incomplete—not
-clean.
+found at least one family. Report-only mode records those families and succeeds
+when the complete scan finishes. Strict/default mode evaluates each target:
+it can pass with findings only when every UNRATED/HIGH/CRITICAL family has an
+exact active disposition and all remaining families are lower. A
+scanner/report disagreement or malformed inner report is incomplete in both
+modes; missing policy, bad evidence digest, or expired disposition is
+incomplete in strict/default mode—not clean.
 
 ## Exit meanings
 
 | Exit | Meaning |
 |---:|---|
-| `0` | The requested audit completed without blocking findings. Informational candidates may still be listed. |
-| `1` | A consistency/maintenance finding or undispositioned UNRATED/HIGH/CRITICAL advisory family needs review. |
-| `2` | The audit was incomplete because an input, network request, build, scanner, or report failed. Do not interpret this as clean. |
+| `0` | Report-only: the scan completed, even if vulnerabilities were found. Strict/default: the scan completed with no blocking findings. Review the reports in either case. |
+| `1` | Strict/default: a consistency/maintenance finding or undispositioned UNRATED/HIGH/CRITICAL advisory family needs review. |
+| `2` | The audit was incomplete because an input, network request, build, scanner, or report failed. In strict/default mode an invalid disposition also causes this result. Do not interpret this as clean. |
 
 OSV-Scanner's detailed reports remain authoritative for package findings. The
-repository summary records bounded per-severity and policy-decision counts; it
-does not paste untrusted upstream vulnerability descriptions into the rendered
-GitHub summary.
+repository summary records bounded per-severity counts; strict/default mode
+also records policy-decision counts. It does not paste untrusted upstream
+vulnerability descriptions into the rendered GitHub summary.
 
 ## Adding another dependency surface
 

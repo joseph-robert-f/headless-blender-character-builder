@@ -62,8 +62,8 @@ authority; any such concurrency invalidates the run.
    push protection, and private vulnerability reporting;
 2. reruns the local release check on the exact commit;
 3. runs `make dependency-scan` from that exact commit using a new output
-   directory; requires exit `0`; reviews the retained reports; and performs
-   publication no more than seven days after that scan;
+   directory in strict/default mode; requires exit `0`; reviews the retained
+   reports; and performs publication no more than seven days after that scan;
 4. confirms the local release check built `linux/amd64` builder, API, worker,
    and derived PostgreSQL images from that exact commit and verifies their
    local identities; the current transaction handles only the first three, so
@@ -95,6 +95,11 @@ test ! -e "$dependency_evidence"
 make dependency-scan DEPENDENCY_OUTPUT="$dependency_evidence"
 test "$(git rev-parse HEAD)" = "$release_commit"
 ```
+
+The scheduled report-only audit cannot replace this strict scan. This is an
+operator-enforced gate: `make release-check` and
+`scripts/release-publication-preflight` do not validate the scan artifact or
+its age automatically.
 
 `make release-check` performs only the local gate in step 2; it does not run the
 networked dependency scan or any publication step. Exact registry and GitHub

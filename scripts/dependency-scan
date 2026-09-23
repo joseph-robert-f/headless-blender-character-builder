@@ -2775,6 +2775,8 @@ def render_summary(summary: Mapping[str, object]) -> str:
     lines = [
         "# Networked dependency scan",
         "",
+        "Mode: **%s**" % summary.get("mode", "enforced"),
+        "",
         "Status: **%s**" % summary.get("status", "incomplete"),
         "",
         "| Target | Type | Result | Vulnerabilities | Exit |",
@@ -2818,17 +2820,35 @@ def render_summary(summary: Mapping[str, object]) -> str:
     if isinstance(errors, list) and errors:
         lines.extend(["", "## Operational errors", ""])
         lines.extend("- " + bounded(item) for item in errors)
-    lines.extend(
-        [
-            "",
-            "Detailed OSV JSON reports are retained as workflow artifacts. Undispositioned UNRATED, HIGH, or CRITICAL advisory families and dependency-policy findings return `1`; incomplete scans or invalid/expired vulnerability policy return `2`. LOW and MODERATE families remain visible above without independently blocking.",
-            "",
-        ]
-    )
+    if summary.get("mode") == "report-only":
+        note = (
+            "Detailed OSV JSON reports are retained as workflow artifacts. "
+            "Vulnerability findings are advisory here and return `0` when the "
+            "scan completes; dependency-policy or runtime-security findings "
+            "still return `1`, and incomplete scans return `2`. Checked-in "
+            "vulnerability dispositions are not applied. Run the enforced "
+            "scan before deployment or public release."
+        )
+    else:
+        note = (
+            "Detailed OSV JSON reports are retained as workflow artifacts. "
+            "Undispositioned UNRATED, HIGH, or CRITICAL advisory families and "
+            "dependency-policy findings return `1`; incomplete scans or "
+            "invalid/expired vulnerability policy return `2`. LOW and "
+            "MODERATE families remain visible above without independently "
+            "blocking."
+        )
+    lines.extend(["", note, ""])
     return "\n".join(lines)
 
 
-def execute(output: Path, include_images: bool, scanner_override: Optional[Path]) -> int:
+def execute(
+    output: Path,
+    include_images: bool,
+    scanner_override: Optional[Path],
+    *,
+    report_only: bool = False,
+) -> int:
     if output.exists() or output.is_symlink():
         raise ScanError("output directory already exists")
     output.mkdir(parents=True, mode=0o700)
@@ -2841,20 +2861,29 @@ def execute(output: Path, include_images: bool, scanner_override: Optional[Path]
         "format": VULNERABILITY_POLICY_FORMAT,
         "path": str(VULNERABILITY_POLICY_PATH),
         "sha256": None,
-        "status": "incomplete",
+        "status": "not-applied" if report_only else "incomplete",
     }
-    try:
-        vulnerability_policy = load_vulnerability_policy()
-        policy_path = ROOT / VULNERABILITY_POLICY_PATH
-        vulnerability_policy_summary.update(
-            {
-                "dispositions": len(vulnerability_policy["dispositions"]),
-                "sha256": hashlib.sha256(policy_path.read_bytes()).hexdigest(),
-                "status": "pass",
-            }
-        )
-    except (OSError, ScanError) as failure:
-        errors.append(bounded(failure))
+    if report_only:
+        # Scan every target, but do not let stale release decisions control a
+        # routine audit. An empty policy still validates and counts each finding.
+        vulnerability_policy = {
+            "default_action": "deny",
+            "dispositions": [],
+            "format": VULNERABILITY_POLICY_FORMAT,
+        }
+    else:
+        try:
+            vulnerability_policy = load_vulnerability_policy()
+            policy_path = ROOT / VULNERABILITY_POLICY_PATH
+            vulnerability_policy_summary.update(
+                {
+                    "dispositions": len(vulnerability_policy["dispositions"]),
+                    "sha256": hashlib.sha256(policy_path.read_bytes()).hexdigest(),
+                    "status": "pass",
+                }
+            )
+        except (OSError, ScanError) as failure:
+            errors.append(bounded(failure))
     dependency_report = output / "dependency-audit.json"
     dependency_markdown = output / "dependency-audit.md"
     audit_code = run(
@@ -3007,16 +3036,18 @@ def execute(output: Path, include_images: bool, scanner_override: Optional[Path]
             errors.append(bounded(failure))
 
     record_unrun_scans(records, include_images, expected_external_ids)
-    reconcile_policy_dispositions(
-        records,
-        vulnerability_policy,
-        vulnerability_policy_summary,
-    )
+    if not report_only:
+        reconcile_policy_dispositions(
+            records,
+            vulnerability_policy,
+            vulnerability_policy_summary,
+        )
 
     summary: Dict[str, object] = {
         "errors": errors[:20],
         "format": "hbcb-dependency-scan/v1",
         "images_requested": include_images,
+        "mode": "report-only" if report_only else "enforced",
         "scanner": {"name": "OSV-Scanner", "sha256": scanner_sha256, "version": SCANNER_VERSION},
         "status": final_status(records, errors),
         "targets": sorted(records, key=lambda item: str(item.get("id", ""))),
@@ -3036,6 +3067,12 @@ def execute(output: Path, include_images: bool, scanner_override: Optional[Path]
     if summary["status"] == "pass":
         return 0
     if summary["status"] == "findings":
+        if report_only and all(
+            item.get("status") != "findings"
+            or item.get("type") == "vulnerability-scan"
+            for item in records
+        ):
+            return 0
         return 1
     return 2
 
@@ -3044,11 +3081,17 @@ def main(arguments: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path, help="new directory for bounded JSON and Markdown reports")
     parser.add_argument("--images", action="store_true", help="also build and scan production and external images")
+    parser.add_argument("--report-only", action="store_true", help="report vulnerabilities without applying release dispositions or failing for vulnerability findings")
     parser.add_argument("--scanner", type=Path, help="use an explicitly supplied OSV-Scanner executable")
     options = parser.parse_args(arguments)
     os.umask(0o077)
     try:
-        return execute(options.output.resolve(), options.images, options.scanner)
+        return execute(
+            options.output.resolve(),
+            options.images,
+            options.scanner,
+            report_only=options.report_only,
+        )
     except (OSError, ScanError) as failure:
         sys.stderr.write("DEPENDENCY_SCAN: %s\n" % bounded(failure))
         return 2

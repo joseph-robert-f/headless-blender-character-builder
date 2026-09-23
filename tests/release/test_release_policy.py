@@ -168,18 +168,28 @@ class ReleasePolicyTests(unittest.TestCase):
         uses = [
             str(step.get("uses", "")) for step in steps if isinstance(step, dict)
         ]
-        self.assertIn("./scripts/dependency-scan", run_text)
+        scan = next(
+            step for step in steps if isinstance(step, dict) and step.get("id") == "scan"
+        )
+        self.assertIn(
+            "./scripts/dependency-scan --report-only --output build/dependency-audit --images",
+            str(scan.get("run")),
+        )
         self.assertIn("GITHUB_STEP_SUMMARY", run_text)
-        runway = next(
+        self.assertNotIn("release/vulnerability-policy.json", run_text)
+        self.assertNotIn("DISPOSITIONS EXPIRE SOON", run_text)
+        complete = next(
             step
             for step in steps
             if isinstance(step, dict)
-            and step.get("name") == "Enforce disposition expiry runway"
+            and step.get("name") == "Require complete audit"
         )
-        self.assertEqual(runway.get("if"), "${{ always() }}")
-        self.assertIn("release/vulnerability-policy.json", str(runway.get("run")))
-        self.assertIn("THRESHOLD_DAYS = 14", str(runway.get("run")))
-        self.assertIn("DEPENDENCY_AUDIT: DISPOSITIONS EXPIRE SOON", str(runway.get("run")))
+        self.assertEqual(complete.get("if"), "${{ always() }}")
+        self.assertIn('0) printf', str(complete.get("run")))
+        self.assertIn('1) printf', str(complete.get("run")))
+        self.assertIn("MAINTENANCE OR RUNTIME FINDINGS", str(complete.get("run")))
+        self.assertIn('2) printf', str(complete.get("run")))
+        self.assertIn("INCOMPLETE", str(complete.get("run")))
         self.assertTrue(
             any(item.startswith("actions/upload-artifact@") for item in uses)
         )
@@ -190,6 +200,7 @@ class ReleasePolicyTests(unittest.TestCase):
             and str(step.get("uses", "")).startswith("actions/upload-artifact@")
         )
         self.assertEqual(upload.get("uses"), UPLOAD_ARTIFACT_ACTION)
+        self.assertEqual(upload.get("if"), "${{ always() }}")
         self.assertEqual(upload.get("with", {}).get("if-no-files-found"), "error")
         self.assertEqual(upload.get("with", {}).get("retention-days"), 7)
         combined = json.dumps(document, sort_keys=True)
