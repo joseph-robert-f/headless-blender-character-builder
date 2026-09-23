@@ -285,7 +285,37 @@ compose() {
 }
 touched=1
 compose up --detach --wait --wait-timeout 300 \
-  postgres minio minio-init database-init
+  postgres minio
+# Compose 2.x --wait expects selected services to stay running unless another
+# selected service requires their successful completion. These initializers
+# must exit, so wait for their exit codes separately with the same time bound.
+compose up --detach --no-deps minio-init database-init
+initializer_ids=$(compose ps --all --quiet minio-init database-init)
+"$python_bin" - "$docker_bin" "$initializer_ids" <<'PY' || \
+  fail 'disposable initializers did not complete successfully within 300 seconds'
+import re
+import subprocess
+import sys
+
+identifiers = sys.argv[2].splitlines()
+if len(identifiers) != 2 or len(set(identifiers)) != 2 or any(
+    re.fullmatch(r"[0-9a-f]{64}", identifier) is None
+    for identifier in identifiers
+):
+    raise SystemExit(1)
+try:
+    result = subprocess.run(
+        [sys.argv[1], "wait", *identifiers],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+except (OSError, subprocess.TimeoutExpired):
+    raise SystemExit(1)
+raise SystemExit(0 if result.returncode == 0 and result.stdout.splitlines() == ["0", "0"] else 1)
+PY
 # The private rendered model contains no Compose interpolation grammar and
 # `--no-deps` prevents the one-shot initializer from being restarted while the
 # scoped identities are in use.

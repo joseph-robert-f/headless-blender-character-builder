@@ -151,6 +151,10 @@ The following are release invariants, not optional recommendations:
   or receive repository, registry, cloud, signing, or deployment credentials.
 - Workflows using `pull_request_target` must not execute untrusted checkout
   content.
+- The disposable orphan-cleanup test waits for both setup containers to exit
+  successfully within 300 seconds. Missing containers, failed setup, or a wait
+  error block the live deletion test. Cleanup still removes only resources
+  with the test's exact project and owner labels.
 - Dependency updates require the same tests and security/licensing review as
   direct edits. Repository code reports candidates and findings but has no
   permission or path to create dependency pull requests. Operators who want no

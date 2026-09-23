@@ -11,6 +11,8 @@ Changelog, and releases use Semantic Versioning.
   PostgreSQL validation before any state change.
 - Included the canonical manifest and its final newline in the builder's
   2 GiB publication limit, matching service uploads and client downloads.
+- Waited for successful completion of both orphan-test setup containers,
+  instead of expecting one-time setup containers to remain running in Compose.
 
 ### Changed
 
