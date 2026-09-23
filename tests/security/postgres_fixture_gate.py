@@ -67,9 +67,25 @@ BUILD_OWNER_LABEL_KEY = "io.hbcb.postgres-build-owner"
 def _run(
     command: Sequence[str], *, timeout: int = 30, check: bool = True, interruptible: bool = True,
 ) -> subprocess.CompletedProcess[bytes]:
+    # Name only the fixed Docker operation. Never echo argv: docker run includes
+    # the one-time database password, and exec can include query text.
+    operation = "Docker operation"
+    if len(command) >= 2 and command[1] in {"build", "run", "exec"}:
+        operation = "Docker " + command[1]
+    elif len(command) >= 3 and (command[1], command[2]) in {
+        ("image", "inspect"),
+        ("image", "ls"),
+        ("image", "rm"),
+        ("image", "save"),
+        ("container", "ls"),
+        ("volume", "create"),
+        ("volume", "ls"),
+        ("volume", "rm"),
+    }:
+        operation = "Docker " + command[1] + " " + command[2]
     return fixture_gate_common._run(
         command, timeout=timeout, check=check, interruptible=interruptible,
-        check_failure_message="the reviewed PostgreSQL fixture check failed",
+        check_failure_message="the reviewed PostgreSQL fixture check failed during " + operation,
     )
 
 

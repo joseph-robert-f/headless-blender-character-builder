@@ -75,6 +75,17 @@ def valid_document() -> dict[str, object]:
 
 
 class PostgresSecurityGateTests(unittest.TestCase):
+    def test_docker_failure_names_operation_without_exposing_arguments(self) -> None:
+        def fail(_command: tuple[str, ...], **options: object) -> None:
+            raise GATE.GateError(str(options["check_failure_message"]))
+
+        with mock.patch.object(GATE.fixture_gate_common, "_run", side_effect=fail):
+            with self.assertRaisesRegex(GATE.GateError, "during Docker run") as raised:
+                GATE._run(("docker", "run", "--env", "POSTGRES_PASSWORD=private"))
+            self.assertNotIn("private", str(raised.exception))
+            with self.assertRaisesRegex(GATE.GateError, "during Docker image save"):
+                GATE._run(("docker", "image", "save", "--output", "/tmp/private"))
+
     def test_parent_termination_grace_exceeds_owned_operation_and_cleanup_bound(self) -> None:
         cleanup_bound = (
             GATE.CLEANUP_DOCKER_TIMEOUT_SECONDS
