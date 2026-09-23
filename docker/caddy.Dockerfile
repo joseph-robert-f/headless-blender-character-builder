@@ -64,6 +64,13 @@ RUN set -eux; \
       google.golang.org/grpc@v1.83.2; \
     go mod tidy; \
     go mod verify; \
+    go mod vendor; \
+    cel_matcher=vendor/github.com/caddyserver/caddy/v2/modules/caddyhttp/celmatcher.go; \
+    test -f "$cel_matcher"; \
+    test "$(grep -Fc '[]interpreter.Interpretable{reqAttr}' "$cel_matcher")" -eq 2; \
+    sed -i 's/\[\]interpreter\.Interpretable{reqAttr}/[]interpreter.InterpretableV2{reqAttr}/g' "$cel_matcher"; \
+    test "$(grep -Fc '[]interpreter.InterpretableV2{reqAttr}' "$cel_matcher")" -eq 2; \
+    ! grep -Fq '[]interpreter.Interpretable{reqAttr}' "$cel_matcher"; \
     check_module() { test "$(go list -m -f '{{.Version}}' "$1")" = "$2"; }; \
     check_module github.com/caddyserver/caddy/v2 v2.11.4; \
     check_module github.com/go-chi/chi/v5 v5.3.0; \
@@ -87,7 +94,7 @@ RUN set -eux; \
     check_module golang.org/x/text v0.41.0; \
     check_module google.golang.org/grpc v1.83.2; \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-      go build -mod=readonly -buildvcs=false -trimpath \
+      go build -mod=vendor -buildvcs=false -trimpath \
         -ldflags='-s -w -buildid=' -o /out/caddy .; \
     /out/caddy version | grep -F 'v2.11.4'; \
     go version -m /out/caddy | grep -F 'go1.26.8'; \
@@ -108,6 +115,7 @@ LABEL org.opencontainers.image.title="Caddy v2.11.4 (HBCB patched build)" \
       org.opencontainers.image.base.name="caddy:2.11.4-alpine" \
       org.opencontainers.image.base.digest="sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b" \
       io.hbcb.caddy.source-archive.sha256="33777097f666d60d78bfb74df06978c933f32aa5a0d4ce0b0c5d028489984187" \
+      io.hbcb.caddy.patch="cel-newcall-interpretable-v2" \
       io.hbcb.caddy.go-version="1.26.8" \
       io.hbcb.scope="local-development-only"
 

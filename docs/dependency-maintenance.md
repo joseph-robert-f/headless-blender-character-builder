@@ -253,7 +253,11 @@ are build inputs, not the release image. `docker/caddy.Dockerfile` builds a
 custom Caddy binary and copies it into that pinned runtime base. The dependency
 scan builds and scans the resulting image; `make g8-caddy` checks both the
 upstream base identity and the custom binary and validates the Caddyfile with
-the custom image. Update the source, Go modules, build recipe, runtime base,
+the custom image. The recipe vendors the verified Go modules and applies one
+bounded compatibility change to Caddy's two CEL `NewCall` argument slices so
+the pinned release source builds with the patched CEL module. The recipe checks
+that both original call sites exist before it changes them and builds only the
+updated vendor tree. Update the source, Go modules, build recipe, runtime base,
 notice, and both checks together.
 
 The `HBCB_CADDY_IMAGE` entry in `deploy/vps/release.lock.env.example` is a
