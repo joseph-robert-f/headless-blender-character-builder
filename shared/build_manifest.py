@@ -249,7 +249,7 @@ class BuildManifest:
         immutable_artifacts = MappingProxyType(
             {name: MappingProxyType(dict(entry)) for name, entry in artifacts.items()}
         )
-        return cls(
+        manifest = cls(
             MANIFEST_VERSION,
             request_hash,
             spec_hash,
@@ -260,6 +260,15 @@ class BuildManifest:
             immutable_artifacts,
             MappingProxyType(qa),
         )
+        # Publication contains nine files. The manifest omits its own hash,
+        # but its canonical bytes and final newline still consume the budget.
+        if total_bytes + len(manifest.canonical_bytes) + 1 > MAX_PUBLISHED_ARTIFACT_BYTES:
+            raise ContractValidationError(
+                "artifact_budget_exceeded",
+                "published artifacts including manifest.json exceed the 2 GiB v0.1 budget",
+                "$.artifacts",
+            )
+        return manifest
 
     @classmethod
     def from_json(

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 from uuid import UUID
 
 from hbcb_service.errors import StateConflict
 from hbcb_service.models import AttemptStatus, BuildStatus
+from hbcb_service.repository import PostgresRepository
 from hbcb_service.state import InMemoryStateStore
 
 try:
@@ -90,6 +92,59 @@ class LeaseAndHeartbeatTests(unittest.TestCase):
 
 
 class RetryCancelTimeoutAndRecoveryTests(unittest.TestCase):
+    def test_invalid_retry_flags_are_rejected_without_mutation_by_both_adapters(self) -> None:
+        clock = MutableClock()
+        store = lifecycle_store(clock)
+        store.submit(facet_request_bytes(), "facet-request-0001")
+        lease = store.lease_build(BUILD_ID, "worker-1", TOKEN_ONE, lease_seconds=30)
+        self.assertIsNotNone(lease)
+        connect = mock.Mock(side_effect=AssertionError("invalid input reached PostgreSQL"))
+        postgres = PostgresRepository(
+            connect,
+            deployment_namespace="local",
+            idempotency_secret=b"s" * 32,
+            storage_bucket="hbcb-artifacts",
+        )
+        before = (
+            store.get_build(BUILD_ID), store.attempts_for(BUILD_ID),
+            store.events_for(BUILD_ID), store.pending_outbox(),
+        )
+        for adapter in (store, postgres):
+            for retryable in (1, 0, None, "false", "true", [], {}):
+                with self.subTest(adapter=type(adapter).__name__, retryable=retryable):
+                    with self.assertRaises(StateConflict) as captured:
+                        adapter.complete_attempt(
+                            lease.attempt.attempt_id,
+                            TOKEN_ONE,
+                            status=AttemptStatus.FAILED,
+                            exit_code=10,
+                            reason_code="blender_failed",
+                            retryable=retryable,
+                        )
+                    self.assertEqual(captured.exception.code, "invalid_retry_policy")
+        connect.assert_not_called()
+        self.assertEqual(before, (
+            store.get_build(BUILD_ID), store.attempts_for(BUILD_ID),
+            store.events_for(BUILD_ID), store.pending_outbox(),
+        ))
+
+    def test_boolean_retry_flags_select_retry_or_terminal_failure(self) -> None:
+        for retryable in (True, False):
+            with self.subTest(retryable=retryable):
+                store = lifecycle_store(MutableClock())
+                store.submit(facet_request_bytes(), "facet-request-0001")
+                lease = store.lease_build(BUILD_ID, "worker-1", TOKEN_ONE, lease_seconds=30)
+                completion = store.complete_attempt(
+                    lease.attempt.attempt_id, TOKEN_ONE,
+                    status=AttemptStatus.FAILED, exit_code=10,
+                    reason_code="blender_failed", retryable=retryable,
+                )
+                self.assertEqual(completion.requeued, retryable)
+                self.assertEqual(
+                    completion.build.status,
+                    BuildStatus.QUEUED if retryable else BuildStatus.FAILED,
+                )
+
     def test_retry_then_exhaustion_is_durable_and_dead_letter_eligible(self) -> None:
         clock = MutableClock()
         store = lifecycle_store(clock, max_attempts=2)

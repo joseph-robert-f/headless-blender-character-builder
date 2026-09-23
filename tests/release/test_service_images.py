@@ -67,7 +67,7 @@ class ServiceImagesTests(unittest.TestCase):
             self.assertEqual(listed.returncode, 0, listed.stdout)
             expected = (
                 "hbcb-cleanup-fixture-builder:dev",
-                "hbcb-cleanup-fixture-postgres:16.14-alpine3.24-hbcb.1",
+                "hbcb-cleanup-fixture-postgres:16.15-alpine3.24-hbcb.1",
                 "hbcb-cleanup-fixture-api:dev",
                 "hbcb-cleanup-fixture-worker:dev",
                 "hbcb-cleanup-fixture-minio:final-community-20260212-hbcb.1",

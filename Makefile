@@ -102,165 +102,22 @@ minio-security-check:
 postgres-security-check:
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) tests/security/postgres_fixture_gate.py --docker "$(DOCKER)"
 
-validate:
+# Keep recursive Make here so overrides, jobserver flags, and Make 3.81 work.
+validate build inspect:
 	@set -eu; \
-	  request=$$REQUEST; \
-	  case "$$request" in /*) ;; *) request="`pwd -P`/$$request" ;; esac; \
-	  if ! test -f "$$request"; then \
-	    echo "HBCB_MAKE: FAIL[request_missing]: set REQUEST to an existing regular JSON file" >&2; \
-	    exit 2; \
-	  fi; \
+	  ./scripts/builder-container preflight $@; \
 	  $(MAKE) image; \
-	  runtime_uid=`id -u`; runtime_gid=`id -g`; \
-	  if test "$$runtime_uid" = 0; then runtime_uid=65532; fi; \
-	  if test "$$runtime_gid" = 0; then runtime_gid=65532; fi; \
-	  $(DOCKER) run \
-	    --rm \
-	    --init \
-	    --platform "$(PLATFORM)" \
-	    --network none \
-	    --read-only \
-	    --cap-drop ALL \
-	    --security-opt no-new-privileges:true \
-	    --pids-limit 64 \
-	    --cpus 1 \
-	    --memory 512m \
-	    --user "$$runtime_uid:$$runtime_gid" \
-	    --tmpfs /work:rw,nosuid,nodev,noexec,size=64m,mode=1777 \
-	    --mount "type=bind,source=$$request,target=/input/request.json,readonly" \
-	    "$(BUILDER_IMAGE)" \
-	    validate --request /input/request.json
+	  ./scripts/builder-container run $@ "$(PLATFORM)" "$(BUILDER_IMAGE)" $(DOCKER)
+
+build verify inspect: _validate-output-name
 
 _validate-output-name:
-	@set -eu; \
-	  LC_ALL=C; export LC_ALL; \
-	  output_name=$${OUTPUT_NAME-}; \
-	  case "$$output_name" in \
-	    ''|-*|*-|*--*|*[!a-z0-9-]*) \
-	      echo "OUTPUT_NAME must be a 1-48 character lowercase safe slug" >&2; \
-	      exit 2 \
-	      ;; \
-	  esac; \
-	  if test "$${#output_name}" -gt 48; then \
-	    echo "OUTPUT_NAME must be a 1-48 character lowercase safe slug" >&2; \
-	    exit 2; \
-	  fi
+	@./scripts/builder-container check-output-name
 
-build: _validate-output-name
+verify:
 	@set -eu; \
-	  request=$$REQUEST; output_parent=$$BUILD_PARENT; output_name=$$OUTPUT_NAME; \
-	  case "$$request" in /*) ;; *) request="`pwd -P`/$$request" ;; esac; \
-	  output_path=$$output_parent/$$output_name; \
-	  if ! test -f "$$request"; then \
-	    echo "HBCB_MAKE: FAIL[request_missing]: set REQUEST to an existing regular JSON file" >&2; \
-	    exit 2; \
-	  fi; \
-	  if test -e "$$output_path" || test -L "$$output_path"; then \
-	    echo "HBCB_MAKE: FAIL[output_exists]: the selected build output already exists; choose a new OUTPUT_NAME or move the existing output aside" >&2; \
-	    exit 2; \
-	  fi; \
-	  $(MAKE) image; \
-	  mkdir -p "$$output_parent"; \
-	  host_uid=`id -u`; runtime_uid=$$host_uid; runtime_gid=`id -g`; \
-	  if test "$$runtime_uid" = 0; then runtime_uid=65532; fi; \
-	  if test "$$runtime_gid" = 0; then runtime_gid=65532; fi; \
-	  if test "$$host_uid" = 0; then chown "$$runtime_uid:$$runtime_gid" "$$output_parent"; fi; \
-	  image_metadata=`$(DOCKER) image inspect --format '{{.Os}}/{{.Architecture}}|{{.Id}}' "$(BUILDER_IMAGE)"`; \
-	  image_platform=$${image_metadata%%|*}; image_id=$${image_metadata#*|}; \
-	  test "$$image_platform" = "$(PLATFORM)"; \
-	  $(DOCKER) run \
-	    --rm \
-	    --init \
-	    --platform "$(PLATFORM)" \
-	    --network none \
-	    --read-only \
-	    --cap-drop ALL \
-	    --security-opt no-new-privileges:true \
-	    --pids-limit 512 \
-	    --cpus 4 \
-	    --memory 4g \
-	    --user "$$runtime_uid:$$runtime_gid" \
-	    --tmpfs /work:rw,nosuid,nodev,noexec,size=2g,mode=1777 \
-	    --mount "type=bind,source=$$request,target=/input/request.json,readonly" \
-	    --mount "type=bind,source=$$output_parent,target=/output" \
-	    --env HBCB_EXECUTION_MODE=container \
-	    --env "HBCB_WORKER_IMAGE_REFERENCE=$(BUILDER_IMAGE)" \
-	    --env "HBCB_WORKER_IMAGE_ID=$$image_id" \
-	    "$(BUILDER_IMAGE)" \
-	    build --request /input/request.json --output "/output/$$output_name"
-
-verify: _validate-output-name
-	@set -eu; \
-	  request=$$REQUEST; output_parent=$$BUILD_PARENT; output_name=$$OUTPUT_NAME; \
-	  case "$$request" in /*) ;; *) request="`pwd -P`/$$request" ;; esac; \
-	  output_path=$$output_parent/$$output_name; \
-	  if ! test -f "$$request"; then \
-	    echo "HBCB_MAKE: FAIL[request_missing]: set REQUEST to an existing regular JSON file" >&2; \
-	    exit 2; \
-	  fi; \
-	  if test -L "$$output_path" || ! test -d "$$output_path"; then \
-	    echo "HBCB_MAKE: FAIL[output_missing]: the selected build output is not an existing non-symlink directory; run make build with the same REQUEST and OUTPUT_NAME first" >&2; \
-	    exit 2; \
-	  fi; \
-	  runtime_uid=`id -u`; runtime_gid=`id -g`; \
-	  if test "$$runtime_uid" = 0; then runtime_uid=65532; fi; \
-	  if test "$$runtime_gid" = 0; then runtime_gid=65532; fi; \
-	  image_metadata=`$(DOCKER) image inspect --format '{{.Os}}/{{.Architecture}}|{{.Id}}' "$(BUILDER_IMAGE)"`; \
-	  image_platform=$${image_metadata%%|*}; image_id=$${image_metadata#*|}; \
-	  test "$$image_platform" = "$(PLATFORM)"; \
-	  $(DOCKER) run \
-	    --rm \
-	    --init \
-	    --platform "$(PLATFORM)" \
-	    --network none \
-	    --read-only \
-	    --cap-drop ALL \
-	    --security-opt no-new-privileges:true \
-	    --pids-limit 512 \
-	    --cpus 4 \
-	    --memory 4g \
-	    --user "$$runtime_uid:$$runtime_gid" \
-	    --tmpfs /work:rw,nosuid,nodev,noexec,size=2g,mode=1777 \
-	    --mount "type=bind,source=$$request,target=/input/request.json,readonly" \
-	    --mount "type=bind,source=$$output_parent,target=/output,readonly" \
-	    --env HBCB_EXECUTION_MODE=container \
-	    --env "HBCB_WORKER_IMAGE_REFERENCE=$(BUILDER_IMAGE)" \
-	    --env "HBCB_WORKER_IMAGE_ID=$$image_id" \
-	    "$(BUILDER_IMAGE)" \
-	    verify --request /input/request.json --output "/output/$$output_name"
-
-inspect: _validate-output-name
-	@set -eu; \
-	  output_path=$$BUILD_PARENT/$$OUTPUT_NAME; \
-	  manifest_path=$$output_path/manifest.json; \
-	  if test -L "$$output_path" || ! test -d "$$output_path"; then \
-	    echo "HBCB_MAKE: FAIL[output_missing]: the selected build output is not an existing non-symlink directory; run make build with the same OUTPUT_NAME first" >&2; \
-	    exit 2; \
-	  fi; \
-	  if test -L "$$manifest_path" || ! test -f "$$manifest_path"; then \
-	    echo "HBCB_MAKE: FAIL[manifest_missing]: the selected build has no regular non-symlink manifest.json" >&2; \
-	    exit 2; \
-	  fi; \
-	  $(MAKE) image; \
-	  runtime_uid=`id -u`; runtime_gid=`id -g`; \
-	  if test "$$runtime_uid" = 0; then runtime_uid=65532; fi; \
-	  if test "$$runtime_gid" = 0; then runtime_gid=65532; fi; \
-	  $(DOCKER) run \
-	    --rm \
-	    --init \
-	    --platform "$(PLATFORM)" \
-	    --network none \
-	    --read-only \
-	    --cap-drop ALL \
-	    --security-opt no-new-privileges:true \
-	    --pids-limit 64 \
-	    --cpus 1 \
-	    --memory 512m \
-	    --user "$$runtime_uid:$$runtime_gid" \
-	    --tmpfs /work:rw,nosuid,nodev,noexec,size=64m,mode=1777 \
-	    --mount "type=bind,source=$$manifest_path,target=/input/manifest.json,readonly" \
-	    "$(BUILDER_IMAGE)" \
-	    inspect-manifest --manifest /input/manifest.json
+	  ./scripts/builder-container preflight $@; \
+	  ./scripts/builder-container run $@ "$(PLATFORM)" "$(BUILDER_IMAGE)" $(DOCKER)
 
 demo verify-demo: override OUTPUT_NAME := demo
 

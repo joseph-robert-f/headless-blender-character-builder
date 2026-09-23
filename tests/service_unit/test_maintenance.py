@@ -5,12 +5,16 @@ import io
 import json
 import os
 import stat
+import subprocess
+import sys
 import tempfile
+import textwrap
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
+from unittest.mock import Mock
 
 from hbcb_service.maintenance import (
     ArtifactVersionEvidence,
@@ -778,6 +782,174 @@ class BackupRestoreTests(unittest.TestCase):
             self.assertEqual(writable.exception.code, "unsafe_backup_mode")
 
 
+class MaintenanceImportTests(unittest.TestCase):
+    def test_modules_import_independently_without_runtime_dependencies(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        script = textwrap.dedent(
+            """
+            import importlib
+            import importlib.abc
+            import sys
+            import typing
+
+            class RejectRuntimeDependencies(importlib.abc.MetaPathFinder):
+                def find_spec(self, fullname, path=None, target=None):
+                    if fullname.split(".")[0] in {
+                        "psycopg", "minio", "redis", "fastapi", "uvicorn",
+                    }:
+                        raise AssertionError("unexpected runtime import: " + fullname)
+
+            sys.meta_path.insert(0, RejectRuntimeDependencies())
+            first = sys.argv[1]
+            importlib.import_module("hbcb_service." + first)
+            if first != "maintenance":
+                assert "hbcb_service.maintenance" not in sys.modules
+            if first == "maintenance_common":
+                assert "hbcb_service.maintenance_postgres" not in sys.modules
+                assert "hbcb_service.maintenance_storage" not in sys.modules
+
+            from hbcb_service import maintenance, maintenance_common
+            from hbcb_service import maintenance_postgres, maintenance_storage
+            from hbcb_service import maintenance_main
+
+            assert maintenance.PostgresMaintenanceStore is maintenance_postgres.PostgresMaintenanceStore
+            assert maintenance.MinioVersionedObjectClient is maintenance_storage.MinioVersionedObjectClient
+            assert maintenance_main.PostgresMaintenanceStore is maintenance.PostgresMaintenanceStore
+            assert maintenance_main.MinioVersionedObjectClient is maintenance.MinioVersionedObjectClient
+            for name in maintenance.__all__:
+                value = getattr(maintenance, name)
+                if hasattr(maintenance_common, name):
+                    assert value is getattr(maintenance_common, name), name
+            for name in (
+                "MAX_MAINTENANCE_BATCH", "MAX_ORPHAN_SCAN_VERSIONS",
+                "MAX_RETENTION_DAYS", "VersionedObjectClient",
+            ):
+                assert getattr(maintenance, name) is getattr(maintenance_common, name)
+            for module in (maintenance, maintenance_common, maintenance_postgres, maintenance_storage):
+                for value in vars(module).values():
+                    if isinstance(value, type) and value.__module__ == module.__name__:
+                        typing.get_type_hints(value)
+                        for member in vars(value).values():
+                            if isinstance(member, (staticmethod, classmethod)):
+                                member = member.__func__
+                            if callable(member) and hasattr(member, "__annotations__"):
+                                typing.get_type_hints(member)
+            """
+        )
+        for first in (
+            "maintenance",
+            "maintenance_common",
+            "maintenance_postgres",
+            "maintenance_storage",
+        ):
+            with self.subTest(first=first):
+                result = subprocess.run(
+                    [sys.executable, "-S", "-c", script, first],
+                    cwd=root,
+                    env={
+                        **os.environ,
+                        "PYTHONPATH": os.pathsep.join((str(root), str(root / "service/src"))),
+                        "PYTHONDONTWRITEBYTECODE": "1",
+                    },
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class MinioAdapterTests(unittest.TestCase):
+    def test_delete_passes_exact_version_and_rejects_invalid_identity_before_io(self) -> None:
+        client = Mock()
+        adapter = MinioVersionedObjectClient(client)
+        item = evidence()
+        adapter.delete_version(item.bucket, item.object_key, item.version_id)
+        client.remove_object.assert_called_once_with(
+            item.bucket, item.object_key, version_id=item.version_id
+        )
+        client.reset_mock()
+        for bucket, key, version in (
+            ("../bucket", item.object_key, item.version_id),
+            (item.bucket, "../object", item.version_id),
+            (item.bucket, item.object_key, ""),
+        ):
+            with self.subTest(bucket=bucket, key=key, version=version):
+                with self.assertRaises(MaintenanceError):
+                    adapter.delete_version(bucket, key, version)
+        client.remove_object.assert_not_called()
+        client.remove_object.side_effect = RuntimeError("private client detail")
+        with self.assertRaises(MaintenanceError) as captured:
+            adapter.delete_version(item.bucket, item.object_key, item.version_id)
+        self.assertEqual(captured.exception.code, "storage_delete_failed")
+        self.assertNotIn("private client detail", str(captured.exception))
+
+    def test_exact_version_stream_always_closes_and_releases_response(self) -> None:
+        item = evidence()
+        for reads, expected_code in (
+            ([b"mesh-bytes", b""], None),
+            ([RuntimeError("private client detail")], "storage_read_failed"),
+            (["invalid text"], "invalid_object_stream"),
+        ):
+            with self.subTest(expected_code=expected_code):
+                response = Mock()
+                response.read.side_effect = reads
+                client = Mock()
+                client.get_object.return_value = response
+                chunks = MinioVersionedObjectClient(client).iter_version(
+                    item.bucket, item.object_key, item.version_id
+                )
+                if expected_code is None:
+                    self.assertEqual(list(chunks), [b"mesh-bytes"])
+                else:
+                    with self.assertRaises(MaintenanceError) as captured:
+                        list(chunks)
+                    self.assertEqual(captured.exception.code, expected_code)
+                client.get_object.assert_called_once_with(
+                    item.bucket, item.object_key, version_id=item.version_id
+                )
+                response.close.assert_called_once_with()
+                response.release_conn.assert_called_once_with()
+
+    def test_upload_verifies_bytes_before_returning_restored_version(self) -> None:
+        payload = b"restored bytes"
+        item = evidence(payload=payload)
+        missing = RuntimeError("missing")
+        missing.code = "NoSuchKey"
+        for consumed, digest, expected_code in (
+            (len(payload), item.sha256, None),
+            (len(payload) - 1, item.sha256, "backup_evidence_mismatch"),
+            (len(payload), "0" * 64, "backup_evidence_mismatch"),
+        ):
+            with self.subTest(consumed=consumed, digest=digest):
+                client = Mock()
+                client.stat_object.side_effect = missing
+
+                def put_object(bucket, key, reader, size, **kwargs):
+                    self.assertEqual((bucket, key, size), (item.bucket, item.object_key, item.bytes))
+                    self.assertEqual(kwargs, {"content_type": "model/stl", "metadata": {"sha256": digest}})
+                    reader.read(consumed)
+                    return SimpleNamespace(version_id="restored-version")
+
+                client.put_object.side_effect = put_object
+                adapter = MinioVersionedObjectClient(client)
+                if expected_code is None:
+                    self.assertEqual(
+                        adapter.upload_version(
+                            item.bucket, item.object_key, io.BytesIO(payload),
+                            item.bytes, digest, "model/stl",
+                        ),
+                        "restored-version",
+                    )
+                else:
+                    with self.assertRaises(MaintenanceError) as captured:
+                        adapter.upload_version(
+                            item.bucket, item.object_key, io.BytesIO(payload),
+                            item.bytes, digest, "model/stl",
+                        )
+                    self.assertEqual(captured.exception.code, expected_code)
+
+
 class ScriptedCursor:
     def __init__(self, connection: "ScriptedConnection") -> None:
         self.connection = connection
@@ -808,7 +980,7 @@ class ScriptedCursor:
         return self.rows[0] if self.rows else None
 
     def close(self) -> None:
-        pass
+        self.connection.cursor_closed += 1
 
 
 class ScriptedConnection:
@@ -817,6 +989,7 @@ class ScriptedConnection:
         self.commits = 0
         self.rollbacks = 0
         self.closed = 0
+        self.cursor_closed = 0
 
     def cursor(self) -> ScriptedCursor:
         return ScriptedCursor(self)
@@ -854,6 +1027,36 @@ class PostgresOrderingTests(unittest.TestCase):
             self.assertIn(field, insertion)
         self.assertEqual(connection.commits, 1)
         self.assertEqual(connection.rollbacks, 0)
+        self.assertEqual((connection.cursor_closed, connection.closed), (1, 1))
+
+    def test_queue_evidence_mismatch_rolls_back_before_build_deletion(self) -> None:
+        connection = ScriptedConnection()
+
+        class MissingEvidenceCursor(ScriptedCursor):
+            def execute(self, sql, parameters=None):
+                super().execute(sql, parameters)
+                if "JOIN hbcb.artifact_deletion_queue AS queue" in sql:
+                    self.rows = [(0,)]
+
+        connection.cursor = lambda: MissingEvidenceCursor(connection)
+        store = PostgresMaintenanceStore(lambda: connection, namespace="local")
+        with self.assertRaises(MaintenanceError) as captured:
+            store.queue_and_delete_builds(RetentionPolicy(), NOW, (BUILD_A,))
+        self.assertEqual(captured.exception.code, "deletion_queue_mismatch")
+        self.assertFalse(any(sql.startswith("DELETE FROM") for sql, _ in connection.executions))
+        self.assertEqual((connection.commits, connection.rollbacks), (0, 1))
+        self.assertEqual((connection.cursor_closed, connection.closed), (1, 1))
+
+    def test_commit_failure_rolls_back_closes_and_exposes_only_stable_error(self) -> None:
+        connection = ScriptedConnection()
+        connection.commit = Mock(side_effect=RuntimeError("private database detail"))
+        store = PostgresMaintenanceStore(lambda: connection, namespace="local")
+        with self.assertRaises(MaintenanceError) as captured:
+            store.queue_and_delete_builds(RetentionPolicy(), NOW, (BUILD_A,))
+        self.assertEqual(captured.exception.code, "database_unavailable")
+        self.assertNotIn("private database detail", str(captured.exception))
+        self.assertEqual(connection.rollbacks, 1)
+        self.assertEqual((connection.cursor_closed, connection.closed), (1, 1))
 
     def test_redis_reconstruction_query_uses_current_build_status_not_outbox(self) -> None:
         connection = ScriptedConnection()

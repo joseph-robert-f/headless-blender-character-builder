@@ -36,12 +36,12 @@ from fixture_gate_common import (
 ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = ROOT / "docker" / "postgres.Dockerfile"
 EXPECTED_BASE_IMAGE = (
-    "postgres:16.14-alpine3.24@sha256:"
-    "57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777"
+    "postgres:16.15-alpine3.24@sha256:"
+    "721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
 )
-EXPECTED_RECIPE_ID = "postgres-16.14-alpine3.24-gosu-free-v1"
-EXPECTED_VERSION = "16.14-alpine3.24-hbcb.1"
-EXPECTED_UPSTREAM_REVISION = "4f9ced003ba58a854656ba150d146243d27ae3ac"
+EXPECTED_RECIPE_ID = "postgres-16.15-alpine3.24-gosu-free-v1"
+EXPECTED_VERSION = "16.15-alpine3.24-hbcb.1"
+EXPECTED_UPSTREAM_REVISION = "9d15534160ade17f2b6c455a39ee967c49b1937d"
 EXPECTED_UPSTREAM_SOURCE = (
     "https://github.com/docker-library/postgres/tree/"
     + EXPECTED_UPSTREAM_REVISION
@@ -67,9 +67,25 @@ BUILD_OWNER_LABEL_KEY = "io.hbcb.postgres-build-owner"
 def _run(
     command: Sequence[str], *, timeout: int = 30, check: bool = True, interruptible: bool = True,
 ) -> subprocess.CompletedProcess[bytes]:
+    # Name only the fixed Docker operation. Never echo argv: docker run includes
+    # the one-time database password, and exec can include query text.
+    operation = "Docker operation"
+    if len(command) >= 2 and command[1] in {"build", "run", "exec"}:
+        operation = "Docker " + command[1]
+    elif len(command) >= 3 and (command[1], command[2]) in {
+        ("image", "inspect"),
+        ("image", "ls"),
+        ("image", "rm"),
+        ("image", "save"),
+        ("container", "ls"),
+        ("volume", "create"),
+        ("volume", "ls"),
+        ("volume", "rm"),
+    }:
+        operation = "Docker " + command[1] + " " + command[2]
     return fixture_gate_common._run(
         command, timeout=timeout, check=check, interruptible=interruptible,
-        check_failure_message="the reviewed PostgreSQL fixture check failed",
+        check_failure_message="the reviewed PostgreSQL fixture check failed during " + operation,
     )
 
 
@@ -101,16 +117,7 @@ def _json_document(payload: bytes, label: str) -> Mapping[str, object]:
 
 def _inspect_image(docker: str, image: str) -> Mapping[str, object]:
     return _json_document(
-        _run(
-            (
-                docker,
-                "image",
-                "inspect",
-                "--platform",
-                "linux/amd64",
-                image,
-            )
-        ).stdout,
+        _run((docker, "image", "inspect", image)).stdout,
         "the PostgreSQL image identity",
     )
 
@@ -144,7 +151,8 @@ def _validate_image(document: Mapping[str, object], image: str) -> str:
     environment = config.get("Env")
     required_environment = {
         "PG_MAJOR=16",
-        "PG_VERSION=16.14",
+        "PG_VERSION=16.15",
+        "PG_SHA256=c1575341fa7bd40f5274ea465b34390f4dc64cdd0770af327005caaeb9f6b7ed",
         "PGDATA=/var/lib/postgresql/data",
         "DOCKER_PG_LLVM_DEPS=llvm21-dev \t\tclang21",
     }
@@ -168,7 +176,7 @@ def _validate_image(document: Mapping[str, object], image: str) -> str:
         "org.opencontainers.image.revision": EXPECTED_UPSTREAM_REVISION,
         "org.opencontainers.image.source": EXPECTED_UPSTREAM_SOURCE,
         "org.opencontainers.image.licenses": "PostgreSQL",
-        "org.opencontainers.image.base.name": "postgres:16.14-alpine3.24",
+        "org.opencontainers.image.base.name": "postgres:16.15-alpine3.24",
         "org.opencontainers.image.base.digest": "sha256:"
         + EXPECTED_BASE_IMAGE.rsplit("sha256:", 1)[1],
         "io.hbcb.postgres.recipe-id": EXPECTED_RECIPE_ID,
@@ -203,11 +211,10 @@ def _validate_selected_image(docker: str, image: str, config_id: str) -> str:
     selected = _inspect_tag(docker, image)
     if _tag_descriptor_id(selected) != image:
         raise GateError("the PostgreSQL image selection changed during inspection")
-    configured = _inspect_image(docker, image)
-    configured_id = configured.get("Id")
-    if not isinstance(configured_id, str):
-        raise GateError("the PostgreSQL linux/amd64 image identity is invalid")
-    _validate_image(configured, configured_id)
+    # The exact-ID inspection already contains the config and platform. A
+    # second platform-selected inspect needs Docker CLI >=28.1 and adds no
+    # evidence; old hosted runners reject that flag.
+    _validate_image(selected, image)
     if _exported_config_id(docker, image) != config_id:
         raise GateError("the PostgreSQL linux/amd64 config identity changed")
     return image

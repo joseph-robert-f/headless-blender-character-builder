@@ -447,6 +447,10 @@ These are adopted implementation limits, not suggestions. A change requires test
 | Scratch plus published output | 2 GiB maximum |
 | Worker concurrency | 1 active Blender process per worker container |
 
+The publication total includes all nine files. This includes the canonical
+`manifest.json` bytes and its final newline, even though the manifest does not
+record its own hash.
+
 All geometry and manifest dimensions are expressed in millimeters. STL and GLB re-imported bounds must match the `.blend` evaluated bounds within the greater of **0.2 mm or 0.5% per axis**.
 
 The v0.1 `geometry-v1` quality profile is pass/fail and requires:

@@ -11,6 +11,7 @@ from types import MappingProxyType
 from typing import Mapping, Optional
 from uuid import UUID
 
+from shared.build_manifest import MAX_PUBLISHED_ARTIFACT_BYTES
 from shared.character_spec import validate_build_request
 from shared.json_contract import ContractValidationError
 
@@ -21,7 +22,7 @@ SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 SAFE_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 WORKER_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 OBJECT_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,1023}$")
-MAX_PUBLISHED_BYTES = 2 * 1024 * 1024 * 1024
+MAX_PUBLISHED_BYTES = MAX_PUBLISHED_ARTIFACT_BYTES
 MAX_DISPATCH_COUNT = (1 << 63) - 1
 
 ARTIFACT_CONTENT_TYPES = MappingProxyType(

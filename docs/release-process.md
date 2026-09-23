@@ -69,6 +69,9 @@ The manually dispatched GitHub release-candidate workflow assigns a unique
 run/attempt evidence ID. After a successful full gate it uploads the complete
 sanitized evidence directory as a GitHub Actions artifact for seven days. A
 local run and a failed hosted run do not create any release automatically.
+Neither the local gate nor the hosted release-candidate workflow runs the
+networked vulnerability scan. Routine pull requests can merge with reported
+vulnerabilities; the strict scan is a separate pre-publication/deployment step.
 
 ## Version and local image identity
 
@@ -147,14 +150,17 @@ A release operator:
    `git status --short`, `git diff --check`, and `scripts/release-audit`
    remain clean afterward, and records the exact evidence path and run ID in
    `docs/progress.md`;
-3. runs the networked dependency scan from that exact commit shortly before
-   publishing, requires exit `0`, and reviews the retained reports; the
-   dependency policy's per-finding `expires_on` dispositions enforce
-   themselves at scan time:
+3. runs the strict/default networked dependency scan from that exact commit
+   shortly before publishing, requires exit `0`, and reviews the retained
+   reports; unlike the scheduled report-only audit, this checks the dependency
+   policy's per-finding `expires_on` dispositions at scan time:
    ```sh
    make dependency-scan \
      DEPENDENCY_OUTPUT="$PWD/build/dependency-audit-release-$(git rev-parse HEAD)"
    ```
+   The operator must retain this result and verify it before publication;
+   `make release-check` and the source-only transaction do not verify a recent
+   scan artifact automatically.
 4. verifies the release assets with `RELEASE_DIR` set to the `release/`
    directory inside the evidence path that `make release-check` printed as
    `evidence=.../release-check/<run-id>` (`scripts/release-artifacts`
@@ -231,8 +237,11 @@ base stage to OCI/SPDX provenance, and root PostgreSQL/Redis pins to recovery
 Compose, exact assertions, and notices. It also binds the Caddy gate reference
 to the operator lock example and notice. The scheduled/manual
 `dependency-audit.yml` workflow has read-only repository permission. It reports
-upstream status and vulnerability findings without creating branches, issues,
-or pull requests.
+upstream status and vulnerability findings in report-only mode without
+creating branches, issues, or pull requests. It fails when the scan is
+incomplete, but findings and expired dispositions do not block routine work.
+Before publication or deployment, run strict/default `make dependency-scan`
+on the exact candidate and review its retained evidence.
 
 Dependency updates are prepared as coordinated maintainer changes. A Compose
 image update must synchronize `tests/deployment/g8_recovery_compose.yaml`, its

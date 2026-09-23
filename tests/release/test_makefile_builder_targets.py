@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -23,14 +25,19 @@ done
 printf '\n' >> "$FAKE_DOCKER_LOG"
 
 if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
+  if [ -n "${FAKE_DOCKER_INSPECT_EXIT:-}" ]; then exit "$FAKE_DOCKER_INSPECT_EXIT"; fi
   case "$*" in
     *'{{.Os}}/{{.Architecture}}|{{.Id}}'*)
-      printf '%s\n' "linux/amd64|${FAKE_IMAGE_ID:?}"
+      printf '%s\n' "${FAKE_IMAGE_PLATFORM:-linux/amd64}|${FAKE_IMAGE_ID:?}"
       ;;
     *)
       printf '%s\n' 'linux/amd64'
       ;;
   esac
+fi
+
+if [ "${1:-}" = build ] && [ -n "${FAKE_DOCKER_BUILD_EXIT:-}" ]; then
+  exit "$FAKE_DOCKER_BUILD_EXIT"
 fi
 
 if [ "${1:-}" = run ] && [ -n "${FAKE_DOCKER_RUN_EXIT:-}" ]; then
@@ -73,10 +80,12 @@ class MakefileBuilderTargetTests(unittest.TestCase):
         target: str,
         *,
         environment: dict[str, str],
-        docker: Path,
+        docker: Path | str,
         request: Path,
         build_parent: Path,
         output_name: str | None = None,
+        cwd: Path = ROOT,
+        extra_arguments: tuple[str, ...] = (),
     ) -> subprocess.CompletedProcess[str]:
         command = [
             "make",
@@ -89,15 +98,164 @@ class MakefileBuilderTargetTests(unittest.TestCase):
         ]
         if output_name is not None:
             command.append(f"OUTPUT_NAME={output_name}")
+        command.extend(extra_arguments)
         return subprocess.run(
             command,
-            cwd=ROOT,
+            cwd=cwd,
             env=environment,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             check=False,
         )
+
+    def test_all_operations_preserve_exact_runtime_argv_and_identity(self) -> None:
+        for uid, gid in ((501, 20), (0, 20), (501, 0), (0, 0)):
+            for operation in ("validate", "build", "verify", "inspect"):
+                with self.subTest(uid=uid, gid=gid, operation=operation), \
+                     tempfile.TemporaryDirectory(prefix="hbcb-make-envelope-") as temporary:
+                    environment, docker, docker_log, request, build_parent = self.fixture(temporary)
+                    root = Path(temporary)
+                    write_executable(
+                        root / "id",
+                        '#!/bin/sh\ncase "$1" in -u) echo "$FAKE_UID";; -g) echo "$FAKE_GID";; *) exit 1;; esac\n',
+                    )
+                    write_executable(
+                        root / "chown",
+                        '#!/bin/sh\nprintf "%s\\n" "$@" > "$FAKE_CHOWN_LOG"\n',
+                    )
+                    chown_log = root / "chown.log"
+                    environment.update({
+                        "PATH": str(root) + os.pathsep + environment["PATH"],
+                        "FAKE_UID": str(uid), "FAKE_GID": str(gid),
+                        "FAKE_CHOWN_LOG": str(chown_log),
+                        "HBCB_DISTRIBUTION_VERSION": "fixture-version",
+                        "HBCB_SOURCE_REVISION": "fixture-revision",
+                    })
+                    # Exported path values must stay data, including shell syntax.
+                    request = root / 'request with "quotes"; `false`.json'
+                    request.write_text("{}\n", encoding="utf-8")
+                    build_parent = root / 'artifacts with "quotes"; `false`'
+                    output = build_parent / "custom-model"
+                    manifest = output / "manifest.json"
+                    if operation in ("verify", "inspect"):
+                        output.mkdir(parents=True)
+                    if operation == "inspect":
+                        manifest.write_text("{}\n", encoding="utf-8")
+                        request.unlink()  # Inspect must not depend on REQUEST.
+                    result = self.run_make(
+                        operation, environment=environment, docker=docker,
+                        request=request, build_parent=build_parent,
+                        output_name="custom-model",
+                    )
+                    self.assertEqual(result.returncode, 0, result.stdout)
+                    records = [line.split("\t") for line in docker_log.read_text().splitlines()]
+                    actions = {
+                        "validate": ["build", "run"], "build": ["build", "image", "run"],
+                        "verify": ["image", "run"], "inspect": ["build", "run"],
+                    }
+                    self.assertEqual([record[0] for record in records], actions[operation])
+                    if operation != "verify":
+                        self.assertIn("HBCB_DISTRIBUTION_VERSION=fixture-version", records[0])
+                        self.assertIn("HBCB_SOURCE_REVISION=fixture-revision", records[0])
+                    runtime_user = f"{uid or 65532}:{gid or 65532}"
+                    heavy = operation in ("build", "verify")
+                    expected = [
+                        "run", "--rm", "--init", "--platform", "linux/amd64",
+                        "--network", "none", "--read-only", "--cap-drop", "ALL",
+                        "--security-opt", "no-new-privileges:true",
+                        "--pids-limit", "512" if heavy else "64",
+                        "--cpus", "4" if heavy else "1",
+                        "--memory", "4g" if heavy else "512m",
+                        "--user", runtime_user, "--tmpfs",
+                        f"/work:rw,nosuid,nodev,noexec,size={'2g' if heavy else '64m'},mode=1777",
+                    ]
+                    if operation == "inspect":
+                        expected += ["--mount", f"type=bind,source={manifest},target=/input/manifest.json,readonly"]
+                    else:
+                        expected += ["--mount", f"type=bind,source={request},target=/input/request.json,readonly"]
+                    if heavy:
+                        readonly = ",readonly" if operation == "verify" else ""
+                        expected += [
+                            "--mount", f"type=bind,source={build_parent},target=/output{readonly}",
+                            "--env", "HBCB_EXECUTION_MODE=container",
+                            "--env", "HBCB_WORKER_IMAGE_REFERENCE=fixture-builder:dev",
+                            "--env", f"HBCB_WORKER_IMAGE_ID={IMAGE_ID}",
+                        ]
+                        self.assertEqual(records[-2], [
+                            "image", "inspect", "--format",
+                            "{{.Os}}/{{.Architecture}}|{{.Id}}", "fixture-builder:dev",
+                        ])
+                    expected += ["fixture-builder:dev"]
+                    if operation == "inspect":
+                        expected += ["inspect-manifest", "--manifest", "/input/manifest.json"]
+                    else:
+                        expected += [operation, "--request", "/input/request.json"]
+                    if heavy:
+                        expected += ["--output", "/output/custom-model"]
+                    self.assertEqual(records[-1], expected)
+                    if operation == "build" and uid == 0:
+                        self.assertEqual(chown_log.read_text().splitlines(), [runtime_user, str(build_parent)])
+                    else:
+                        self.assertFalse(chown_log.exists())
+
+    def test_image_failures_stop_before_container_run(self) -> None:
+        for operation in ("validate", "build", "verify", "inspect"):
+            failures = [("FAKE_DOCKER_BUILD_EXIT", "17", "Error 17")]
+            if operation in ("build", "verify"):
+                failures += [("FAKE_DOCKER_INSPECT_EXIT", "19", "Error 19"),
+                             ("FAKE_IMAGE_PLATFORM", "linux/arm64", "Error 1")]
+            if operation == "verify":
+                failures = failures[1:]
+            for key, value, message in failures:
+                with self.subTest(operation=operation, failure=key), \
+                     tempfile.TemporaryDirectory(prefix="hbcb-make-image-fail-") as temporary:
+                    environment, docker, docker_log, request, build_parent = self.fixture(temporary)
+                    if operation in ("verify", "inspect"):
+                        output = build_parent / "custom-model"
+                        output.mkdir(parents=True)
+                        (output / "manifest.json").write_text("{}\n", encoding="utf-8")
+                    environment[key] = value
+                    result = self.run_make(
+                        operation, environment=environment, docker=docker,
+                        request=request, build_parent=build_parent, output_name="custom-model",
+                    )
+                    self.assertEqual(result.returncode, 2, result.stdout)
+                    self.assertIn(message, result.stdout)
+                    records = [line.split("\t") for line in docker_log.read_text().splitlines()]
+                    self.assertNotIn("run", [record[0] for record in records])
+                    if operation == "build" and key == "FAKE_DOCKER_BUILD_EXIT":
+                        self.assertFalse(build_parent.exists())
+
+    def test_wrapper_does_not_load_dotenv_and_preserves_docker_command_words(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="hbcb-make-env-") as temporary:
+            environment, docker, docker_log, request, build_parent = self.fixture(temporary)
+            root = Path(temporary)
+            (root / "scripts").mkdir()
+            shutil.copy2(ROOT / "Makefile", root / "Makefile")
+            shutil.copy2(ROOT / "scripts" / "builder-container", root / "scripts" / "builder-container")
+            (root / "VERSION").write_text("0.1.0\n", encoding="utf-8")
+            (root / ".env").write_text("echo DOTENV_LOADED >&2\nexit 91\n", encoding="utf-8")
+            docker_command = "env HBCB_DOCKER_FIXTURE=yes " + shlex.quote(str(docker))
+            for operation in ("validate", "build", "verify", "inspect"):
+                with self.subTest(operation=operation):
+                    if operation in ("verify", "inspect"):
+                        output = build_parent / "demo"
+                        output.mkdir(parents=True, exist_ok=True)
+                        (output / "manifest.json").write_text("{}\n", encoding="utf-8")
+                    result = self.run_make(
+                        operation, environment=environment, docker=docker_command,
+                        request=request, build_parent=build_parent, cwd=root,
+                        extra_arguments=("BUILDER_IMAGE=custom:tag", "PLATFORM=linux/arm64")
+                        if operation in ("validate", "inspect") else (),
+                    )
+                    self.assertEqual(result.returncode, 0, result.stdout)
+                    self.assertNotIn("DOTENV_LOADED", result.stdout)
+                    run = docker_log.read_text().splitlines()[-1].split("\t")
+                    if operation in ("validate", "inspect"):
+                        self.assertIn("custom:tag", run)
+                        self.assertEqual(run[run.index("--platform") + 1], "linux/arm64")
+                    docker_log.unlink()
 
     def test_build_and_verify_use_validated_named_output(self) -> None:
         with tempfile.TemporaryDirectory(prefix="hbcb-make-output-") as temporary:
@@ -283,10 +441,12 @@ class MakefileBuilderTargetTests(unittest.TestCase):
                 "a" * 49,
                 f'bad"; touch {canary}; #',
             )
-            for output_name in unsafe:
-                with self.subTest(output_name=output_name):
+            for target, output_name in (
+                (target, name) for target in ("build", "verify", "inspect") for name in unsafe
+            ):
+                with self.subTest(target=target, output_name=output_name):
                     rejected = self.run_make(
-                        "build",
+                        target,
                         environment=environment,
                         docker=docker,
                         request=request,
@@ -435,17 +595,23 @@ class MakefileBuilderTargetTests(unittest.TestCase):
                 temporary
             )
             environment["FAKE_DOCKER_RUN_EXIT"] = "11"
-            failed = self.run_make(
-                "build",
-                environment=environment,
-                docker=docker,
-                request=request,
-                build_parent=build_parent,
-                output_name="needs-review",
-            )
-            self.assertEqual(failed.returncode, 2, failed.stdout)
-            self.assertIn("BUILDER: FAIL[11]: fixture failure", failed.stdout)
-            self.assertIn("Error 11", failed.stdout)
+            for target in ("validate", "build", "verify", "inspect"):
+                with self.subTest(target=target):
+                    if target in ("verify", "inspect"):
+                        output = build_parent / "needs-review"
+                        output.mkdir(parents=True, exist_ok=True)
+                        (output / "manifest.json").write_text("{}\n", encoding="utf-8")
+                    failed = self.run_make(
+                        target,
+                        environment=environment,
+                        docker=docker,
+                        request=request,
+                        build_parent=build_parent,
+                        output_name="needs-review",
+                    )
+                    self.assertEqual(failed.returncode, 2, failed.stdout)
+                    self.assertIn("BUILDER: FAIL[11]: fixture failure", failed.stdout)
+                    self.assertIn("Error 11", failed.stdout)
 
     def test_make_validate_uses_hardened_keyless_container_with_request_only(self) -> None:
         with tempfile.TemporaryDirectory(prefix="hbcb-make-validate-") as temporary:

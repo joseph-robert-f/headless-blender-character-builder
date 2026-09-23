@@ -120,7 +120,13 @@ class OrphanMinioGateContractTests(unittest.TestCase):
         integration.mkdir(parents=True)
         tools.mkdir()
         state.mkdir()
-        (scripts / "orphan-minio-gate").write_bytes(WRAPPER.read_bytes())
+        wrapper = WRAPPER.read_bytes()
+        if scenario == "wait-timeout":
+            # Exercise timeout cleanup without making the unit suite wait
+            # five minutes. The production timeout must remain bounded.
+            self.assertEqual(wrapper.count(b"timeout=300,"), 1)
+            wrapper = wrapper.replace(b"timeout=300,", b"timeout=0.05,")
+        (scripts / "orphan-minio-gate").write_bytes(wrapper)
         (scripts / "orphan-minio-gate").chmod(0o755)
         (scripts / "service-common").write_bytes(
             (ROOT / "scripts" / "service-common").read_bytes()
@@ -157,6 +163,20 @@ class OrphanMinioGateContractTests(unittest.TestCase):
                     raise SystemExit(0)
                 if args[:2] == ["image", "inspect"]:
                     print("linux/amd64|sha256:" + "a" * 64)
+                    raise SystemExit(0)
+                if args and args[0] == "wait":
+                    if args[1:] != ["1" * 64, "2" * 64]:
+                        raise SystemExit("unexpected initializer containers")
+                    if scenario == "wait-error":
+                        raise SystemExit(1)
+                    if scenario == "wait-timeout":
+                        time.sleep(2)
+                    (state / "initializers-waited").write_text("1", encoding="ascii")
+                    if scenario == "invalid-exit":
+                        print("not-an-exit-code")
+                    else:
+                        print("7" if scenario == "minio-init-failure" else "0")
+                        print("8" if scenario == "database-init-failure" else "0")
                     raise SystemExit(0)
                 if args and args[0] == "ps":
                     if resource.exists():
@@ -196,20 +216,37 @@ class OrphanMinioGateContractTests(unittest.TestCase):
                     raise SystemExit(0)
                 if args[:2] == ["network", "ls"]:
                     if resource.exists():
-                        print("fixture-network")
+                        print("d" * 64)
                     if foreign.exists() and not owner_query:
                         print("e" * 64)
                     raise SystemExit(0)
                 if args and args[0] == "compose":
                     operation = next(
-                        (item for item in ("config", "up", "run", "down") if item in args),
+                        (item for item in ("config", "up", "run", "down", "ps") if item in args),
                         None,
                     )
                     if operation == "config":
                         print("services: {}")
                     elif operation == "up":
                         resource.write_text("owned", encoding="ascii")
+                        if "--wait" in args and any(
+                            item in args for item in ("minio-init", "database-init")
+                        ):
+                            # Compose 2.x rejects an already completed one-shot
+                            # service when only its running state is requested.
+                            raise SystemExit("database-init exited (0)")
+                    elif operation == "ps":
+                        if scenario != "missing-initializer":
+                            print("1" * 64)
+                        if scenario == "duplicate-initializer":
+                            print("1" * 64)
+                        elif scenario == "invalid-initializer":
+                            print("not-a-container-id")
+                        else:
+                            print("2" * 64)
                     elif operation == "run":
+                        if not (state / "initializers-waited").exists():
+                            raise SystemExit("gate started before initialization completed")
                         if scenario == "foreign":
                             foreign.write_text("must-survive", encoding="ascii")
                         print(json.dumps({
@@ -246,6 +283,48 @@ class OrphanMinioGateContractTests(unittest.TestCase):
         )
         commands = (state / "commands.log").read_text(encoding="utf-8").splitlines()
         return completed, state, commands
+
+    def test_completed_initializers_are_waited_before_the_live_gate(self) -> None:
+        completed, state, commands = self._signal_fixture("success")
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+        self.assertIn("ORPHAN_MINIO_GATE: PASS", completed.stdout)
+        operations = [
+            command.split(".yaml ", 1)[1]
+            for command in commands
+            if command.startswith("compose ")
+        ]
+        self.assertEqual(
+            operations,
+            [
+                "config --format yaml",
+                "up --detach --wait --wait-timeout 300 postgres minio",
+                "up --detach --no-deps minio-init database-init",
+                "ps --all --quiet minio-init database-init",
+                "run --rm --no-deps gate",
+            ],
+        )
+        wait = next(i for i, command in enumerate(commands) if command.startswith("wait "))
+        run = next(i for i, command in enumerate(commands) if command.endswith(" gate"))
+        self.assertLess(wait, run)
+        self.assertFalse((state / "project-resource").exists())
+
+    def test_initializer_failures_prevent_gate_and_still_remove_owned_resources(self) -> None:
+        for scenario in (
+            "minio-init-failure",
+            "database-init-failure",
+            "wait-error",
+            "wait-timeout",
+            "invalid-exit",
+            "missing-initializer",
+            "duplicate-initializer",
+            "invalid-initializer",
+        ):
+            with self.subTest(scenario=scenario):
+                completed, state, commands = self._signal_fixture(scenario)
+                self.assertNotEqual(completed.returncode, 0, completed.stdout)
+                self.assertNotIn("ORPHAN_MINIO_GATE: PASS", completed.stdout)
+                self.assertFalse(any(command.endswith(" gate") for command in commands))
+                self.assertFalse((state / "project-resource").exists())
 
     @unittest.skipUnless(os.name == "posix", "POSIX signal semantics required")
     def test_cleanup_records_each_signal_then_verifies_absence_without_pass(self) -> None:

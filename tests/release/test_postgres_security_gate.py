@@ -54,7 +54,8 @@ def valid_document() -> dict[str, object]:
             "ExposedPorts": {"5432/tcp": {}},
             "Env": [
                 "PG_MAJOR=16",
-                "PG_VERSION=16.14",
+                "PG_VERSION=16.15",
+                "PG_SHA256=c1575341fa7bd40f5274ea465b34390f4dc64cdd0770af327005caaeb9f6b7ed",
                 "PGDATA=/var/lib/postgresql/data",
                 "DOCKER_PG_LLVM_DEPS=llvm21-dev \t\tclang21",
             ],
@@ -64,7 +65,7 @@ def valid_document() -> dict[str, object]:
                 "org.opencontainers.image.revision": GATE.EXPECTED_UPSTREAM_REVISION,
                 "org.opencontainers.image.source": GATE.EXPECTED_UPSTREAM_SOURCE,
                 "org.opencontainers.image.licenses": "PostgreSQL",
-                "org.opencontainers.image.base.name": "postgres:16.14-alpine3.24",
+                "org.opencontainers.image.base.name": "postgres:16.15-alpine3.24",
                 "org.opencontainers.image.base.digest": "sha256:"
                 + GATE.EXPECTED_BASE_IMAGE.rsplit("sha256:", 1)[1],
                 "io.hbcb.postgres.recipe-id": GATE.EXPECTED_RECIPE_ID,
@@ -74,6 +75,17 @@ def valid_document() -> dict[str, object]:
 
 
 class PostgresSecurityGateTests(unittest.TestCase):
+    def test_docker_failure_names_operation_without_exposing_arguments(self) -> None:
+        def fail(_command: tuple[str, ...], **options: object) -> None:
+            raise GATE.GateError(str(options["check_failure_message"]))
+
+        with mock.patch.object(GATE.fixture_gate_common, "_run", side_effect=fail):
+            with self.assertRaisesRegex(GATE.GateError, "during Docker run") as raised:
+                GATE._run(("docker", "run", "--env", "POSTGRES_PASSWORD=private"))
+            self.assertNotIn("private", str(raised.exception))
+            with self.assertRaisesRegex(GATE.GateError, "during Docker image save"):
+                GATE._run(("docker", "image", "save", "--output", "/tmp/private"))
+
     def test_parent_termination_grace_exceeds_owned_operation_and_cleanup_bound(self) -> None:
         cleanup_bound = (
             GATE.CLEANUP_DOCKER_TIMEOUT_SECONDS
@@ -140,8 +152,6 @@ class PostgresSecurityGateTests(unittest.TestCase):
         selected = valid_document()
         selected["Descriptor"] = {"digest": TEST_IMAGE_ID}
         with mock.patch.object(GATE, "_inspect_tag", return_value=selected), mock.patch.object(
-            GATE, "_inspect_image", return_value=valid_document()
-        ), mock.patch.object(
             GATE, "_exported_config_id", return_value=TEST_CONFIG_ID
         ):
             self.assertEqual(
@@ -154,6 +164,19 @@ class PostgresSecurityGateTests(unittest.TestCase):
                 GATE._validate_selected_image(
                     "docker", TEST_IMAGE_ID, "sha256:" + "c" * 64
                 )
+        for change in ({"Architecture": "arm64"}, {"Id": "sha256:" + "d" * 64}):
+            with self.subTest(change=change), mock.patch.object(
+                GATE, "_inspect_tag", return_value=dict(selected, **change)
+            ), mock.patch.object(GATE, "_exported_config_id", return_value=TEST_CONFIG_ID):
+                with self.assertRaises(GATE.GateError):
+                    GATE._validate_selected_image("docker", TEST_IMAGE_ID, TEST_CONFIG_ID)
+
+    def test_image_inspection_uses_legacy_compatible_exact_reference(self) -> None:
+        with mock.patch.object(
+            GATE, "_run", return_value=completed(("docker",), stdout=json.dumps([valid_document()]).encode())
+        ) as run:
+            GATE._inspect_image("docker", TEST_IMAGE_ID)
+        run.assert_called_once_with(("docker", "image", "inspect", TEST_IMAGE_ID))
 
     def test_archive_config_identity_is_content_derived_and_platform_bound(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -561,17 +584,7 @@ class PostgresSecurityGateTests(unittest.TestCase):
                 TEST_IMAGE_ID,
             ),
         )
-        self.assertEqual(
-            calls[1],
-            (
-                "docker",
-                "image",
-                "inspect",
-                "--platform",
-                "linux/amd64",
-                TEST_IMAGE_ID,
-            ),
-        )
+        self.assertEqual(len(calls), 1)
         evidence = json.loads(output.getvalue())
         self.assertEqual(evidence["status"], "pass")
         self.assertEqual(evidence["runtime_uid"], 70)

@@ -237,7 +237,12 @@ diagnostics/back.png
 qa.json
 ```
 
-`manifest.json` excludes its own hash. Aggregate published artifacts are limited to 2 GiB. G3 implements cross-artifact hash recomputation, exact Blender/source provenance, fresh Blender reload, and GLB/STL re-import evidence before success publication.
+`manifest.json` excludes its own hash. The 2 GiB publication limit includes all
+nine files. This includes the canonical manifest and its final newline. The
+builder, service, and download client use this same total.
+
+G3 checks artifact hashes, Blender and source provenance, fresh Blender reload,
+and GLB/STL re-import evidence before success publication.
 
 ## Versioning
 
