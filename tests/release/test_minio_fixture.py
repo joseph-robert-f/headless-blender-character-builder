@@ -11,27 +11,29 @@ SERVER_REVISION = "7aac2a2c5b7c882e68c1ce017d8256be2feea27f"
 SERVER_ARCHIVE_SHA256 = "71794c2df26aad0cc99e8421c58b7aa2dd55969f979b0e7d1e931042e9fabcd6"
 CLIENT_REVISION = "77f82e18b5401a65958f1619df6ebb994634bd88"
 CLIENT_ARCHIVE_SHA256 = "167415edd21bc29f5360943dac64272aa5cda0a39f3070b15cfeca671c43d975"
-GO_VERSION = "1.25.12"
-GO_SHA256 = "234828b7a89e0e303d2556310ee549fbcf253d28de937bac3da13d6294262ac1"
+GO_VERSION = "1.26.8"
+GO_SHA256 = "d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b"
 FIXTURE_VERSION = "final-community-20260212-hbcb.1"
-RUNTIME_BASE = "alpine:3.22.5@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce"
+RUNTIME_BASE = "alpine:3.22.6@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8"
 
 SERVER_MODULES = {
-    "github.com/apache/thrift": "v0.23.0",
+    "github.com/apache/thrift": "v0.24.0",
     "github.com/buger/jsonparser": "v1.1.2",
     "github.com/eclipse/paho.mqtt.golang": "v1.5.1",
     "github.com/go-jose/go-jose/v4": "v4.1.4",
     "github.com/prometheus/prometheus": "v0.311.3",
-    "go.opentelemetry.io/otel": "v1.44.0",
-    "go.opentelemetry.io/otel/metric": "v1.44.0",
-    "go.opentelemetry.io/otel/trace": "v1.44.0",
-    "go.opentelemetry.io/otel/sdk": "v1.44.0",
-    "go.opentelemetry.io/otel/sdk/metric": "v1.44.0",
-    "golang.org/x/crypto": "v0.53.0",
-    "golang.org/x/net": "v0.56.0",
-    "golang.org/x/sys": "v0.46.0",
-    "golang.org/x/text": "v0.39.0",
-    "google.golang.org/grpc": "v1.82.1",
+    "github.com/rabbitmq/amqp091-go": "v1.13.0",
+    "go.etcd.io/etcd/client/pkg/v3": "v3.5.33",
+    "go.opentelemetry.io/otel": "v1.45.0",
+    "go.opentelemetry.io/otel/metric": "v1.45.0",
+    "go.opentelemetry.io/otel/trace": "v1.45.0",
+    "go.opentelemetry.io/otel/sdk": "v1.45.0",
+    "go.opentelemetry.io/otel/sdk/metric": "v1.45.0",
+    "golang.org/x/crypto": "v0.56.0",
+    "golang.org/x/net": "v0.58.0",
+    "golang.org/x/sys": "v0.47.0",
+    "golang.org/x/text": "v0.41.0",
+    "google.golang.org/grpc": "v1.83.2",
 }
 
 SERVER_TRANSITIVE_SECURITY_MODULES = {
@@ -64,6 +66,7 @@ def assert_contract(
         test.assertRegex(server_modules, rf"(?m)^\s*{re.escape(module)} {re.escape(version)}(?:\s|$)", module)
     for module in (
         "github.com/prometheus/prometheus",
+        "go.etcd.io/etcd/client/pkg/v3",
         "golang.org/x/crypto",
         "golang.org/x/net",
         "golang.org/x/sys",
@@ -83,14 +86,17 @@ def assert_contract(
         test.assertIn("docker/minio-modules/" + overlay, dockerfile)
     test.assertIn(f'org.opencontainers.image.version="{FIXTURE_VERSION}"', dockerfile)
     test.assertIn(f"FROM --platform=linux/amd64 {RUNTIME_BASE} AS minio", dockerfile)
-    test.assertIn('org.opencontainers.image.base.name="alpine:3.22.5"', dockerfile)
+    test.assertIn('org.opencontainers.image.base.name="alpine:3.22.6"', dockerfile)
     test.assertIn(
-        'org.opencontainers.image.base.digest="sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce"',
+        'org.opencontainers.image.base.digest="sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8"',
         dockerfile,
     )
     test.assertIn("test -s /etc/ssl/certs/ca-certificates.crt", dockerfile)
     test.assertIn(f'org.opencontainers.image.revision="{SERVER_REVISION}"', dockerfile)
     test.assertIn(f'io.hbcb.mc-revision="{CLIENT_REVISION}"', dockerfile)
+    test.assertIn('io.hbcb.security-modules="2026-09-23"', dockerfile)
+    test.assertIn("go 1.26.0", server_modules)
+    test.assertIn("go 1.26.0", client_modules)
     test.assertIn(f"commit-id={SERVER_REVISION}", dockerfile)
     test.assertIn(f"commit-id={CLIENT_REVISION}", dockerfile)
     for name in ("MINIO-LICENSE", "MINIO-CREDITS", "MC-LICENSE", "MC-CREDITS"):
@@ -137,12 +143,13 @@ class MinioFixturePolicyTests(unittest.TestCase):
                     assert_contract(self, mutated, original_server, original_client)
 
         for label, source, before, after in (
-            ("server crypto module", original_server, "golang.org/x/crypto v0.53.0", "golang.org/x/crypto v0.52.0"),
-            ("server gRPC module", original_server, "google.golang.org/grpc v1.82.1", "google.golang.org/grpc v1.81.0"),
-            ("client crypto module", original_client, "golang.org/x/crypto v0.53.0", "golang.org/x/crypto v0.52.0"),
+            ("server crypto module", original_server, "golang.org/x/crypto v0.56.0", "golang.org/x/crypto v0.53.0"),
+            ("server gRPC module", original_server, "google.golang.org/grpc v1.83.2", "google.golang.org/grpc v1.82.1"),
+            ("client crypto module", original_client, "golang.org/x/crypto v0.56.0", "golang.org/x/crypto v0.53.0"),
         ):
             with self.subTest(label=label):
                 mutated = source.replace(before, after, 1)
+                self.assertNotEqual(mutated, source)
                 with self.assertRaises(AssertionError):
                     assert_contract(
                         self,

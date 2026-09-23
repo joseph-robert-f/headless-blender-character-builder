@@ -54,7 +54,8 @@ def valid_document() -> dict[str, object]:
             "ExposedPorts": {"5432/tcp": {}},
             "Env": [
                 "PG_MAJOR=16",
-                "PG_VERSION=16.14",
+                "PG_VERSION=16.15",
+                "PG_SHA256=c1575341fa7bd40f5274ea465b34390f4dc64cdd0770af327005caaeb9f6b7ed",
                 "PGDATA=/var/lib/postgresql/data",
                 "DOCKER_PG_LLVM_DEPS=llvm21-dev \t\tclang21",
             ],
@@ -64,7 +65,7 @@ def valid_document() -> dict[str, object]:
                 "org.opencontainers.image.revision": GATE.EXPECTED_UPSTREAM_REVISION,
                 "org.opencontainers.image.source": GATE.EXPECTED_UPSTREAM_SOURCE,
                 "org.opencontainers.image.licenses": "PostgreSQL",
-                "org.opencontainers.image.base.name": "postgres:16.14-alpine3.24",
+                "org.opencontainers.image.base.name": "postgres:16.15-alpine3.24",
                 "org.opencontainers.image.base.digest": "sha256:"
                 + GATE.EXPECTED_BASE_IMAGE.rsplit("sha256:", 1)[1],
                 "io.hbcb.postgres.recipe-id": GATE.EXPECTED_RECIPE_ID,

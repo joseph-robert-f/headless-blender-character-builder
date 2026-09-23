@@ -26,7 +26,7 @@ complete dependency scan.
 The complete scan requires substantial downloads, disk, and build time. Its
 output directory must not already exist. Choose a new ignored `build/` path for
 each retained local run. Every project and external image is scanned from one
-mode-`0600` temporary Docker archive at a time, with a hard 2 GiB limit; allow
+mode-`0600` temporary Docker archive at a time, with a hard 5 GiB limit; allow
 enough additional temporary disk for the largest selected image.
 Audit, build, and scan commands run in isolated process groups. A deadline or
 operator interrupt applies a bounded `SIGTERM` grace period, escalates surviving

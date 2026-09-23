@@ -20,7 +20,7 @@ services:
       context: .
       dockerfile: docker/postgres.Dockerfile
       target: postgres
-    image: ${HBCB_POSTGRES_IMAGE:-hbcb-postgres-local:16.14-alpine3.24-hbcb.1}
+    image: ${HBCB_POSTGRES_IMAGE:-hbcb-postgres-local:16.15-alpine3.24-hbcb.1}
     platform: linux/amd64
     user: "70:70"
     restart: unless-stopped
@@ -45,7 +45,7 @@ services:
     cpus: 1.0
 
   redis:
-    image: redis:8.2.8-alpine3.22@sha256:a7859ed111db3c1f5404a973a4747505d559fb5ca32d37e447afc0ef845a2103
+    image: redis:8.2.10-alpine3.22@sha256:8d02c1dc547ea659066d2ca18fce4e80f0a84cfe56a61af2ced2c2a48de3597c
     platform: linux/amd64
     restart: unless-stopped
     labels:

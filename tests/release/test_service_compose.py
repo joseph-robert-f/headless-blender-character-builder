@@ -264,16 +264,16 @@ class ServiceComposeTests(unittest.TestCase):
             "HBCB_STORAGE_PUBLIC_ENDPOINT:-localhost:9000", compose
         )
         self.assertIn(
-            "redis:8.2.8-alpine3.22@sha256:"
-            "a7859ed111db3c1f5404a973a4747505d559fb5ca32d37e447afc0ef845a2103",
+            "redis:8.2.10-alpine3.22@sha256:"
+            "8d02c1dc547ea659066d2ca18fce4e80f0a84cfe56a61af2ced2c2a48de3597c",
             compose,
         )
         postgres_dockerfile = (ROOT / "docker" / "postgres.Dockerfile").read_text(
             encoding="utf-8"
         )
         self.assertIn(
-            "postgres:16.14-alpine3.24@sha256:"
-            "57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777",
+            "postgres:16.15-alpine3.24@sha256:"
+            "721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
             postgres_dockerfile,
         )
         self.assertIn("dockerfile: docker/postgres.Dockerfile", compose)
@@ -621,7 +621,7 @@ class ServiceComposeTests(unittest.TestCase):
     ) -> dict[str, str]:
         self.write_env(root, project=project)
         selected = environment.copy()
-        selected["FAKE_POSTGRES_IMAGE"] = project + "-postgres:16.14-alpine3.24-hbcb.1"
+        selected["FAKE_POSTGRES_IMAGE"] = project + "-postgres:16.15-alpine3.24-hbcb.1"
         return selected
 
     def test_incompatible_postgres_volume_blocks_up_before_compose(self) -> None:

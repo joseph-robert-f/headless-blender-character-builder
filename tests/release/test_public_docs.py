@@ -348,7 +348,7 @@ class PublicDocumentationTests(unittest.TestCase):
 
         notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
         self.assertIn("Project-derived gosu-free runtime", notices)
-        self.assertIn("exact `postgres:16.14-alpine3.24` digest-pinned official image", notices)
+        self.assertIn("exact `postgres:16.15-alpine3.24` digest-pinned official image", notices)
         self.assertIn("preserves the upstream filesystem, entrypoint, and notices", notices)
         self.assertIn("local and VPS-reference queue/coordination service", notices)
         self.assertIn("local compatibility fixture only", notices)

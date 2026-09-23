@@ -2,13 +2,13 @@
 
 # MinIO Community stopped publishing maintained binaries/images.  Build the
 # final upstream source revisions from checksum-pinned archives.  The build
-# also advances the security-sensitive Go modules to the reviewed 2026 fixes.
+# also advances security-sensitive Go modules to pinned 2026 fixes.
 # Checked-in go.mod/go.sum overlays make that transformation reviewable, and
 # read-only module builds fail closed if Go's selection changes.  This remains
 # a local compatibility fixture, not a production storage recommendation.
-FROM --platform=linux/amd64 debian:bookworm-20260803-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241 AS minio-build
+FROM --platform=linux/amd64 debian:bookworm-20260918-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS minio-build
 
-ARG DEBIAN_SNAPSHOT=20260804T000000Z
+ARG DEBIAN_SNAPSHOT=20260920T000000Z
 ARG HBCB_MINIO_RECIPE_ID=unmeasured
 
 RUN set -eux; \
@@ -21,8 +21,8 @@ RUN set -eux; \
     DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ca-certificates; \
     rm -rf /var/lib/apt/lists/*
 
-ADD --checksum=sha256:234828b7a89e0e303d2556310ee549fbcf253d28de937bac3da13d6294262ac1 \
-    https://go.dev/dl/go1.25.12.linux-amd64.tar.gz /tmp/go1.25.12.linux-amd64.tar.gz
+ADD --checksum=sha256:d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b \
+    https://go.dev/dl/go1.26.8.linux-amd64.tar.gz /tmp/go1.26.8.linux-amd64.tar.gz
 ADD --checksum=sha256:71794c2df26aad0cc99e8421c58b7aa2dd55969f979b0e7d1e931042e9fabcd6 \
     https://github.com/minio/minio/archive/7aac2a2c5b7c882e68c1ce017d8256be2feea27f.tar.gz \
     /tmp/minio.7aac2a2c5b7c882e68c1ce017d8256be2feea27f.tar.gz
@@ -36,7 +36,7 @@ COPY docker/minio-modules/mc.go.mod /tmp/mc.go.mod
 COPY docker/minio-modules/mc.go.sum /tmp/mc.go.sum
 
 RUN set -eux; \
-    tar -xzf /tmp/go1.25.12.linux-amd64.tar.gz -C /usr/local; \
+    tar -xzf /tmp/go1.26.8.linux-amd64.tar.gz -C /usr/local; \
     mkdir -p /src/minio /src/mc /out; \
     tar -xzf /tmp/minio.7aac2a2c5b7c882e68c1ce017d8256be2feea27f.tar.gz \
       -C /src/minio --strip-components=1; \
@@ -79,7 +79,7 @@ RUN set -eux; \
     cp /src/mc/CREDITS /out/MC-CREDITS
 
 
-FROM --platform=linux/amd64 alpine:3.22.5@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce AS minio
+FROM --platform=linux/amd64 alpine:3.22.6@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8 AS minio
 
 ARG HBCB_MINIO_RECIPE_ID=unmeasured
 
@@ -88,10 +88,10 @@ LABEL org.opencontainers.image.title="MinIO local compatibility fixture" \
       org.opencontainers.image.revision="7aac2a2c5b7c882e68c1ce017d8256be2feea27f" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.version="final-community-20260212-hbcb.1" \
-      org.opencontainers.image.base.name="alpine:3.22.5" \
-      org.opencontainers.image.base.digest="sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce" \
+      org.opencontainers.image.base.name="alpine:3.22.6" \
+      org.opencontainers.image.base.digest="sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8" \
       io.hbcb.mc-revision="77f82e18b5401a65958f1619df6ebb994634bd88" \
-      io.hbcb.security-modules="2026-08-12" \
+      io.hbcb.security-modules="2026-09-23" \
       io.hbcb.recipe-id="${HBCB_MINIO_RECIPE_ID}" \
       io.hbcb.scope="local-development-only"
 

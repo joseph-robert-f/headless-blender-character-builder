@@ -36,12 +36,12 @@ from fixture_gate_common import (
 ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = ROOT / "docker" / "postgres.Dockerfile"
 EXPECTED_BASE_IMAGE = (
-    "postgres:16.14-alpine3.24@sha256:"
-    "57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777"
+    "postgres:16.15-alpine3.24@sha256:"
+    "721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
 )
-EXPECTED_RECIPE_ID = "postgres-16.14-alpine3.24-gosu-free-v1"
-EXPECTED_VERSION = "16.14-alpine3.24-hbcb.1"
-EXPECTED_UPSTREAM_REVISION = "4f9ced003ba58a854656ba150d146243d27ae3ac"
+EXPECTED_RECIPE_ID = "postgres-16.15-alpine3.24-gosu-free-v1"
+EXPECTED_VERSION = "16.15-alpine3.24-hbcb.1"
+EXPECTED_UPSTREAM_REVISION = "9d15534160ade17f2b6c455a39ee967c49b1937d"
 EXPECTED_UPSTREAM_SOURCE = (
     "https://github.com/docker-library/postgres/tree/"
     + EXPECTED_UPSTREAM_REVISION
@@ -144,7 +144,8 @@ def _validate_image(document: Mapping[str, object], image: str) -> str:
     environment = config.get("Env")
     required_environment = {
         "PG_MAJOR=16",
-        "PG_VERSION=16.14",
+        "PG_VERSION=16.15",
+        "PG_SHA256=c1575341fa7bd40f5274ea465b34390f4dc64cdd0770af327005caaeb9f6b7ed",
         "PGDATA=/var/lib/postgresql/data",
         "DOCKER_PG_LLVM_DEPS=llvm21-dev \t\tclang21",
     }
@@ -168,7 +169,7 @@ def _validate_image(document: Mapping[str, object], image: str) -> str:
         "org.opencontainers.image.revision": EXPECTED_UPSTREAM_REVISION,
         "org.opencontainers.image.source": EXPECTED_UPSTREAM_SOURCE,
         "org.opencontainers.image.licenses": "PostgreSQL",
-        "org.opencontainers.image.base.name": "postgres:16.14-alpine3.24",
+        "org.opencontainers.image.base.name": "postgres:16.15-alpine3.24",
         "org.opencontainers.image.base.digest": "sha256:"
         + EXPECTED_BASE_IMAGE.rsplit("sha256:", 1)[1],
         "io.hbcb.postgres.recipe-id": EXPECTED_RECIPE_ID,
