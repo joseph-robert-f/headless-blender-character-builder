@@ -267,8 +267,8 @@ placeholder for a future published digest of the custom image. It is not a
 working deployment reference. This project is local-only for now. Do not
 replace the placeholder with the official Caddy digest or deploy the VPS stack
 until the custom image has a reviewed, published digest and the full scan has
-passed. A scan finding still requires an independent disposition review; a
-source rebuild does not approve a risk decision.
+passed. A scan finding still requires a documented, evidence-backed
+disposition; a source rebuild does not approve a risk decision.
 
 ### Manually reviewed inputs
 
