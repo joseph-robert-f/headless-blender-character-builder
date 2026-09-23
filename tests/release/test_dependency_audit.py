@@ -354,7 +354,7 @@ class DependencyAuditTests(unittest.TestCase):
             replace_once(
                 root,
                 "docker/service-test-requirements.lock",
-                "httpcore2==2.10.0",
+                "httpcore2==2.12.0",
                 "httpcore2==9.9.9",
             )
             report = audit_tool.run_audit(root, online=False)

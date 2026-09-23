@@ -304,7 +304,7 @@ class ReleaseWrapperTests(unittest.TestCase):
         test_lock = (ROOT / "docker" / "service-test-requirements.lock").read_text(
             encoding="utf-8"
         )
-        for package in ("httpcore2==2.10.0", "httpx2==2.10.0", "truststore==0.10.4"):
+        for package in ("httpcore2==2.12.0", "httpx2==2.12.0", "truststore==0.10.4"):
             self.assertIn(package, test_lock)
         self.assertEqual(test_lock.count("--hash=sha256:"), 3)
 

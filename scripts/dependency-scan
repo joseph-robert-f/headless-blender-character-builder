@@ -44,7 +44,10 @@ MAX_POLICY_BYTES = 1024 * 1024
 MAX_REGISTRY_MANIFEST_BYTES = 4 * 1024 * 1024
 MAX_DOCKER_INSPECT_BYTES = 4 * 1024 * 1024
 MAX_DOCKER_COMMAND_BYTES = 256 * 1024
-MAX_DOCKER_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
+# The Blender builder and its worker can exceed 2 GiB when Docker exports
+# their uncompressed layers. Keep the streaming archive bounded, but allow
+# the complete final images to reach the vulnerability scanner.
+MAX_DOCKER_ARCHIVE_BYTES = 5 * 1024 * 1024 * 1024
 MAX_DOCKER_ARCHIVE_MEMBERS = 20_000
 MAX_NORMALIZED_LAYER_MEMBERS = 500_000
 MAX_NORMALIZED_LAYER_BYTES = 20 * 1024 * 1024 * 1024

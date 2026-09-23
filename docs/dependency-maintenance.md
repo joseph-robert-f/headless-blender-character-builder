@@ -187,7 +187,7 @@ download_wheels "$lock_work/builder-wheels" 'jsonschema==4.26.0'
 download_wheels "$lock_work/runtime-wheels" \
   'async-timeout==5.0.1' 'fastapi==0.141.1' 'minio==7.2.20' \
   'psycopg[binary]==3.3.4' 'redis==8.1.0' 'uvicorn==0.52.1'
-download_wheels "$lock_work/service-test-wheels" 'httpx2==2.10.0'
+download_wheels "$lock_work/service-test-wheels" 'httpx2==2.12.0'
 
 ./scripts/dependency-lock-from-wheels \
   --wheels "$lock_work/builder-wheels" \

@@ -46,7 +46,7 @@ and `docker/test-requirements.lock`. Direct dependencies currently include:
 | redis-py | 8.1.0 | `MIT` |
 | Uvicorn | 0.52.1 | `BSD-3-Clause` |
 | jsonschema (test only) | 4.26.0 | `MIT` |
-| httpx2 / httpcore2 (test only) | 2.10.0 | `BSD-3-Clause` |
+| httpx2 / httpcore2 (test only) | 2.12.0 | `BSD-3-Clause` |
 | truststore (test only) | 0.10.4 | `MIT` |
 
 Transitive packages and their exact versions are listed in the lock files.
