@@ -242,7 +242,7 @@ class PortableProjectTests(PortableCase):
         before = snapshot(self.root)
         result = self.cli("review", "--project", self.root)
         self.assertEqual(result.returncode, 2, result.stdout)
-        self.assertIn("unverified", result.stdout.lower())
+        self.assertIn("Review backend not available:", result.stdout)
         self.assertEqual(before, snapshot(self.root))
 
     def test_portable_imports_do_not_need_unix_only_modules(self):

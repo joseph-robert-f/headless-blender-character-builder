@@ -132,7 +132,7 @@ const screenshots = [];
     assert.ok((await visible.innerText()).includes('Measured'));
     assert.ok((await visible.innerText()).includes('Expected'));
     assert.ok((await visible.innerText()).includes('Evidence'));
-    assert.ok((await visible.locator('.measurement-summary').innerText()).includes('allowed at most'));
+    assert.ok((await visible.locator('.measurement-summary').innerText()).includes('Maximum permitted movement:'));
   }
   await page.locator('#revision-title').scrollIntoViewIfNeeded();
   await snapshot('water-negative.png');
