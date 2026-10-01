@@ -76,7 +76,11 @@ def collect_notices(bundle):
             if ".dist-info/" in str(item) and any(part.lower().startswith(("license", "copying", "notice")) for part in item.parts):
                 source = Path(dist.locate_file(item))
                 if source.is_file():
-                    target = destination / "build-tools" / name / item.name
+                    if item.is_absolute() or ".." in item.parts:
+                        raise ValueError("Build-tool notice must have a normal package-relative path")
+                    # Vendored dependencies often repeat LICENSE basenames.
+                    # Keep the full metadata path so none silently overwrite.
+                    target = destination / "build-tools" / name / Path(*item.parts)
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source, target)
     shutil.copy2(ROOT / "packaging/runtime-notices.json", destination / "sources.json")
@@ -94,11 +98,19 @@ def native_inventory(bundle, work, target):
                     inputs[Path(entry[0]).name.lower()] = entry[1]
     excluded = []
     for path in sorted(bundle.rglob("*")):
-        if path.is_file() and not path.is_symlink() and re.fullmatch(r"(?:vcruntime|msvcp|concrt|ucrtbase)[a-z0-9_]*\.dll", path.name, re.I):
+        runtime = re.fullmatch(r"(?:vcruntime|msvcp|concrt|ucrtbase)[a-z0-9_]*\.dll", path.name, re.I)
+        api_set = re.fullmatch(r"(?:api|ext)-ms-win-[a-z0-9-]+\.dll", path.name, re.I)
+        if target == "windows-x64" and path.is_file() and not path.is_symlink() and (runtime or api_set):
+            # Microsoft documents API-set contract resolution as an OS-loader
+            # facility on current Windows. Do not redistribute collected stubs.
+            # https://learn.microsoft.com/en-us/windows/win32/apiindex/api-set-loader-operation
             excluded.append({"name": path.name, "sha256": sha256(path), "bundled": False,
-                             "reason": "Use the existing Microsoft runtime; no redistribution rights assumed"})
+                             "analysis_source": inputs.get(path.name.lower()),
+                             "reason": ("OS-provided Windows API-set contract; do not redistribute stubs" if api_set else
+                                        "Use the existing Microsoft runtime; no redistribution rights assumed")})
             path.unlink()
     rows = []
+    unmapped = []
     for path in sorted(bundle.rglob("*")):
         if path.is_symlink() or not path.is_file():
             continue
@@ -112,13 +124,25 @@ def native_inventory(bundle, work, target):
             component, notices = "zlib", ["licenses/zlib-LICENSE.txt"]
         elif name.endswith(".pyd") or ".cpython-" in name or name.startswith(("libpython", "python3")) or name == "python":
             component, notices = "CPython", ["licenses/CPython-LICENSE.txt", "licenses/CPython-incorporated-software.rst"]
+            # Static incorporated code is invisible to dynamic-library scans.
+            if name.startswith(("_md5", "_sha", "python3", "libpython")) or name == "python":
+                notices += ["licenses/CPython-hacl-NOTICES.txt", "licenses/Apache-2.0.txt"]
+            if name.startswith(("_blake2", "python3", "libpython")) or name == "python":
+                notices += ["licenses/CPython-blake2-NOTICES.txt", "licenses/CC0-1.0.txt"]
+            if name.startswith(("pyexpat", "python3", "libpython")) or name == "python":
+                notices += ["licenses/CPython-expat-COPYING.txt", "licenses/zlib-LICENSE.txt"]
         elif target == "linux-validation":
             component, notices = "Local Linux validation dependency (not a distributed target)", []
         else:
-            raise ValueError(f"Unmapped native component; inspect its provenance and license before distribution: {name}")
+            unmapped.append({"name": name, "sha256": sha256(path), "analysis_source": source})
+            continue
         rows.append({"file": path.relative_to(bundle).as_posix(), "sha256": sha256(path),
                      "component": component, "license_files": notices,
                      "analysis_source": source, "bundled": True})
+    if unmapped:
+        write_json(work.parent / "native-review-needed.json", {"unmapped": unmapped, "excluded": excluded})
+        raise ValueError("Unmapped native components; inspect provenance and licenses before distribution: " +
+                         ", ".join(row["name"] for row in unmapped))
     return rows, excluded
 
 
@@ -182,6 +206,16 @@ def main():
                   "signing": "No publisher signature or notarization; macOS ad-hoc loader signature only",
                   "changes": "Frozen Python module closure, relocated runtime and static reviewer; unused modules excluded; macOS arm64 thinning; Microsoft runtime not redistributed",
                   "excluded_modules": EXCLUDES, "native_components": native, "external_microsoft_runtime": excluded,
+                  "static_components": [
+                      {"component": "HACL* hash code and KaRaMeL support in CPython", "version": "bb3d0dc8d9d15a5cd51094d5b69e70aa09005ff0",
+                       "license_files": ["licenses/CPython-hacl-NOTICES.txt", "licenses/Apache-2.0.txt"]},
+                      {"component": "BLAKE2 in CPython", "version": "libb2 0.98.1 as vendored in CPython 3.13.16",
+                       "license_files": ["licenses/CPython-blake2-NOTICES.txt", "licenses/CC0-1.0.txt"]},
+                      {"component": "Expat in CPython", "version": "2.8.5", "license_files": ["licenses/CPython-expat-COPYING.txt"]},
+                      {"component": "mimalloc, Unicode and other incorporated CPython code", "version": "CPython 3.13.16 source notices",
+                       "license_files": ["licenses/CPython-incorporated-software.rst"]},
+                      {"component": "PyInstaller Windows bootloader zlib", "version": "1.3.2", "applicable": args.target == "windows-x64",
+                       "license_files": ["licenses/PyInstaller-zlib-LICENSE.txt"]}],
                   "system_libraries": "Provided by the target OS, not redistributed",
                   "runtime_network": "127.0.0.1 review server only; no downloads or provider calls"}
     write_json(bundle / "provenance.json", provenance)

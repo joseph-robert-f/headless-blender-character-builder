@@ -115,6 +115,14 @@ under `packaging/notices/`, with exact upstream URLs and hashes in
 also retained in each package. The exact project source is delivered alongside
 the executable inside the package, under GPL-3.0-or-later.
 
+The package also preserves exact CPython vendored HACL*/KaRaMeL, BLAKE2 and
+Expat notices, full Apache-2.0/CC0 texts, and the separate PyInstaller Windows
+bootloader zlib 1.3.2 notice. These statically incorporated components are
+recorded in provenance even when they do not appear as separate dynamic
+libraries. Vendored build-tool notice paths are preserved without basename
+collisions. CPython notice extraction is bound to the official 3.13.16 source
+archive SHA-256 and individual source-file hashes in the notice catalog.
+
 The native component inventory, hashes, runtime modifications, exclusions,
 runner/runtime provenance, and OS-provided prerequisites are recorded for each
 artifact. Unused TLS/ctypes/compression modules are excluded. Windows Microsoft

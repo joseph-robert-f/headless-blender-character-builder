@@ -1,0 +1,63 @@
+Notices retained from CPython 3.13.16 _blake2 vendored source.
+Source files are unmodified upstream; this file collects their license comments.
+Full Apache-2.0 and CC0 texts are provided separately where applicable.
+
+Sources:
+Modules/_blake2/blake2b_impl.c
+Modules/_blake2/blake2module.c
+Modules/_blake2/blake2s_impl.c
+
+/*
+ * Written in 2013 by Dmitry Chestnykh <dmitry@codingrobots.com>
+ * Modified for CPython by Christian Heimes <christian@python.org>
+ *
+ * To the extent possible under law, the author have dedicated all
+ * copyright and related and neighboring rights to this software to
+ * the public domain worldwide. This software is distributed without
+ * any warranty. http://creativecommons.org/publicdomain/zero/1.0/
+ */
+
+Sources:
+Modules/_blake2/impl/blake2-config.h
+Modules/_blake2/impl/blake2-impl.h
+Modules/_blake2/impl/blake2.h
+Modules/_blake2/impl/blake2b-load-sse2.h
+Modules/_blake2/impl/blake2b-load-sse41.h
+Modules/_blake2/impl/blake2b-round.h
+Modules/_blake2/impl/blake2b.c
+Modules/_blake2/impl/blake2s-load-sse2.h
+Modules/_blake2/impl/blake2s-load-sse41.h
+Modules/_blake2/impl/blake2s-load-xop.h
+Modules/_blake2/impl/blake2s-round.h
+Modules/_blake2/impl/blake2s.c
+
+/*
+   BLAKE2 reference source code package - optimized C implementations
+
+   Written in 2012 by Samuel Neves <sneves@dei.uc.pt>
+
+   To the extent possible under law, the author(s) have dedicated all copyright
+   and related and neighboring rights to this software to the public domain
+   worldwide. This software is distributed without any warranty.
+
+   You should have received a copy of the CC0 Public Domain Dedication along with
+   this software. If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
+*/
+
+Sources:
+Modules/_blake2/impl/blake2b-ref.c
+Modules/_blake2/impl/blake2s-ref.c
+
+/*
+   BLAKE2 reference source code package - reference C implementations
+
+   Written in 2012 by Samuel Neves <sneves@dei.uc.pt>
+
+   To the extent possible under law, the author(s) have dedicated all copyright
+   and related and neighboring rights to this software to the public domain
+   worldwide. This software is distributed without any warranty.
+
+   You should have received a copy of the CC0 Public Domain Dedication along with
+   this software. If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
+*/
+

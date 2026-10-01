@@ -24,6 +24,202 @@
       "url": "https://raw.githubusercontent.com/python/cpython-source-deps/zlib-1.3.1/LICENSE",
       "component": "zlib 1.3.1",
       "sha256": "845efc77857d485d91fb3e0b884aaa929368c717ae8186b66fe1ed2495753243"
+    },
+    {
+      "file": "CPython-hacl-NOTICES.txt",
+      "url": "https://www.python.org/ftp/python/3.13.16/Python-3.13.16.tar.xz",
+      "component": "CPython 3.13.16 vendored _hacl",
+      "sha256": "540ceceb359cee6f027c31f6f2bd8711e55f44d8868559c6c23c74b89c2639ad",
+      "source_archive_sha256": "f4b1bfb3c79b5bb11b8d228a12504163b4c0dab4d679828d8f5f26b6cb6ab35d",
+      "extraction": "Distinct license/copyright C comments in first 6000 characters of vendored .c/.h files, excluding generated clinic wrappers",
+      "sources": [
+        {
+          "file": "Modules/_hacl/Hacl_Hash_MD5.c",
+          "sha256": "f71cf6a0e8f09354c2af2c785a1d36e0cba7613a589be01ca8a3d8478f4c8874"
+        },
+        {
+          "file": "Modules/_hacl/Hacl_Hash_MD5.h",
+          "sha256": "9a02e2a6e163515ea0228a859d5e55c1f57b11fae5908c42f9f9814ce9bca230"
+        },
+        {
+          "file": "Modules/_hacl/Hacl_Hash_SHA1.c",
+          "sha256": "5b29bd9951646861e0e19427be5d923a5bab7a4516824ccc068f696469195eec"
+        },
+        {
+          "file": "Modules/_hacl/Hacl_Hash_SHA1.h",
+          "sha256": "5640295c790d56b1b4df147d6a6c58803b1845cd7d93365bf7cc7b75ba3cacd5"
+        },
+        {
+          "file": "Modules/_hacl/Hacl_Hash_SHA2.c",
+          "sha256": "30638efb75c8b185bb09c3df6977e3f3c5d21a1e696218cf7ade6bc4d5201b31"
+        },
+        {
+          "file": "Modules/_hacl/Hacl_Hash_SHA2.h",
+          "sha256": "093d7693084af0999d2a13d207311d74b5bdfdc9c08447ed4a979e3f7505ae6b"
+        },
+        {
+          "file": "Modules/_hacl/Hacl_Hash_SHA3.c",
+          "sha256": "17c0db96d40d1849f02546d5f55428fa89b61b07748d5b5df45cec25c5f29c0f"
+        },
+        {
+          "file": "Modules/_hacl/Hacl_Hash_SHA3.h",
+          "sha256": "d8d4d14bbc3a561a4e590d9b18b326e6a8095efb12423edbd949cf3c00953621"
+        },
+        {
+          "file": "Modules/_hacl/Hacl_Streaming_Types.h",
+          "sha256": "26913613f3b4f8ffff0a3e211a5ebc849159094e5e11de0a31fcb95b6105b74c"
+        },
+        {
+          "file": "Modules/_hacl/include/krml/FStar_UInt128_Verified.h",
+          "sha256": "455e94f24a0900deda7e6e36f4714e4253d32cea077f97e23f90c569a717bc48"
+        },
+        {
+          "file": "Modules/_hacl/include/krml/FStar_UInt_8_16_32_64.h",
+          "sha256": "65decdb74c24049aa19430462a51219250cfc65d8c162778e42df88b3142fa42"
+        },
+        {
+          "file": "Modules/_hacl/include/krml/fstar_uint128_struct_endianness.h",
+          "sha256": "fe57e1bc5ce3224d106e36cb8829b5399c63a68a70b0ccd0c91d82a4565c8869"
+        },
+        {
+          "file": "Modules/_hacl/include/krml/internal/target.h",
+          "sha256": "d16a59f37a1d4982626870e370889eb9d332a9ad035661b8062f549fc734d061"
+        },
+        {
+          "file": "Modules/_hacl/include/krml/lowstar_endianness.h",
+          "sha256": "3734c7942bec9a434e16df069fa45bdcb84b130f14417bc5f7bfe8546272d9f5"
+        },
+        {
+          "file": "Modules/_hacl/include/krml/types.h",
+          "sha256": "de7444c345caa4c47902c4380500356a3ee7e199d2aab84fd8c4960410154f3d"
+        },
+        {
+          "file": "Modules/_hacl/internal/Hacl_Hash_MD5.h",
+          "sha256": "370d8ef9c48cb55472ece11e12eaf94c58118de3f5515b6df1c130b696597828"
+        },
+        {
+          "file": "Modules/_hacl/internal/Hacl_Hash_SHA1.h",
+          "sha256": "ab52c6092bdbbfc9884f841bf4824016792ffa96167577cbe0df00dd96f56a34"
+        },
+        {
+          "file": "Modules/_hacl/internal/Hacl_Hash_SHA2.h",
+          "sha256": "10e959a92b3288a6165a404c8fae2bbcd7fb00a9abbae2b7809fa55d6fe9068d"
+        },
+        {
+          "file": "Modules/_hacl/internal/Hacl_Hash_SHA3.h",
+          "sha256": "6853125de10d0f605e9bc3a3dbbd7254713709e9893cc3f69929ea8d3f254934"
+        },
+        {
+          "file": "Modules/_hacl/python_hacl_namespaces.h",
+          "sha256": "347dfdf856ed1e584d124d6709b51267598ea5b37c1a2e03beeb358c978beada"
+        }
+      ]
+    },
+    {
+      "file": "CPython-blake2-NOTICES.txt",
+      "url": "https://www.python.org/ftp/python/3.13.16/Python-3.13.16.tar.xz",
+      "component": "CPython 3.13.16 vendored _blake2",
+      "sha256": "d5d61daa6fa57a47ab5dc22cc4e2ea50e8ac2cb7695635819871ed802c57740f",
+      "source_archive_sha256": "f4b1bfb3c79b5bb11b8d228a12504163b4c0dab4d679828d8f5f26b6cb6ab35d",
+      "extraction": "Distinct license/copyright C comments in first 6000 characters of vendored .c/.h files, excluding generated clinic wrappers",
+      "sources": [
+        {
+          "file": "Modules/_blake2/blake2b_impl.c",
+          "sha256": "c2777ceb00e0b5dd326ba9c0636bd6becf3a6875b3259a37bc3edac8d896d756"
+        },
+        {
+          "file": "Modules/_blake2/blake2module.c",
+          "sha256": "8ff6d4d87a99d6d65def731fd93e14598a597ef921d7a26ee31f13adca21d344"
+        },
+        {
+          "file": "Modules/_blake2/blake2module.h",
+          "sha256": "c502104aaef1bdba0690fd058b2430b30b5e0a6892db18a78c79e5c4aa7cceee"
+        },
+        {
+          "file": "Modules/_blake2/blake2s_impl.c",
+          "sha256": "93c5261bec6faa6919fc746885c74ddb86272755f3e8c83d348d86968c3bf309"
+        },
+        {
+          "file": "Modules/_blake2/impl/blake2-config.h",
+          "sha256": "1eb919e885244e43cdf7b2104ad30dc9271513478c0026f6bfb4bad6e2f0ab42"
+        },
+        {
+          "file": "Modules/_blake2/impl/blake2-impl.h",
+          "sha256": "4277092643b289f1d36d32cf0fd2efc30ead8bdd99342e5da3b3609dd8ea7d86"
+        },
+        {
+          "file": "Modules/_blake2/impl/blake2.h",
+          "sha256": "2f6c9d0ecf70be474f2853b52394993625a32960e0a64eae147ef97a3a5c1460"
+        },
+        {
+          "file": "Modules/_blake2/impl/blake2b-load-sse2.h",
+          "sha256": "b392a6e7b43813a05609e994db5fc3552c5912bd482efc781daa0778eb56ab4e"
+        },
+        {
+          "file": "Modules/_blake2/impl/blake2b-load-sse41.h",
+          "sha256": "cc3072c92164142bf2f9dda4e6c08db61be68ec15a95442415e861090d08f6a2"
+        },
+        {
+          "file": "Modules/_blake2/impl/blake2b-ref.c",
+          "sha256": "07b257d44e9cc2d95d4911629c92138feafd16d63fef0a5fa7b38914dfd82349"
+        },
+        {
+          "file": "Modules/_blake2/impl/blake2b-round.h",
+          "sha256": "fa34a60c2d198a0585033f43fd4003f4ba279c9ebcabdf5d6650def0e6d1e914"
+        },
+        {
+          "file": "Modules/_blake2/impl/blake2b.c",
+          "sha256": "b932aa273b2504606a48895a50ff08c883f7a68a7e4aced5daa909c43348605a"
+        },
+        {
+          "file": "Modules/_blake2/impl/blake2s-load-sse2.h",
+          "sha256": "57f1ac6c09f4a50d95811529062220eab4f29cec3805bc6081dec00426c6df62"
+        },
+        {
+          "file": "Modules/_blake2/impl/blake2s-load-sse41.h",
+          "sha256": "ecc9e09adcbe098629eafd305596bed8d7004be1d83f326995def42bbde93b23"
+        },
+        {
+          "file": "Modules/_blake2/impl/blake2s-load-xop.h",
+          "sha256": "8bc95595cec4c50f5d70f2b330d3798de07cc784e8890791b3328890e602d5c5"
+        },
+        {
+          "file": "Modules/_blake2/impl/blake2s-ref.c",
+          "sha256": "9715c00d0f11587a139b07fa26678e6d26e44d3d4910b96158d158da2b022bfb"
+        },
+        {
+          "file": "Modules/_blake2/impl/blake2s-round.h",
+          "sha256": "65d90111c89c43bb18a9e1d1a4fdbd9f85bebd1ff00129335b85995d0f30ee8b"
+        },
+        {
+          "file": "Modules/_blake2/impl/blake2s.c",
+          "sha256": "25ec5dd5c79f916307358059fe9f633781f27df1c0e0962c4fcccdda1feb93a7"
+        }
+      ]
+    },
+    {
+      "file": "Apache-2.0.txt",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+      "component": "KaRaMeL and Apache-licensed runtime support",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "file": "PyInstaller-zlib-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/pyinstaller/pyinstaller/v6.22.3/bootloader/zlib/LICENSE",
+      "component": "PyInstaller 6.22.3 Windows bootloader static zlib 1.3.2",
+      "sha256": "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2"
+    },
+    {
+      "file": "CPython-expat-COPYING.txt",
+      "url": "https://raw.githubusercontent.com/python/cpython/v3.13.16/Modules/expat/COPYING",
+      "component": "CPython 3.13.16 bundled Expat 2.8.5",
+      "sha256": "31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87"
+    },
+    {
+      "file": "CC0-1.0.txt",
+      "url": "https://raw.githubusercontent.com/creativecommons/cc-legal-tools-data/main/COPYING",
+      "component": "BLAKE2 CC0 dedication; full legal text from Creative Commons official legal-tools repository",
+      "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
     }
   ]
 }

@@ -15,7 +15,8 @@ test is not evidence of Windows or Mac generation support.
 - `windows-x64`: native Windows x64 CI on Windows Server 2022. An existing
   Microsoft Visual C++ runtime may be required; the exact DLL names excluded
   from redistribution are recorded under `external_microsoft_runtime` in
-  `provenance.json`. No runtime is installed or downloaded by this preview.
+  `provenance.json`. OS-provided Windows API-set stubs are also omitted; the
+  Windows loader resolves these contracts. No runtime is installed or downloaded by this preview.
   CI does not establish behavior on a fresh consumer Windows installation.
 - `macos-arm64`: native Apple Silicon CI on macOS 15, with an arm64 executable.
   Intel Macs and older macOS versions are not validated by this build.
@@ -166,5 +167,6 @@ review and native smoke evidence; do not copy a new version into one file.
 - [CPython 3.13.16](https://www.python.org/downloads/release/python-31316/)
 - [Actions Python distribution provenance](https://github.com/actions/python-versions/blob/main/README.md)
 - [Microsoft runtime redistribution guidance](https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files?view=msvc-170)
+- [Microsoft API-set loader behavior](https://learn.microsoft.com/en-us/windows/win32/apiindex/api-set-loader-operation)
 - [Tauri sidecars](https://v2.tauri.app/develop/sidecar/) would still need native
   Python packaging; this bounded preview avoids a second launcher toolchain.
