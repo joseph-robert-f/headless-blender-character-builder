@@ -1,0 +1,66 @@
+{
+  "name": "Experimental modeling sandbox",
+  "on": {
+    "workflow_dispatch": {},
+    "pull_request": {
+      "paths": [
+        "experimental_modeling/**",
+        "tests/experimental_modeling/**",
+        ".github/workflows/experimental-modeling-sandbox.yml"
+      ]
+    }
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "concurrency": {
+    "group": "modeling-sandbox-${{ github.ref }}",
+    "cancel-in-progress": true
+  },
+  "jobs": {
+    "docker-boundary-and-benchmark": {
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 120,
+      "steps": [
+        {
+          "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+          "with": {
+            "persist-credentials": false
+          }
+        },
+        {
+          "name": "Build existing pinned builder image without publishing",
+          "run": "docker build --target builder -f docker/builder.Dockerfile -t modeling-sandbox-test ."
+        },
+        {
+          "name": "Resolve immutable local image identity",
+          "run": "echo \"MODELING_SANDBOX_IMAGE=$(docker image inspect --format '{{.Id}}' modeling-sandbox-test)\" >> \"$GITHUB_ENV\""
+        },
+        {
+          "name": "Fail-closed static tests and live container boundary smoke",
+          "run": "python3 -m unittest discover -s tests/experimental_modeling -v"
+        },
+        {
+          "name": "Full robot revisions through separate sandbox stages",
+          "run": "python3 tests/experimental_modeling/run_benchmark.py --store \"$RUNNER_TEMP/modeling-benchmark\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
+        },
+        {
+          "name": "Independent desk-creature revisions through sandbox stages",
+          "run": "python3 tests/experimental_modeling/run_desk_creature.py --store \"$RUNNER_TEMP/modeling-desk-benchmark\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
+        },
+        {
+          "name": "Retain bounded experimental evidence",
+          "if": "${{ always() }}",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "name": "modeling-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "${{ runner.temp }}/modeling-benchmark\n${{ runner.temp }}/modeling-desk-benchmark",
+            "if-no-files-found": "ignore",
+            "retention-days": 7,
+            "include-hidden-files": true
+          }
+        }
+      ]
+    }
+  }
+}

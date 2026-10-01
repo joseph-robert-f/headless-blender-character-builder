@@ -35,7 +35,7 @@ class ReleasePolicyTests(unittest.TestCase):
     def test_workflows_are_json_form_yaml_with_minimal_permissions(self) -> None:
         self.assertEqual(
             {path.name for path in WORKFLOWS},
-            {"ci.yml", "dependency-audit.yml", "release-candidate.yml"},
+            {"ci.yml", "dependency-audit.yml", "release-candidate.yml", "experimental-modeling-sandbox.yml"},
         )
         for path in WORKFLOWS:
             with self.subTest(path=path.name):
