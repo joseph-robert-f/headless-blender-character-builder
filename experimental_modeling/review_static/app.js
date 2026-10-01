@@ -26,9 +26,9 @@
     if (!revisions.length) { list.append(el('p', 'empty', 'No local revisions found. Build a candidate to begin a review.')); return; }
     for (const revision of revisions) {
       const button = el('button', 'revision-item'); button.type = 'button'; button.setAttribute('aria-current', String(revision.id === state.revisionId));
-      const failed = revision.status === 'rejected'; button.append(el('span', 'revision-dot' + (revision.machine_verified ? ' pass' : failed ? ' fail' : '')));
+      const failed = revision.status === 'rejected'; button.append(el('span', 'revision-dot' + (revision.machine_verified && !revision.evidence_unavailable ? ' pass' : failed ? ' fail' : '')));
       const label = el('span', 'revision-text'); label.append(el('strong', '', revision.id));
-      label.append(el('small', '', revision.human_accepted ? 'Human accepted' : revision.machine_verified ? 'Machine verified' : failed ? 'Checks failed' : 'Needs review'));
+      label.append(el('small', '', revision.evidence_unavailable ? 'Evidence unavailable' : revision.human_accepted ? 'Human accepted' : revision.machine_verified ? 'Machine verified' : failed ? 'Checks failed' : 'Needs review'));
       button.append(label); button.addEventListener('click', () => loadRevision(revision.id)); list.append(button);
     }
   }
@@ -130,10 +130,16 @@
     text('revision-title', `Revision ${id}`); text('revision-description', 'Loading inspection evidence…');
     try {
       const data = await api(`/api/revisions/${encodeURIComponent(id)}`); if (request !== state.request) return;
-      state.data = data; state.loading = false; renderState(data); renderRequirements(data.report); renderProvenance(data); renderArtifacts(data); setGeometry(data);
+      state.data = data; state.loading = false;
+      const cached = state.project?.revisions?.find(revision => revision.id === id);
+      if (cached) Object.assign(cached, data.revision, data.state, { evidence_unavailable: false });
+      renderHistory(); renderState(data); renderRequirements(data.report); renderProvenance(data); renderArtifacts(data); setGeometry(data);
       text('request-status', ''); text('accept-status', 'Acceptance records a human decision. It does not change the machine-check result.');
       $('request-prompt').value = '';
-    } catch (error) { if (request !== state.request) return; state.loading = false; state.data = null; updateControls(); notice(error.message); text('revision-description', 'Revision evidence could not be loaded'); setGeometry({}); }
+    } catch (error) { if (request !== state.request) return; state.loading = false; state.data = null;
+      const cached = state.project?.revisions?.find(revision => revision.id === id);
+      if (cached) cached.evidence_unavailable = true;
+      renderHistory(); updateControls(); notice(error.message); text('revision-description', 'Revision evidence could not be loaded'); setGeometry({}); }
   }
   function prepare(observation) {
     const parts = []; let totalTriangles = 0, totalVertices = 0, simplified = false;
