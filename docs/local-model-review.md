@@ -24,6 +24,8 @@ The app shows the independently evaluated model, keyboard/pointer orbit controls
 shared-camera before/after comparison, fixed inspector renders, requirement
 measurements and coverage, revision history, and GLB downloads. Its triangle
 preview is a simple engineering view, not a physically accurate material render.
+History follows recorded parent links rather than file modification times, so
+copying or unpacking evidence cannot scramble the revision sequence.
 Arrow keys rotate the focused model canvas; reset and comparison are buttons.
 
 Three states are deliberately separate:

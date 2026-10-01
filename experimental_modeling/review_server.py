@@ -155,7 +155,7 @@ class ReviewProject:
                     identifier(path.name)
                     response=self.revision(path.name)
                     meta=response["revision"]
-                    meta["created_at"]=datetime.fromtimestamp((path/"result.json").stat().st_mtime,timezone.utc).isoformat()
+                    meta["created_at"]=None  # Filesystem copy/extraction times are not revision times.
                     revisions.append(meta)
                 except (ValueError,OSError,KeyError,TypeError) as exc:
                     if re.fullmatch(r"[a-z][a-z0-9_-]{0,63}",path.name):
@@ -167,7 +167,16 @@ class ReviewProject:
             _,_,result_hash=verified_revision(self.store,value["revision"])
             if result_hash!=value.get("result_hash"):raise ValueError("last-good pointer integrity mismatch")
             latest=value["revision"]
-        revisions.sort(key=lambda r:(r.get("created_at",""),r["id"]))
+        by_id={revision["id"]:revision for revision in revisions}
+        def depth(revision,seen=()):
+            parent=revision.get("parent")
+            if parent not in by_id:return 0
+            if parent in seen:raise ValueError("cyclic revision history")
+            if len(seen)>256:raise ValueError("revision history exceeds review limit")
+            return 1+depth(by_id[parent],seen+(revision["id"],))
+        # The controller creates rejected siblings before an accepted child can
+        # advance the same parent. Causal order survives copying/unzipping stores.
+        revisions.sort(key=lambda r:(depth(r),r.get("status")=="accepted",r["id"]))
         return {"schema_version":1,"project_name":self.store.name,"csrf_token":self.token,"revisions":revisions,"latest_revision":latest,
                 "execution":"Review only: this program does not execute source code or call a language model","requests":self.requests()}
 

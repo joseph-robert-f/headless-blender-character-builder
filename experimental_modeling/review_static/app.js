@@ -59,6 +59,18 @@
     $('request-prompt').disabled = !hasIdentity; $('request-submit').disabled = !hasIdentity;
     text('accept-submit', accepted ? 'Acceptance recorded' : 'Accept this revision');
   }
+  function measurementSummary(row) {
+    const m = row.measured || {}, e = row.expected || {};
+    const number = value => Number.isFinite(value) ? new Intl.NumberFormat(undefined, { maximumSignificantDigits: 5 }).format(value) : 'not measured';
+    if (row.applicable === false) return 'Not applicable to this initial model; no earlier revision exists to compare.';
+    if (row.status === 'unknown') return row.evidence?.reason || 'This requirement has not been verified.';
+    if (row.kind === 'connected_path') return `${m.connected ? 'A path connects' : 'No path connects'} the selected regions. ${number(m.reachable_vertices || 0)} vertices are reachable; a connected path is required.`;
+    if (row.kind === 'clearance_path') return `Smallest sampled clearance: ${number(m.minimum_sampled_clearance)} m; required at least ${number(e.min_clearance)} m. ${m.blocked_segments?.length || 0} of ${number(m.segments)} path segments are blocked.`;
+    if (row.kind === 'preserved_region') return `Largest vertex movement: ${number(m.max_vertex_displacement)} m; allowed at most ${number(e.tolerance)} m. Protected surface and material comparison: ${m.contained_triangle_topology_equal && m.part_materials_equal ? 'unchanged' : 'changed'}.`;
+    if (row.kind === 'preserved_rays') return `Largest sampled surface movement: ${number(m.maximum_first_hit_displacement)} m; allowed at most ${number(e.tolerance)} m. ${m.missing_hit_rays?.length || 0} missing hits across ${number(m.rays)} rays.`;
+    if (row.kind === 'preserved_part') return `Geometry, transform and materials ${Object.values(m).every(Boolean) ? 'match' : 'do not all match'} the accepted parent.`;
+    return '';
+  }
   function renderRequirements(report) {
     const rows = Array.isArray(report?.requirements) ? report.requirements : [];
     text('requirement-count', rows.length); const list = $('requirements'); list.replaceChildren();
@@ -72,6 +84,7 @@
       const icon = el('span', `check-icon ${status}`, status === 'pass' ? '✓' : status === 'fail' ? '×' : '?'); icon.setAttribute('aria-label', status);
       heading.append(icon, el('span', '', row.title || humanize(row.id) || 'Requirement'), el('span', 'chevron', '›')); details.append(heading);
       const content = el('div', 'requirement-details');
+      const readable = measurementSummary(row); if (readable) content.append(el('p', 'measurement-summary', readable));
       for (const [label, value] of [['Measured', row.measured], ['Expected', row.expected], ['Evidence', row.evidence], ['Coverage', row.coverage]]) {
         if (value === undefined || value === null) continue;
         const line = el('div', 'evidence-row'); line.append(el('strong', '', label), el(typeof value === 'object' ? 'pre' : 'span', '', format(value))); content.append(line);
@@ -88,7 +101,7 @@
     text('revision-title', `Revision ${revision.id || state.revisionId}`);
     text('revision-description', revision.parent ? `Compared with ${revision.parent} · Inspection-backed model review` : 'Initial model · Inspection-backed model review');
     text('built-status', built ? 'Inspected geometry available' : 'No inspected geometry'); statusIcon('built-icon', built);
-    text('verified-status', verified ? 'Recorded checks passed' : revision.status === 'rejected' ? 'One or more checks failed' : 'Not established'); statusIcon('verified-icon', verified, revision.status === 'rejected');
+    text('verified-status', verified ? 'Required checks passed' : revision.status === 'rejected' ? 'One or more checks failed' : 'Not established'); statusIcon('verified-icon', verified, revision.status === 'rejected');
     text('accepted-status', accepted ? 'Human decision recorded' : 'Awaiting your decision'); statusIcon('accepted-icon', accepted);
     text('decision-title', accepted ? 'Acceptance recorded' : 'Ready for your review');
     text('decision-copy', accepted ? `Accepted${data.state.accepted_at ? ' ' + date(data.state.accepted_at) : ''}. This record is separate from machine verification.` : !verified || !hardPass ? 'Human acceptance is unavailable until machine verification is established and all required checks pass.' : 'Inspect the model and its evidence before recording your acceptance.');

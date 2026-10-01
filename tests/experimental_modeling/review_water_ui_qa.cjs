@@ -66,10 +66,11 @@ const screenshots = [];
   await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 90000 });
   await page.locator('#revision-title').filter({ hasText: 'Revision r2' }).waitFor({ timeout: 90000 });
   await page.locator('#geometry-stats').filter({ hasText: '2 parts' }).waitFor({ timeout: 90000 });
-  await page.locator('#verified-status').filter({ hasText: 'Recorded checks passed' }).waitFor();
+  await page.locator('#verified-status').filter({ hasText: 'Required checks passed' }).waitFor();
   assert.equal(await page.locator('#accepted-status').innerText(), 'Awaiting your decision');
   assert.equal(await page.locator('#accept-submit').isEnabled(), true);
   assert.equal(await page.locator('#part-list button').count(), 2);
+  assert.deepEqual(await page.locator('#revision-list .revision-text strong').allTextContents(), ['bad-body', 'r2', 'r1', 'r0']);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   const r2 = await revision('r2');
   assert.equal(r2.report.machine_verified, true);
@@ -80,6 +81,7 @@ const screenshots = [];
   const passage = await expand(page, water.title);
   assert.ok((await passage.innerText()).includes('Measured'));
   assert.ok((await passage.innerText()).includes('Expected'));
+  assert.ok((await passage.locator('.measurement-summary').innerText()).includes('required at least'));
   const image = await page.locator('#model-canvas').evaluate(canvas => canvas.toDataURL());
   await page.locator('#model-canvas').press('ArrowRight');
   await page.waitForFunction(before => document.getElementById('model-canvas').toDataURL() !== before, image);
@@ -98,7 +100,7 @@ const screenshots = [];
   assert.deepEqual(unknown.map(row => row.id).sort(), ['protected_body_rays', 'protected_body_region']);
   assert.ok(unknown.every(row => row.hard === true && row.applicable === false));
   assert.equal(r0.report.machine_verified, true);
-  assert.equal(await page.locator('#verified-status').innerText(), 'Recorded checks passed');
+  assert.equal(await page.locator('#verified-status').innerText(), 'Required checks passed');
   assert.equal(await page.locator('#accept-submit').isEnabled(), true, 'Non-applicable hard checks must not block initial acceptance');
   assert.equal(await page.locator('#compare-mode').isEnabled(), false);
   assert.equal(await page.locator('#requirement-summary .unknown').innerText(), '2 unknown');
@@ -130,6 +132,7 @@ const screenshots = [];
     assert.ok((await visible.innerText()).includes('Measured'));
     assert.ok((await visible.innerText()).includes('Expected'));
     assert.ok((await visible.innerText()).includes('Evidence'));
+    assert.ok((await visible.locator('.measurement-summary').innerText()).includes('allowed at most'));
   }
   await page.locator('#revision-title').scrollIntoViewIfNeeded();
   await snapshot('water-negative.png');
@@ -146,6 +149,8 @@ const screenshots = [];
   await phone.locator('#compare-mode').click();
   assert.equal(await phone.locator('#before-pane').isVisible(), true);
   assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  const sectionOrder = await phone.evaluate(() => ({ decision: document.querySelector('.accept-card').getBoundingClientRect().top, request: document.querySelector('.request-card').getBoundingClientRect().top, queue: document.querySelector('.queue-section').getBoundingClientRect().top }));
+  assert.ok(sectionOrder.decision < sectionOrder.request && sectionOrder.request < sectionOrder.queue, 'Review decision must precede next-edit request and queue on mobile');
   await phone.waitForFunction(() => [...document.images].every(img => img.complete && img.naturalWidth > 0));
   await snapshot('water-mobile.png', phone);
   assert.deepEqual(pageErrors, []);
@@ -160,7 +165,7 @@ const screenshots = [];
       negative_inspection_succeeded: true, negative_preservation_failed: failures.map(row => row.id),
       negative_machine_verified: false, negative_accept_disabled: true,
       measured_evidence_expanded: true, keyboard_orbit_changed_canvas: true,
-      desktop_mobile_no_horizontal_overflow: true
+      desktop_mobile_no_horizontal_overflow: true, mobile_decision_before_next_edit: true, causal_history_order: true, plain_measurement_summaries: true
     }, screenshots
   };
   fs.writeFileSync(path.join(output, 'water-summary.json'), JSON.stringify(summary, null, 2) + '\n');

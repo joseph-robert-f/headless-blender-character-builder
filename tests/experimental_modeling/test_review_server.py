@@ -13,7 +13,7 @@ from experimental_modeling.verification import make_report
 from experimental_modeling.review_server import ReviewProject, LocalReviewServer, Conflict
 
 
-def fixture(store, revision='r0', status='accepted'):
+def fixture(store, revision='r0', status='accepted', parent=None):
     root=store/'accepted'/revision;root.mkdir(parents=True)
     spec={'schema_version':1,'requirements':[]}
     if not (store/'requirements.json').exists():write_json(store/'requirements.json',spec)
@@ -21,9 +21,9 @@ def fixture(store, revision='r0', status='accepted'):
     obs={'parts':{'body':{'world_vertices':[[0,0,0],[1,0,0],[0,1,0]],'triangle_indices':[[0,1,2]],'edge_indices':[[0,1],[1,2],[2,0]],'geometry_hash':'a','transform_hash':'b','material_hash':'c'}}}
     (root/'inspection').mkdir();write_json(root/'inspection/observation.json',obs)
     write_json(root/'requirements.json',spec);write_json(root/'policy.json',policy)
-    result={'schema_version':1,'revision':revision,'parent':None,'status':status,'jobs':{job:{'exit_code':0} for job in ('author','inspect','roundtrip','reopen')},'provenance_verified':True,
+    result={'schema_version':1,'revision':revision,'parent':parent,'parent_result_hash':digest(store/'accepted'/parent/'result.json') if parent else None,'status':status,'jobs':{job:{'exit_code':0} for job in ('author','inspect','roundtrip','reopen')},'provenance_verified':True,
             'requirements_hash':canonical_hash(spec),'policy_hash':digest(root/'policy.json'),'runtime_hash':'unit-fixture','source_files':{},'failures':[]}
-    write_json(root/'verification.json',make_report(result,Policy.parse(policy),obs,None,RequirementSet.parse(spec)))
+    write_json(root/'verification.json',make_report(result,Policy.parse(policy),obs,json.loads((store/'accepted'/parent/'inspection/observation.json').read_text()) if parent else None,RequirementSet.parse(spec)))
     result['artifacts']={str(p.relative_to(root)):digest(p) for p in root.rglob('*') if p.is_file()}
     write_json(root/'result.json',result)
     if not (store/'last_good.json').exists():write_json(store/'last_good.json',{'revision':revision,'result_hash':digest(root/'result.json')})
@@ -99,3 +99,15 @@ class LocalReviewTests(unittest.TestCase):
         with (self.root/'result.json').open('a') as stream:stream.write(' ')
         self.assertEqual(self.request('/api/revisions/r0')[0],409)
         self.assertEqual(self.request('/api/revisions/r0/accept','POST',self.payload())[0],400)
+
+    def test_revision_order_uses_parent_links_not_copied_file_times(self):
+        import os
+        first=fixture(self.store,'r1',parent='r0')
+        second=fixture(self.store,'r2',parent='r1')
+        failed=fixture(self.store,'bad-body','rejected',parent='r2')
+        (self.store/'last_good.json').write_text(json.dumps({'revision':'r2','result_hash':digest(second/'result.json')}))
+        for path,stamp in ((self.root,9000),(first,2000),(second,7000),(failed,1000)):
+            os.utime(path/'result.json',(stamp,stamp))
+        project=self.project.project()
+        self.assertEqual([r['id'] for r in project['revisions']],['r0','r1','r2','bad-body'])
+        self.assertEqual(project['latest_revision'],'r2')
