@@ -37,7 +37,7 @@ def verified_revision(store: Path, revision: str):
         raise ValueError("invalid revision result")
     manifest=result.get("artifacts")
     if not isinstance(manifest,dict):raise ValueError("missing artifact manifest")
-    actual={str(p.relative_to(directory)):digest(p) for p in regular_tree(directory) if p!=directory/"result.json"}
+    actual={p.relative_to(directory).as_posix():digest(p) for p in regular_tree(directory) if p!=directory/"result.json"}
     if actual!=manifest:raise ValueError("artifact integrity mismatch")
     result_hash=digest(directory/"result.json")
     pointer=store/"last_good.json"
@@ -66,7 +66,14 @@ def accepted_bindings(store):
 
 
 class ReviewProject:
-    def __init__(self, store: Path):
+    def __init__(self, store: Path, name: str | None = None, read_only: bool | None = None):
+        if name is not None and (not isinstance(name, str) or not 1 <= len(name.strip()) <= 80 or any(ord(c) < 32 for c in name)):
+            raise ValueError("project name must be 1–80 printable characters")
+        self.name = name
+        if read_only is not None and type(read_only) is not bool:
+            raise ValueError("read_only must be a boolean")
+        self.read_only = os.name == "nt" or read_only is True
+        self.read_only_reason = ("Read-only review on Windows: durable decision/request writes are not implemented yet. Existing evidence can be inspected and downloaded." if os.name == "nt" else "Read-only review: recording acceptance and change requests is disabled.") if self.read_only else ""
         self.store=safe_path(store)
         if not self.store.is_dir():raise ValueError("review requires an existing local project store")
         self.token=secrets.token_urlsafe(32)
@@ -74,9 +81,12 @@ class ReviewProject:
         self._reports={}
         self.metadata=self.store/"review"
         safe_path(self.metadata)
-        self.metadata.mkdir(exist_ok=True, mode=0o700)
+        if not self.read_only:
+            self.metadata.mkdir(exist_ok=True, mode=0o700)
         for name in ("acceptances","requests"):
-            safe_path(self.metadata/name);(self.metadata/name).mkdir(exist_ok=True, mode=0o700)
+            safe_path(self.metadata/name)
+            if not self.read_only:
+                (self.metadata/name).mkdir(exist_ok=True, mode=0o700)
 
     def state(self, revision, result_hash):
         path=safe_path(self.metadata/"acceptances"/(revision+".json"))
@@ -177,7 +187,7 @@ class ReviewProject:
         # The controller creates rejected siblings before an accepted child can
         # advance the same parent. Causal order survives copying/unzipping stores.
         revisions.sort(key=lambda r:(depth(r),r.get("status")=="accepted",r["id"]))
-        return {"schema_version":1,"project_name":self.store.name,"csrf_token":self.token,"revisions":revisions,"latest_revision":latest,
+        return {"schema_version":1,"project_name":self.name or self.store.name,"read_only":self.read_only,"read_only_reason":self.read_only_reason,"csrf_token":self.token,"revisions":revisions,"latest_revision":latest,
                 "execution":"Review only: this program does not execute source code or call a language model","requests":self.requests()}
 
     def requests(self):
@@ -190,6 +200,7 @@ class ReviewProject:
         return sorted(result,key=lambda r:r["created_at"])[-50:]
 
     def accept(self, revision, payload):
+        if self.read_only:raise PermissionError(self.read_only_reason)
         if set(payload)!={"csrf_token","expected_result_hash","notes"}:raise ValueError("unexpected acceptance fields")
         expected=payload["expected_result_hash"];notes=payload["notes"]
         if not isinstance(expected,str) or not RESULT_HASH.fullmatch(expected):raise ValueError("invalid result hash")
@@ -207,6 +218,7 @@ class ReviewProject:
             return state
 
     def request(self,payload):
+        if self.read_only:raise PermissionError(self.read_only_reason)
         if set(payload)!={"csrf_token","revision_id","expected_result_hash","prompt"}:raise ValueError("unexpected revision request fields")
         revision=identifier(payload["revision_id"]);expected=payload["expected_result_hash"];prompt=payload["prompt"]
         if not isinstance(expected,str) or not RESULT_HASH.fullmatch(expected):raise ValueError("invalid result hash")
@@ -306,11 +318,11 @@ class ReviewHandler(BaseHTTPRequestHandler):
         except (ValueError,OSError,KeyError,TypeError) as exc:self.json(400,{"error":str(exc)[:300]})
 
 
-def serve(store, port=0):
+def serve(store, port=0, read_only=None):
     if not 0<=port<=65535:raise ValueError("port must be 0..65535")
-    server=LocalReviewServer(ReviewProject(store),port)
+    server=LocalReviewServer(ReviewProject(store,read_only=read_only),port)
     print(f"Local model review: {server.origin}",flush=True)
-    print("Review only. Revision requests are saved, not executed. Press Ctrl-C to stop.",flush=True)
+    print(server.project.read_only_reason or "Review only. Revision requests are saved, not executed. Press Ctrl-C to stop.",flush=True)
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:server.server_close()
@@ -318,7 +330,8 @@ def serve(store, port=0):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--store',type=Path,required=True);parser.add_argument('--port',type=int,default=0)
-    args=parser.parse_args();serve(args.store,args.port)
+    parser.add_argument('--read-only',action='store_true',help='Inspect evidence without recording decisions or requests')
+    args=parser.parse_args();serve(args.store,args.port,read_only=args.read_only)
 
 
 if __name__=='__main__':main()

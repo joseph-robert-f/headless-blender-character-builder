@@ -20,6 +20,13 @@ neither Blender nor Node to view existing evidence. It requires no CDN, remote
 account, browser extension or internet upload. No network-facing deployment is
 part of this feature.
 
+The [project launcher](local-project-launcher.md) adds candidate cross-platform
+review. Windows currently forces an intermediate read-only mode, with a visible
+reason and disabled acceptance/request controls. It never writes review metadata;
+existing decisions and evidence remain inspectable. `--read-only` on the direct
+review-server CLI allows the same mode on POSIX. This is not final Windows app
+support or a generated-code execution boundary.
+
 The app shows the independently evaluated model, keyboard/pointer orbit controls,
 shared-camera before/after comparison, fixed inspector renders, requirement
 measurements and coverage, revision history, and GLB downloads. Its triangle

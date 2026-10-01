@@ -19,6 +19,8 @@ FIXTURE_FILES = (
     ".github/workflows/ci.yml",
     ".github/workflows/dependency-audit.yml",
     ".github/workflows/release-candidate.yml",
+    ".github/workflows/experimental-modeling-sandbox.yml",
+    ".github/workflows/experimental-project-platforms.yml",
     "THIRD_PARTY_NOTICES.md",
     "compose.yaml",
     "deploy/vps/compose.yaml",

@@ -8,14 +8,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from .platform_io import safe_path
+
 ID = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
 MAX_JSON = 4 * 1024 * 1024
 
 
 def read_json(path: Path) -> Any:
+    path = safe_path(path)
     if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_JSON:
         raise ValueError("JSON must be a bounded regular non-symlink file")
-    return json.loads(path.read_text(), parse_constant=lambda x: (_ for _ in ()).throw(ValueError(x)))
+    return json.loads(path.read_text(encoding="utf-8"), parse_constant=lambda x: (_ for _ in ()).throw(ValueError(x)))
 
 
 def identifier(value: Any) -> str:

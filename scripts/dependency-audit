@@ -61,6 +61,8 @@ EXPECTED_MANUAL_REVIEW_FILES = {
         ".github/workflows/ci.yml",
         ".github/workflows/dependency-audit.yml",
         ".github/workflows/release-candidate.yml",
+        ".github/workflows/experimental-modeling-sandbox.yml",
+        ".github/workflows/experimental-project-platforms.yml",
     },
     "minio-fixture": {
         "THIRD_PARTY_NOTICES.md",

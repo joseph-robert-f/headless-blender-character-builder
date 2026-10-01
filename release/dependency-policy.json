@@ -130,7 +130,9 @@
       "files": [
         ".github/workflows/ci.yml",
         ".github/workflows/dependency-audit.yml",
-        ".github/workflows/release-candidate.yml"
+        ".github/workflows/release-candidate.yml",
+        ".github/workflows/experimental-modeling-sandbox.yml",
+        ".github/workflows/experimental-project-platforms.yml"
       ],
       "id": "github-actions",
       "name": "GitHub Actions and hosted runners",

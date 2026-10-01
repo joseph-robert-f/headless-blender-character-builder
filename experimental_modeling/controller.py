@@ -1,12 +1,10 @@
 """Trusted development controller. This is NOT an untrusted-code sandbox."""
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
-import resource
 import shutil
 import signal
 import subprocess
@@ -17,6 +15,7 @@ from .contracts import MAX_JSON, Policy, identifier, read_json
 from .acceptance import check
 from .requirements import RequirementSet, canonical_hash, evaluate
 from .verification import make_report
+from .platform_io import exclusive_lock, is_redirected, safe_path as portable_safe_path
 
 MAX_BUNDLE = 16 * 1024 * 1024
 MAX_ATTEMPT = 512 * 1024 * 1024
@@ -30,7 +29,7 @@ def digest(path: Path) -> str:
 
 def write_json(path: Path, value: object) -> None:
     payload = json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n"
-    with path.open("x") as stream:
+    with path.open("x", encoding="utf-8", newline="\n") as stream:
         stream.write(payload)
         stream.flush()
         os.fsync(stream.fileno())
@@ -42,7 +41,7 @@ def regular_tree(root: Path, max_bytes: int = MAX_ATTEMPT) -> list[Path]:
     for directory, dirs, names in os.walk(root, followlinks=False):
         for name in dirs + names:
             path = Path(directory) / name
-            if path.is_symlink(): raise ValueError("symlinks are forbidden in bundles/artifacts")
+            if is_redirected(path): raise ValueError("symlinks/reparse points are forbidden in bundles/artifacts")
             if path.is_dir(): continue
             if not path.is_file(): raise ValueError("nonregular artifact")
             size += path.stat().st_size
@@ -117,10 +116,7 @@ def verify_accepted(directory: Path, expected_hash: str) -> dict:
 
 
 def safe_path(path: Path) -> Path:
-    path = path.absolute()
-    for component in (path, *path.parents):
-        if component.is_symlink(): raise ValueError("symlink path component")
-    return path.resolve()
+    return portable_safe_path(path)
 
 
 def snapshot(source: Path, target: Path) -> dict[str, str]:
@@ -143,7 +139,10 @@ def snapshot(source: Path, target: Path) -> dict[str, str]:
 
 def run_job(command: list[str], cwd: Path, log: Path, timeout: int = 120, budget_root: Path | None = None) -> dict:
     """Separate bounded process; deliberately makes no sandbox claim."""
+    if os.name == "nt":
+        raise RuntimeError("SOURCE_EXECUTION_UNAVAILABLE: Windows process-tree containment is not implemented")
     def limits():
+        import resource  # Native source execution remains POSIX-only.
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         resource.setrlimit(resource.RLIMIT_FSIZE, (256 * 1024 * 1024,) * 2)
         resource.setrlimit(resource.RLIMIT_AS, (8 * 1024**3,) * 2)
@@ -179,19 +178,18 @@ def run_job(command: list[str], cwd: Path, log: Path, timeout: int = 120, budget
 
 @contextmanager
 def store_lock(store: Path):
-    lock = store / ".lock"
-    fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    # Keep the same .lock identity and POSIX flock behavior as existing stores.
+    with exclusive_lock(store / ".lock"):
         yield
-    finally:
-        os.close(fd)
 
 
 def build(*, source: Path, params: Path, policy_path: Path, store: Path, revision: str,
           parent: str | None = None, blender: str = "blender", trusted_reviewed_source: bool = False,
-          renders: bool = True, intent: str = "", sandbox_image: str | None = None, requirements_path: Path | None = None) -> dict:
+          renders: bool = True, intent: str = "", sandbox_image: str | None = None, requirements_path: Path | None = None,
+          docker_executable: Path | None = None, docker_socket: Path = Path("/var/run/docker.sock")) -> dict:
     # Fail before reading/importing/executing author code. No implicit native fallback.
+    if os.name == "nt":
+        raise RuntimeError("SOURCE_EXECUTION_UNAVAILABLE: Windows builds are not implemented; review is read-only")
     if trusted_reviewed_source and sandbox_image:
         raise ValueError("choose native reviewed mode OR sandbox image, not both")
     if not trusted_reviewed_source and sandbox_image is None:
@@ -213,7 +211,7 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
     backend = None
     if sandbox_image is not None:
         from .sandbox import DockerSandbox
-        backend = DockerSandbox(sandbox_image)
+        backend = DockerSandbox(sandbox_image, socket=docker_socket, docker_executable=docker_executable)
         backend.verify_runtime()  # Mandatory fail-closed preflight, no native fallback.
         binary = backend.blender
     else:
