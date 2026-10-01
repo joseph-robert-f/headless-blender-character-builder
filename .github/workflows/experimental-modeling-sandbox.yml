@@ -56,7 +56,8 @@
             "name": "modeling-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
             "path": "${{ runner.temp }}/modeling-benchmark\n${{ runner.temp }}/modeling-desk-benchmark",
             "if-no-files-found": "ignore",
-            "retention-days": 7
+            "retention-days": 7,
+            "include-hidden-files": true
           }
         }
       ]

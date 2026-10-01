@@ -126,6 +126,14 @@ class SandboxTests(unittest.TestCase):
             self.assertEqual(log.stat().st_size, 100)
 
 
+    def test_ci_archive_includes_hashed_hidden_runtime_files(self):
+        root=Path(__file__).resolve().parents[2]
+        workflow=json.loads((root/'.github/workflows/experimental-modeling-sandbox.yml').read_text())
+        archive=workflow['jobs']['docker-boundary-and-benchmark']['steps'][-1]
+        self.assertTrue(archive['with']['include-hidden-files'])
+        self.assertEqual(set(archive['with']['path'].splitlines()), {'${{ runner.temp }}/modeling-benchmark','${{ runner.temp }}/modeling-desk-benchmark'})
+
+
 @unittest.skipUnless(os.environ.get('MODELING_SANDBOX_IMAGE'), 'NOT VERIFIED: opt-in Linux Docker runtime required')
 class DockerRuntimeSmoke(unittest.TestCase):
     def test_container_boundary_and_export(self):
