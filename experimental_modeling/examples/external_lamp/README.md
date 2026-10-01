@@ -11,7 +11,7 @@ Its identity is `55a3819fc372c6a56345739bb7f706485f6a87c5ff98f1ec0f1e1948e52441a
 The adjacent `AUTHORING.md` is the exact hash-bound author contract.
 Do not edit that historical handoff in place.
 
-The source has these original hashes:
+The first author version had these source hashes:
 
 - `proposal/source/builder.py`: `8d31b470a31f6a18e90fbcdefe3ecb49c08f1cfc111fffc5d02f1f87a1932cc6`
 - `proposal/source/geometry.py`: `4104a88f029ea1ced220f0aa1ba3633957e7ed7e9d6210e7bfd1a8ede857cfcb`
@@ -58,9 +58,9 @@ An external assistant prepared the following proposals from operator requests:
    Keep the narrower stem and the 290 mm height.
 
 The `revisions/` directories preserve the exact proposal files, prompts, and selected policies.
-The height proposal uses the original source without changes.
-The narrower-stem source changes only its radius declaration.
-Its `geometry.py` hash is `e908a625793974e00b9776f31242ab4b72e73bd611f1a0937b055c1f42b1b277`.
+The height proposal uses the same source as the current initial model.
+The narrower-stem source changes only its radius declaration relative to the corrected initial source.
+Its current `geometry.py` hash is `001f2d0690b374745e61001da90b27afd7589e4c62b88c1d526d2b6f65fceadb`.
 The negative and repair proposals use those same source bytes.
 
 `revisions/height/recorded-request.json` preserves the historical request metadata.
@@ -80,3 +80,24 @@ It compares complete base fingerprints and records the measured height and stem 
 All stages use the normal request bridge and isolated controller.
 The separate lamp artifact contains the complete result history and inspector renders.
 Read the exact-commit CI results before reporting that this sequence passed.
+
+
+## Author correction after verification
+
+The first four-stage replay stopped at the height refinement.
+The light had the correct displacement, material, vertices, and oriented-face multiset.
+But its face sequence differed at 416 of 512 positions.
+The strict translation check rejected that sequence change and kept the initial last-good model.
+Read the [failed CI record](https://github.com/joseph-robert-f/headless-blender-character-builder/actions/runs/36939197597).
+
+The external source author then corrected the light construction.
+The correction preserves the vertex list and oriented polygons.
+It rotates each face list to its smallest first vertex, then sorts the face lists.
+It rebuilds the light mesh with those ordered faces and the same material.
+No coordinate, policy, requirement, tolerance, or verifier change is part of this correction.
+
+The current initial and height `geometry.py` hash is `be64750eba590d2235fc90d26c811cc6232606999c4a53de3e0c27d99b43f1b6`.
+The builder module remains unchanged.
+The replay uses the corrected source consistently for a new initial model and its refinements.
+The original source and failed sequence remain in commit `0c18620807f227540579c66cd1867d1b2faf9bc7` and its CI evidence.
+The historical height request remains a record of its original baseline, not permission to change that baseline silently.

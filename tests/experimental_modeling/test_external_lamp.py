@@ -19,7 +19,7 @@ class RecordedAuthorTests(unittest.TestCase):
         changed = (EXAMPLE / "revisions/slim-repair/proposal/source/geometry.py").read_text()
         self.assertEqual(original.replace("steps, sides, radius = 40, 16, 0.005", "steps, sides, radius = 40, 16, 0.004"), changed)
 
-    def test_original_source_is_identical_in_height_proposal(self):
+    def test_corrected_initial_source_is_identical_in_height_proposal(self):
         for name in SOURCE_HASHES:
             self.assertEqual((EXAMPLE / "proposal/source" / name).read_bytes(),
                 (EXAMPLE / "revisions/height/proposal/source" / name).read_bytes())

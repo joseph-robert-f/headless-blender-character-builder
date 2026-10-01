@@ -99,4 +99,21 @@ def light(height, surface):
     obj = bpy.context.object
     obj.scale = (0.015, 0.015, 0.010)
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-    return finish(obj, 'light', surface)
+    obj = finish(obj, 'light', surface)
+    # Preserve oriented connectivity with a deterministic face-list order.
+    # Translation checks compare that order, not only the face multiset.
+    vertices = [tuple(vertex.co) for vertex in obj.data.vertices]
+    faces = []
+    for polygon in obj.data.polygons:
+        indices = tuple(polygon.vertices)
+        start = indices.index(min(indices))
+        faces.append(indices[start:] + indices[:start])
+    faces.sort()
+    previous = obj.data
+    ordered = bpy.data.meshes.new('light-ordered-mesh')
+    ordered.from_pydata(vertices, [], faces)
+    ordered.materials.append(surface)
+    ordered.update()
+    obj.data = ordered
+    bpy.data.meshes.remove(previous)
+    return obj

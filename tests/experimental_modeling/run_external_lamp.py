@@ -22,8 +22,8 @@ from experimental_modeling.runtime import RuntimeSelection
 
 EXAMPLE = ROOT / "experimental_modeling/examples/external_lamp"
 SOURCE_HASHES = {"builder.py": "8d31b470a31f6a18e90fbcdefe3ecb49c08f1cfc111fffc5d02f1f87a1932cc6",
-                 "geometry.py": "4104a88f029ea1ced220f0aa1ba3633957e7ed7e9d6210e7bfd1a8ede857cfcb"}
-SLIM_HASHES = SOURCE_HASHES | {"geometry.py": "e908a625793974e00b9776f31242ab4b72e73bd611f1a0937b055c1f42b1b277"}
+                 "geometry.py": "be64750eba590d2235fc90d26c811cc6232606999c4a53de3e0c27d99b43f1b6"}
+SLIM_HASHES = SOURCE_HASHES | {"geometry.py": "001f2d0690b374745e61001da90b27afd7589e4c62b88c1d526d2b6f65fceadb"}
 REQUEST_ID = "55a3819fc372c6a56345739bb7f706485f6a87c5ff98f1ec0f1e1948e52441a7"
 HEIGHT_REQUEST_ID = "6b7702474c63f5e28409826650628dc775995719b216f2ec3188a28eebd88759"
 
