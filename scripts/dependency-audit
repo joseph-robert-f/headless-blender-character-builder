@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check dependency consistency offline and upstream status on demand."""
+"""Do an offline dependency agreement check. Use --online to get the upstream status."""
 
 from __future__ import annotations
 
@@ -143,7 +143,7 @@ def normalize_name(value: str) -> str:
 def repository_path(root: Path, relative: str) -> Path:
     candidate = Path(relative)
     if candidate.is_absolute() or ".." in candidate.parts:
-        raise AuditInputError("dependency policy contains an unsafe path")
+        raise AuditInputError("dependency policy path is not safe")
     resolved_root = root.resolve()
     resolved = (resolved_root / candidate).resolve()
     try:
@@ -151,7 +151,7 @@ def repository_path(root: Path, relative: str) -> Path:
     except ValueError:
         raise AuditInputError("dependency policy path escapes the repository") from None
     if not resolved.is_file():
-        raise AuditInputError("required dependency input is unavailable: " + relative)
+        raise AuditInputError("required dependency input is not available: " + relative)
     return resolved
 
 
@@ -159,14 +159,14 @@ def read_text(root: Path, relative: str) -> str:
     try:
         return repository_path(root, relative).read_text(encoding="utf-8")
     except UnicodeError:
-        raise AuditInputError("dependency input is not valid UTF-8: " + relative) from None
+        raise AuditInputError("dependency input is not correct UTF-8: " + relative) from None
 
 
 def load_policy(root: Path) -> Mapping[str, object]:
     try:
         document = json.loads(read_text(root, str(POLICY_PATH)))
     except ValueError:
-        raise AuditInputError("dependency policy is not valid JSON") from None
+        raise AuditInputError("dependency policy is incorrect JSON") from None
     expected = {
         "compose_images",
         "docker_base",
@@ -202,7 +202,7 @@ def validate_policy_identifiers(policy: Mapping[str, object]) -> None:
             identifier = raw.get("id")
             if not isinstance(identifier, str) or POLICY_ID.fullmatch(identifier) is None:
                 raise AuditInputError(
-                    "%s policy identifier is unsafe; expected %s"
+                    "%s policy identifier is not safe. The value must be %s"
                     % (label, POLICY_ID.pattern)
                 )
             if identifier in local:
@@ -280,7 +280,7 @@ def parse_toml_string_array(text: str, table: str, key: str) -> List[str]:
         try:
             return [json.loads(item) for item in strings]
         except ValueError:
-            raise AuditInputError("invalid quoted dependency: %s.%s" % (table, key)) from None
+            raise AuditInputError("incorrect quoted dependency: %s.%s" % (table, key)) from None
     raise AuditInputError("dependency array is missing: %s.%s" % (table, key))
 
 
@@ -327,7 +327,7 @@ def parse_lock(text: str, relative: str) -> Dict[str, Dict[str, object]]:
         if digest is not None and current is not None:
             hashes.append(digest.group(1))
             continue
-        raise AuditInputError("invalid lock syntax at %s:%d" % (relative, number))
+        raise AuditInputError("incorrect lock syntax at %s:%d" % (relative, number))
     finish()
     if not packages:
         raise AuditInputError("dependency lock is empty: " + relative)
@@ -386,7 +386,7 @@ def python_string_constants(text: str, relative: str) -> List[str]:
     try:
         tree = ast.parse(text, filename=relative)
     except SyntaxError:
-        raise AuditInputError("Python assertion file is invalid: " + relative) from None
+        raise AuditInputError("Python assertion file is incorrect: " + relative) from None
     return [
         node.value
         for node in ast.walk(tree)
@@ -398,7 +398,7 @@ def python_string_assignments(text: str, relative: str) -> Dict[str, str]:
     try:
         tree = ast.parse(text, filename=relative)
     except SyntaxError:
-        raise AuditInputError("Python dependency file is invalid: " + relative) from None
+        raise AuditInputError("Python dependency file is incorrect: " + relative) from None
     result: Dict[str, str] = {}
     for statement in tree.body:
         if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
@@ -442,7 +442,7 @@ def python_reference_command_policy(
     try:
         tree = ast.parse(text, filename=relative)
     except SyntaxError:
-        raise AuditInputError("Python dependency file is invalid: " + relative) from None
+        raise AuditInputError("Python dependency file is incorrect: " + relative) from None
     commands: Dict[str, List[ast.List]] = {"inspect": [], "pull": [], "run": []}
     unrecognized = 0
     for node in ast.walk(tree):
@@ -538,7 +538,7 @@ def python_dict_key_uses_name(
     try:
         tree = ast.parse(text, filename=relative)
     except SyntaxError:
-        raise AuditInputError("Python dependency file is invalid: " + relative) from None
+        raise AuditInputError("Python dependency file is incorrect: " + relative) from None
     for node in ast.walk(tree):
         if not isinstance(node, ast.Dict):
             continue
@@ -562,7 +562,7 @@ def python_binds_digest_candidate(
     try:
         tree = ast.parse(text, filename=relative)
     except SyntaxError:
-        raise AuditInputError("Python dependency file is invalid: " + relative) from None
+        raise AuditInputError("Python dependency file is incorrect: " + relative) from None
     functions = [
         node
         for node in tree.body
@@ -608,7 +608,7 @@ def python_main_invokes_identity_gates(text: str, relative: str) -> bool:
     try:
         tree = ast.parse(text, filename=relative)
     except SyntaxError:
-        raise AuditInputError("Python dependency file is invalid: " + relative) from None
+        raise AuditInputError("Python dependency file is incorrect: " + relative) from None
     functions = [
         node
         for node in tree.body
@@ -640,7 +640,7 @@ def python_runtime_identity_contract(
     try:
         tree = ast.parse(text, filename=relative)
     except SyntaxError:
-        raise AuditInputError("Python dependency file is invalid: " + relative) from None
+        raise AuditInputError("Python dependency file is incorrect: " + relative) from None
     functions = [
         node
         for node in tree.body
@@ -806,10 +806,10 @@ def audit_python(root: Path, policy: Mapping[str, object], report: Dict[str, obj
     group_ids = set()
     for raw_group in groups:
         if not isinstance(raw_group, dict):
-            raise AuditInputError("Python dependency group is invalid")
+            raise AuditInputError("Python dependency group is incorrect")
         identifier = str(raw_group.get("id", "invalid"))
         if not identifier or identifier in group_ids:
-            raise AuditInputError("Python dependency group identifiers are invalid")
+            raise AuditInputError("Python dependency group identifiers are incorrect")
         group_ids.add(identifier)
         manifest = str(raw_group.get("manifest", ""))
         requirements = parse_toml_string_array(
@@ -817,14 +817,14 @@ def audit_python(root: Path, policy: Mapping[str, object], report: Dict[str, obj
         )
         must_be_empty = raw_group.get("must_be_empty", False)
         if not isinstance(must_be_empty, bool):
-            raise AuditInputError("Python empty-declaration policy is invalid: " + identifier)
+            raise AuditInputError("Python empty-declaration policy is incorrect: " + identifier)
         if must_be_empty:
             failures = [] if not requirements else [manifest + " must keep this dependency array empty"]
             add_check(
                 report,
                 "python-" + identifier,
                 "failure" if failures else "pass",
-                "The dependency-free Python runtime declaration remains empty"
+                "The dependency-free Python runtime declaration is empty"
                 if not failures
                 else "A dependency-free Python runtime declaration changed",
                 failures,
@@ -840,7 +840,7 @@ def audit_python(root: Path, policy: Mapping[str, object], report: Dict[str, obj
         extra_map = raw_group.get("extra_lock_distributions", {})
         notice_names = raw_group.get("notice_names", {})
         if not isinstance(extra_map, dict) or not isinstance(notice_names, dict):
-            raise AuditInputError("Python dependency group mappings are invalid: " + identifier)
+            raise AuditInputError("Python dependency group mappings are incorrect: " + identifier)
         for item in direct:
             name = str(item["name"])
             version = str(item["version"])
@@ -853,7 +853,7 @@ def audit_python(root: Path, policy: Mapping[str, object], report: Dict[str, obj
                 failures.append("%s declares %s but %s does not" % (manifest, display + "==" + version, lock_relative))
             extras = extra_map.get(display, [])
             if not isinstance(extras, list):
-                raise AuditInputError("extra lock distribution mapping is invalid: " + display)
+                raise AuditInputError("extra lock distribution mapping is incorrect: " + display)
             for extra in extras:
                 normalized = normalize_name(str(extra))
                 selected_extra = locked.get(normalized)
@@ -877,7 +877,7 @@ def audit_python(root: Path, policy: Mapping[str, object], report: Dict[str, obj
         lock_notice_names = raw_group.get("lock_notice_names")
         if lock_notice_names is not None:
             if not isinstance(lock_notice_names, dict):
-                raise AuditInputError("locked dependency notice mapping is invalid: " + identifier)
+                raise AuditInputError("locked dependency notice mapping is incorrect: " + identifier)
             normalized_lock_notices = {
                 normalize_name(str(name)): label
                 for name, label in lock_notice_names.items()
@@ -905,7 +905,7 @@ def audit_python(root: Path, policy: Mapping[str, object], report: Dict[str, obj
             try:
                 inventory = json.loads(inventory_payload.decode("utf-8"))
             except (UnicodeError, ValueError):
-                raise AuditInputError("license inventory is invalid: " + str(inventory_relative)) from None
+                raise AuditInputError("license inventory is incorrect: " + str(inventory_relative)) from None
             dependencies = inventory.get("dependencies") if isinstance(inventory, dict) else None
             expected_hash = hashlib.sha256(lock_text.encode("utf-8")).hexdigest()
             if not isinstance(dependencies, dict):
@@ -929,7 +929,7 @@ def audit_python(root: Path, policy: Mapping[str, object], report: Dict[str, obj
             report,
             "python-" + identifier,
             "failure" if failures else "pass",
-            "Python declarations, hashes, notices, and reviewed evidence are synchronized" if not failures else "Python dependency surfaces are inconsistent",
+            "Python declarations, hashes, notices, and dependency-review evidence agree" if not failures else "Python dependency records do not agree",
             failures,
         )
     return sorted(direct_packages, key=lambda item: (item["name"], item["version"], item["group"])), sorted(locked_packages.values(), key=lambda item: (item["name"], item["version"]))
@@ -951,13 +951,13 @@ def audit_compose(root: Path, policy: Mapping[str, object], report: Dict[str, ob
     images: List[Dict[str, str]] = []
     for raw in entries:
         if not isinstance(raw, dict):
-            raise AuditInputError("Compose image policy is invalid")
+            raise AuditInputError("Compose image policy is incorrect")
         identifier = str(raw.get("id", "invalid"))
         service = str(raw.get("service", ""))
         files = raw.get("files")
         assertions = raw.get("assertion_files")
         if not isinstance(files, list) or len(files) < 2 or not isinstance(assertions, list):
-            raise AuditInputError("Compose image policy paths are invalid: " + identifier)
+            raise AuditInputError("Compose image policy paths are incorrect: " + identifier)
         normalized_files = [str(path) for path in files]
         normalized_assertions = [str(path) for path in assertions]
         failures: List[str] = []
@@ -1099,7 +1099,7 @@ def audit_compose(root: Path, policy: Mapping[str, object], report: Dict[str, ob
             report,
             "compose-" + identifier,
             "failure" if failures else "pass",
-            "Compose, recovery, assertions, and notices use one exact image" if not failures else "Compose dependency surfaces are inconsistent",
+            "Compose, recovery, assertions, and notices use the same image" if not failures else "Compose dependency records do not agree",
             failures,
         )
     return images
@@ -1110,7 +1110,7 @@ def audit_dockerfile_frontend(
 ) -> None:
     raw = policy.get("dockerfile_frontend")
     if not isinstance(raw, dict):
-        raise AuditInputError("Dockerfile frontend dependency policy is invalid")
+        raise AuditInputError("Dockerfile frontend dependency policy is incorrect")
     raw_files = raw.get("files")
     reference = raw.get("reference")
     if not isinstance(raw_files, list) or not isinstance(reference, str):
@@ -1152,9 +1152,9 @@ def audit_dockerfile_frontend(
         report,
         "dockerfile-frontend",
         "failure" if failures else "pass",
-        "Every advanced Dockerfile uses one reviewed exact-version digest-pinned frontend"
+        "Each advanced Dockerfile uses one frontend with a fixed version and digest from the dependency policy"
         if not failures
-        else "Dockerfile frontend dependency surfaces are inconsistent",
+        else "Dockerfile frontend dependency records do not agree",
         failures,
     )
 
@@ -1162,7 +1162,7 @@ def audit_dockerfile_frontend(
 def audit_docker_base(root: Path, policy: Mapping[str, object], report: Dict[str, object]) -> Optional[Dict[str, str]]:
     raw = policy.get("docker_base")
     if not isinstance(raw, dict):
-        raise AuditInputError("Docker base dependency policy is invalid")
+        raise AuditInputError("Docker base dependency policy is incorrect")
     dockerfiles = raw.get("dockerfiles")
     if not isinstance(dockerfiles, list) or not dockerfiles:
         raise AuditInputError("Docker base policy has no Dockerfiles")
@@ -1217,7 +1217,7 @@ def audit_docker_base(root: Path, policy: Mapping[str, object], report: Dict[str
         report,
         "docker-base",
         "failure" if failures else "pass",
-        "Every Docker stage, snapshot, OCI label, SPDX package, and notice uses one base" if not failures else "Docker base provenance is inconsistent",
+        "Each Docker stage, snapshot, OCI label, SPDX package, and notice uses one base" if not failures else "Docker base provenance records do not agree",
         failures,
     )
     if failures:
@@ -1235,12 +1235,12 @@ def audit_docker_base(root: Path, policy: Mapping[str, object], report: Dict[str
 def audit_literal_images(root: Path, policy: Mapping[str, object], report: Dict[str, object]) -> List[Dict[str, str]]:
     entries = policy.get("literal_images")
     if not isinstance(entries, list):
-        raise AuditInputError("literal image dependency policy is invalid")
+        raise AuditInputError("literal image dependency policy is incorrect")
     notices = read_text(root, "THIRD_PARTY_NOTICES.md")
     images: List[Dict[str, str]] = []
     for raw in entries:
         if not isinstance(raw, dict):
-            raise AuditInputError("literal image dependency entry is invalid")
+            raise AuditInputError("literal image dependency entry is incorrect")
         identifier = str(raw.get("id", "invalid"))
         relative = str(raw.get("file", ""))
         source_text = read_text(root, relative)
@@ -1270,7 +1270,7 @@ def audit_literal_images(root: Path, policy: Mapping[str, object], report: Dict[
             or not isinstance(expected_inspect_lists, int)
             or expected_inspect_lists != 1
         ):
-            raise AuditInputError("literal image version/platform policy is invalid: " + identifier)
+            raise AuditInputError("literal image version/platform policy is incorrect: " + identifier)
         reference = assignments.get(reference_variable, "")
         failures: List[str] = []
         if scan_mode not in {"external", "local-build"}:
@@ -1281,15 +1281,15 @@ def audit_literal_images(root: Path, policy: Mapping[str, object], report: Dict[
             failures.append(str(failure))
             parsed = {"digest": "", "repository": "", "tag": ""}
         if assignments.get(digest_variable) != parsed["digest"]:
-            failures.append(relative + " has inconsistent image reference and digest constants")
+            failures.append(relative + " has image reference and digest constants that do not agree")
         version = assignments.get(version_variable, "")
         expected_tag = version + tag_suffix
         if not version or assignments.get(tag_variable) != expected_tag or parsed["tag"] != expected_tag:
-            failures.append(relative + " has inconsistent version, tag, and image reference constants")
+            failures.append(relative + " has version, tag, and image reference constants that do not agree")
         if assignments.get(oci_version_variable) != oci_version_prefix + version:
-            failures.append(relative + " has an inconsistent expected OCI version")
+            failures.append(relative + " has an expected OCI version that does not agree")
         if assignments.get(platform_variable) != "linux/amd64":
-            failures.append(relative + " has an inconsistent expected runtime platform")
+            failures.append(relative + " has an expected runtime platform that does not agree")
         matched_platform_lists, command_failures = python_reference_command_policy(
             source_text, relative, reference_variable, platform_variable
         )
@@ -1385,7 +1385,7 @@ def audit_literal_images(root: Path, policy: Mapping[str, object], report: Dict[
             report,
             "literal-image-" + identifier,
             "failure" if failures else "pass",
-            "Pinned image code, operator example, platform, and notice are synchronized" if not failures else "Literal image dependency surfaces are inconsistent",
+            "Pinned image code, operator example, platform, and notice agree" if not failures else "Literal image dependency records do not agree",
             failures,
         )
     return images
@@ -1396,10 +1396,10 @@ def audit_manual_review(root: Path, policy: Mapping[str, object], report: Dict[s
         set(EXPECTED_MANUAL_REVIEW_FILES) != EXPECTED_MANUAL_REVIEW_IDS
         or set(EXPECTED_MANUAL_REVIEW_NAMES) != EXPECTED_MANUAL_REVIEW_IDS
     ):
-        raise AuditInputError("manual-review expected inventory contract is invalid")
+        raise AuditInputError("manual-review expected inventory contract is incorrect")
     entries = policy.get("manual_review")
     if not isinstance(entries, list):
-        raise AuditInputError("manual dependency review policy is invalid")
+        raise AuditInputError("manual dependency review policy is incorrect")
     normalized: List[Dict[str, object]] = []
     failures: List[str] = []
     identifiers = set()
@@ -1408,7 +1408,7 @@ def audit_manual_review(root: Path, policy: Mapping[str, object], report: Dict[s
         failures.append("manual-review inventory is empty")
     for raw in entries:
         if not isinstance(raw, dict) or not isinstance(raw.get("files"), list):
-            raise AuditInputError("manual dependency review entry is invalid")
+            raise AuditInputError("manual dependency review entry is incorrect")
         identifier = str(raw.get("id", ""))
         name = str(raw.get("name", ""))
         reason = str(raw.get("reason", ""))
@@ -1455,7 +1455,7 @@ def audit_manual_review(root: Path, policy: Mapping[str, object], report: Dict[s
         report,
         "manual-review-inventory",
         "failure" if failures else "pass",
-        "Manual-review dependency surfaces are explicitly inventoried" if not failures else "Manual-review inventory is stale",
+        "The inventory includes the dependency items for manual review" if not failures else "Manual-review inventory is stale",
         failures,
     )
 
@@ -1482,7 +1482,7 @@ class NetworkClient:
         try:
             document = json.loads(self.get_bytes(url).decode("utf-8"))
         except (UnicodeError, ValueError):
-            raise NetworkError("upstream response was not valid JSON") from None
+            raise NetworkError("upstream response was incorrect JSON") from None
         if not isinstance(document, dict):
             raise NetworkError("upstream JSON response had an unsupported shape")
         return document
@@ -1533,7 +1533,7 @@ def audit_pypi(client: NetworkClient, direct: Sequence[Mapping[str, str]], repor
                     "kind": "pypi",
                     "latest": latest,
                     "name": name,
-                    "policy": "informational; regenerate locks, hashes, licenses, notices, and tests together",
+                    "policy": "for information. Make new locks, hashes, licenses, notices, and tests together",
                 }
             )
     add_check(
@@ -1605,7 +1605,7 @@ def audit_official_images(client: NetworkClient, images: Sequence[Mapping[str, s
                         "current": tag,
                         "kind": "official-image",
                         "name": identifier,
-                        "policy": "informational; select a maintained compatibility track and update recovery evidence together",
+                        "policy": "for information. Select a compatibility track that receives maintenance. Update the recovery evidence at the same time",
                         **candidates_to_report,
                     }
                 )
@@ -1614,7 +1614,7 @@ def audit_official_images(client: NetworkClient, images: Sequence[Mapping[str, s
             report,
             "official-image-" + identifier,
             status,
-            "Official image tag and digest remain maintained and immutable" if status == "pass" else "Official image status needs maintainer attention",
+            "The official image manifest includes the tag. The tag agrees with the digest from the dependency policy" if status == "pass" else "The maintainer must examine the official image status",
             errors + failures,
         )
 
@@ -1694,7 +1694,7 @@ def markdown(report: Mapping[str, object]) -> str:
                 for detail in details:
                     lines.append("\n- `%s`: %s" % (cell(item.get("id")), cell(detail)))
     updates = report.get("updates", [])
-    lines.extend(["", "## Informational update candidates", ""])
+    lines.extend(["", "## Update candidates for information", ""])
     if isinstance(updates, list) and updates:
         for item in updates:
             if not isinstance(item, dict):
@@ -1714,7 +1714,7 @@ def markdown(report: Mapping[str, object]) -> str:
     else:
         lines.append("- None reported.")
     manual = report.get("manual_review", [])
-    lines.extend(["", "## Manual review surfaces", ""])
+    lines.extend(["", "## Items for manual review", ""])
     if isinstance(manual, list):
         for item in manual:
             if isinstance(item, dict):
@@ -1731,8 +1731,8 @@ def write_output(path: Path, payload: str) -> None:
 
 def main(arguments: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--online", action="store_true", help="also query PyPI and Docker Official Images")
-    parser.add_argument("--json", type=Path, help="write the bounded machine-readable report")
+    parser.add_argument("--online", action="store_true", help="also get release data from PyPI and Docker Official Images")
+    parser.add_argument("--json", type=Path, help="write the machine-readable report with size limits")
     parser.add_argument("--markdown", type=Path, help="write a Markdown summary")
     parser.add_argument("--root", type=Path, default=ROOT, help=argparse.SUPPRESS)
     options = parser.parse_args(arguments)

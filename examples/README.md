@@ -1,21 +1,19 @@
 # Examples and ideas
 
-The bundled requests show both visual customization and two different QA
-outcomes. A request can be
-schema-valid JSON and still fail the geometry publication gate. That distinction is a
-feature: the builder publishes a success manifest only after the generated
-Blender scene, GLB, and STL pass the complete checks.
+The supplied requests show visual changes and two QA results.
+A request can pass schema validation and fail geometry publication checks.
+The builder publishes a success manifest only after the Blender scene, GLB, and STL pass all defined checks.
 
 ## Bundled requests
 
-| Request | What it demonstrates | Expected result |
+| Request | Purpose | Expected result |
 |---|---|---|
-| [`facet-bot.json`](requests/facet-bot.json) | The canonical geometric mascot and release fixture | **Passes** the complete build and fresh-process verification gates |
-| [`facet-bot-tidepool.json`](requests/facet-bot-tidepool.json) | The same reviewed Facet Bot geometry with a teal-and-ice palette | **Passes** the complete build and fresh-process verification gates |
-| [`moss-hopper.json`](requests/moss-hopper.json) | A materially different chibi character and the fail-closed review path | **`needs_review`**; builder code `11`, no output directory, and no success manifest |
+| [`facet-bot.json`](requests/facet-bot.json) | The geometric mascot and release fixture | **Passes** the full build and new-process verification checks |
+| [`facet-bot-tidepool.json`](requests/facet-bot-tidepool.json) | The reviewed Facet Bot geometry with a teal-and-ice palette | **Passes** the full build and new-process verification checks |
+| [`moss-hopper.json`](requests/moss-hopper.json) | A different chibi character and the QA review result | **`needs_review`**. Builder code `11`, no output directory, and no success manifest |
 
-Build and independently reopen the passing example without overwriting the
-quickstart's `build/facet-bot` output:
+Use these commands for the passing example.
+The different output name prevents changes to the quickstart result in `build/facet-bot`:
 
 ```sh
 make validate REQUEST="$PWD/examples/requests/facet-bot.json"
@@ -23,12 +21,10 @@ make build REQUEST="$PWD/examples/requests/facet-bot.json" OUTPUT_NAME=facet-bot
 make verify REQUEST="$PWD/examples/requests/facet-bot.json" OUTPUT_NAME=facet-bot-example
 ```
 
-The expected final markers are `BUILDER_VALIDATE: PASS`,
-`BUILDER_BUILD: PASS`, and `BUILDER_VERIFY: PASS`. The result is in
-`build/facet-bot-example/`.
+The expected result markers are `BUILDER_VALIDATE: PASS`, `BUILDER_BUILD: PASS`, and `BUILDER_VERIFY: PASS`.
+The result is in `build/facet-bot-example/`.
 
-To see a known-good color change without changing the geometry, build the
-Tidepool palette into a different output directory:
+For the tested color change without geometry changes, use the Tidepool palette in a different output directory:
 
 ```sh
 make validate REQUEST="$PWD/examples/requests/facet-bot-tidepool.json"
@@ -36,57 +32,55 @@ make build REQUEST="$PWD/examples/requests/facet-bot-tidepool.json" OUTPUT_NAME=
 make verify REQUEST="$PWD/examples/requests/facet-bot-tidepool.json" OUTPUT_NAME=facet-bot-tidepool
 ```
 
-Facet Bot uses its first palette swatch for the body, base, and limbs, and its
-second for the head, hands, feet, badge, and antenna tips. Tidepool changes
-orange/cream to teal/ice while intentionally keeping every geometry-affecting
-field and the material preset the same; only its palette and request identity
-(name/slug) differ. This makes it a safe starting point for learning which
-visible parts each swatch controls.
+Facet Bot uses its first palette color for the body, base, and limbs.
+It uses its second color for the head, hands, feet, badge, and antenna tips.
+Tidepool changes orange and cream to teal and ice.
+All geometry-related fields and the material preset stay the same.
+Only the palette and request identity (name and slug) change.
+Use this example to learn which visible parts each color controls.
 
-To exercise the safe review outcome:
+To see the QA review result, enter these commands:
 
 ```sh
 make validate REQUEST="$PWD/examples/requests/moss-hopper.json"
 make build REQUEST="$PWD/examples/requests/moss-hopper.json" OUTPUT_NAME=moss-hopper
 ```
 
-Validation passes, but the builder reports `BUILDER: FAIL[11]` and GNU Make
-prints `Error 11`; the `make` process itself normally exits `2`.
-`build/moss-hopper/` must not exist afterward. The generator found unresolved
-short-wall candidates, so it refuses to claim the STL passed.
+Validation passes, but the builder reports `BUILDER: FAIL[11]`.
+GNU Make shows `Error 11`.
+The `make` process usually exits `2`.
+`build/moss-hopper/` must not exist after the operation.
+The generator found unresolved short-wall candidates.
+Thus, it does not claim an STL pass.
 
 ## Make a character your own
 
-Copy `facet-bot.json`, give the copy an original name and slug, then change one
-small group of controls at a time. The supported palette, style, pose,
-proportion, eye, material, component, and base values are listed in the
-[character guide](../docs/character-spec.md). Validate first, then choose a new
-`OUTPUT_NAME` for every experiment.
+Copy `facet-bot.json`.
+Give the copy an original name and slug.
+Change one small group of controls at a time.
+Read the [character guide](../docs/character-spec.md) for palette, style, pose, proportion, eye, material, component, and base values.
+Validate the request first.
+Then select a new `OUTPUT_NAME` for each experiment.
 
-These are useful themes, not pre-verified geometry fixtures:
+These ideas are not geometry fixtures with completed verification:
 
-- **Colorway Parade** — a family of original mascots with shared geometry and
-  different palettes or material finishes.
-- **Dungeon Department** — original tabletop-token prototypes with bases,
-  badges, horns, ears, or backpacks. Treat every STL as a prototype, not a
-  print guarantee.
-- **GLB Petting Zoo** — small web-viewable characters for layout and game-engine
-  placeholders.
-- **QA Gremlin** — deliberately difficult requests used to teach the
-  difference between valid input and publishable geometry.
-- **Classroom Geometry Lab** — inspect units, manifold meshes, connected shells,
-  hashes, and provenance in a concrete Blender project.
-- **Desk-Sized Diplomats** — original team or project mascots intended for
-  review in Blender before optional slicing and test printing.
+- **Colorway Parade:** Original mascots with shared geometry and different palettes or material finishes
+- **Dungeon Department:** Original tabletop-token prototypes with bases, badges, horns, ears, or backpacks
+- **GLB Petting Zoo:** Small characters for web display, layout, and game-engine placeholders
+- **QA Gremlin:** Difficult requests that show the difference between valid input and geometry that passes publication checks
+- **Classroom Geometry Lab:** Units, manifold meshes, connected shells, hashes, and provenance in a Blender project
+- **Desk-Sized Diplomats:** Original team or project mascots for Blender review before optional slicing and test printing.
 
-Do not describe a new request as passing until it completes both `make build`
-and `make verify`. JSON validation alone does not evaluate wall thickness,
-feature size, mesh connectivity, STL orientation, or physical manufacturability.
+Treat each STL as a prototype.
+It does not guarantee print success.
+Do not call a new request passing before `make build` and `make verify` complete.
+JSON validation does not evaluate wall thickness, feature size, mesh connectivity, STL orientation, or physical manufacturability.
 
 ## Rights and safety
 
-Use original or rights-cleared character designs. Do not upload third-party
-models or imply that a procedural resemblance grants permission to use a
-protected character. Geometry QA is evidence about the files, not legal
-clearance, slicer validation, printer calibration, material advice, or a safety
-certification. See the [output policy](../OUTPUT_POLICY.md).
+Use original character designs or designs with permission from the rights holder.
+Do not upload third-party models.
+Do not imply that procedural resemblance gives permission to use a protected character.
+Geometry QA gives file evidence only.
+It does not give legal clearance, slicer validation, printer calibration, material advice, or safety certification.
+Read the [output policy](../OUTPUT_POLICY.md).

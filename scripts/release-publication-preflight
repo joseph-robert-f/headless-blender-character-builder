@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed local identity check immediately before release publication."""
+"""Do a local identity check immediately before release publication. Stop if a check does not pass."""
 
 from __future__ import annotations
 
@@ -264,11 +264,11 @@ def _read_regular(path: Path, maximum: int) -> bytes:
     try:
         metadata = path.lstat()
     except OSError:
-        raise PreflightFailure("input_unavailable", "required release input is unavailable") from None
+        raise PreflightFailure("input_unavailable", "required release input is not available") from None
     if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
-        raise PreflightFailure("unsafe_input", "required release input is not a regular file")
+        raise PreflightFailure("unsafe_input", "necessary release input is not a regular file")
     if metadata.st_size <= 0 or metadata.st_size > maximum:
-        raise PreflightFailure("input_size_invalid", "required release input is outside size policy")
+        raise PreflightFailure("input_size_invalid", "necessary release input size does not obey the size policy")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(str(path), flags)
@@ -337,11 +337,11 @@ def _source_policy(payload: bytes) -> Mapping[str, object]:
         )
     except (UnicodeError, ValueError, RecursionError):
         raise PreflightFailure(
-            "publication_policy_invalid", "tracked publication policy is invalid JSON"
+            "publication_policy_invalid", "tracked publication policy is incorrect JSON"
         ) from None
     if not isinstance(document, dict):
         raise PreflightFailure(
-            "publication_policy_invalid", "tracked publication policy is invalid"
+            "publication_policy_invalid", "tracked publication policy is incorrect"
         )
     publication = document.get("publication")
     blender = document.get("blender")
@@ -370,7 +370,7 @@ def _source_policy(payload: bytes) -> Mapping[str, object]:
     ):
         raise PreflightFailure(
             "publication_policy_invalid",
-            "tracked publication policy is invalid or internally inconsistent",
+            "tracked publication policy is incorrect or its values do not agree",
         )
     blender_version = blender.get("version")
     blender_archive = blender.get("archive")
@@ -389,7 +389,7 @@ def _source_policy(payload: bytes) -> Mapping[str, object]:
         or re.fullmatch(r"[0-9a-f]{32}", blender["official_md5"]) is None
     ):
         raise PreflightFailure(
-            "publication_policy_invalid", "tracked Blender source policy is invalid"
+            "publication_policy_invalid", "tracked Blender source policy is incorrect"
         )
     return {"blender": blender, "publication": publication}
 
@@ -410,7 +410,7 @@ def _tracked_blob(
         or path.startswith("/")
         or ".." in PurePosixPath(path).parts
     ):
-        raise PreflightFailure("git_identity_invalid", "tracked release path is invalid")
+        raise PreflightFailure("git_identity_invalid", "tracked release path is incorrect")
     return _command(
         (git, "--no-pager", "show", "--no-textconv", revision + ":" + path),
         cwd=repo,
@@ -445,7 +445,7 @@ def _safe_checksum_path(value: str) -> PurePosixPath:
         or value != str(PurePosixPath(value))
         or any(ord(character) < 32 or ord(character) == 127 for character in value)
     ):
-        raise PreflightFailure("unsafe_checksum_path", "release checksum path is unsafe")
+        raise PreflightFailure("unsafe_checksum_path", "release checksum path is not safe")
     path = PurePosixPath(value)
     if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
         raise PreflightFailure("unsafe_checksum_path", "release checksum path escapes the bundle")
@@ -464,7 +464,7 @@ def verify_checksums(release_dir: Path) -> Mapping[str, tuple[int, str]]:
             raise PreflightFailure("invalid_checksums", "release checksum record is malformed")
         digest, name = line[:64], line[66:]
         if SHA256.fullmatch(digest) is None or name in records:
-            raise PreflightFailure("invalid_checksums", "release checksum record is invalid")
+            raise PreflightFailure("invalid_checksums", "release checksum record is incorrect")
         relative = _safe_checksum_path(name)
         candidate = release_dir.joinpath(*relative.parts)
         content = _read_regular(candidate, MAX_ARTIFACT_BYTES)
@@ -506,11 +506,11 @@ def _verify_release_artifact_inventory(
 ) -> Mapping[str, tuple[int, str]]:
     raw_artifacts = release_metadata.get("artifacts")
     if not isinstance(raw_artifacts, list) or len(raw_artifacts) > 4096:
-        raise PreflightFailure("identity_mismatch", "release artifact inventory is invalid")
+        raise PreflightFailure("identity_mismatch", "release artifact inventory is incorrect")
     records: Dict[str, tuple[int, str]] = {}
     for raw in raw_artifacts:
         if not isinstance(raw, dict) or set(raw) != {"bytes", "name", "sha256"}:
-            raise PreflightFailure("identity_mismatch", "release artifact inventory is invalid")
+            raise PreflightFailure("identity_mismatch", "release artifact inventory is incorrect")
         name = raw.get("name")
         byte_count = raw.get("bytes")
         digest = raw.get("sha256")
@@ -523,7 +523,7 @@ def _verify_release_artifact_inventory(
             or not isinstance(digest, str)
             or SHA256.fullmatch(digest) is None
         ):
-            raise PreflightFailure("identity_mismatch", "release artifact inventory is invalid")
+            raise PreflightFailure("identity_mismatch", "release artifact inventory is incorrect")
         # Still enforced even though the bytes below come from the
         # checksummed map rather than a second read of this path.
         _safe_checksum_path(name)
@@ -576,7 +576,7 @@ def _verify_corresponding_source_inventory(
         != (source_inventory.get("scope") == "complete-reviewed-image-source")
     ):
         raise PreflightFailure(
-            "identity_mismatch", "corresponding-source inventory is invalid"
+            "identity_mismatch", "corresponding-source inventory is incorrect"
         )
 
     materials = source_inventory.get("materials")
@@ -592,7 +592,7 @@ def _verify_corresponding_source_inventory(
         record = materials.get(material_name)
         if not isinstance(record, dict) or set(record) != SOURCE_MATERIAL_FIELDS:
             raise PreflightFailure(
-                "identity_mismatch", "corresponding-source material record is invalid"
+                "identity_mismatch", "corresponding-source material record is incorrect"
             )
         artifact = record.get("artifact")
         byte_count = record.get("bytes")
@@ -609,12 +609,12 @@ def _verify_corresponding_source_inventory(
             or record.get("license") != "GPL-3.0-or-later"
         ):
             raise PreflightFailure(
-                "identity_mismatch", "corresponding-source material record is invalid"
+                "identity_mismatch", "corresponding-source material record is incorrect"
             )
         relative = _safe_checksum_path(artifact)
         if len(relative.parts) != 1:
             raise PreflightFailure(
-                "identity_mismatch", "corresponding-source material path is invalid"
+                "identity_mismatch", "corresponding-source material path is incorrect"
             )
         if material_name == "project-source":
             expected_artifact = (
@@ -682,7 +682,7 @@ def _verify_corresponding_source_inventory(
             or record.get("sbom") != expected_sbom
         ):
             raise PreflightFailure(
-                "identity_mismatch", "corresponding-source image record is invalid"
+                "identity_mismatch", "corresponding-source image record is incorrect"
             )
         referenced_artifacts.add(expected_sbom)
         referenced_artifacts.update(SOURCE_IMAGE_NOTICES[role])
@@ -720,23 +720,23 @@ def _source_audit_records(
         or not isinstance(report.get("source_tree_sha256"), str)
         or SHA256.fullmatch(report["source_tree_sha256"]) is None
     ):
-        raise PreflightFailure("identity_mismatch", "source audit identity is invalid")
+        raise PreflightFailure("identity_mismatch", "source audit identity is incorrect")
     raw_files = report.get("files")
     if not isinstance(raw_files, list) or not 1 <= len(raw_files) <= 4096:
-        raise PreflightFailure("identity_mismatch", "source audit inventory is invalid")
+        raise PreflightFailure("identity_mismatch", "source audit inventory is incorrect")
     records: Dict[str, tuple[str, int, str]] = {}
     tree_digest = hashlib.sha256()
     total_bytes = 0
     previous = b""
     for raw in raw_files:
         if not isinstance(raw, dict) or set(raw) != SOURCE_AUDIT_FILE_FIELDS:
-            raise PreflightFailure("identity_mismatch", "source audit record is invalid")
+            raise PreflightFailure("identity_mismatch", "source audit record is incorrect")
         path = raw.get("path")
         mode = raw.get("git_mode")
         byte_count = raw.get("bytes")
         digest = raw.get("sha256")
         if not isinstance(path, str):
-            raise PreflightFailure("identity_mismatch", "source audit path is invalid")
+            raise PreflightFailure("identity_mismatch", "source audit path is incorrect")
         relative = _safe_checksum_path(path)
         encoded = path.encode("utf-8")
         if (
@@ -749,7 +749,7 @@ def _source_audit_records(
             or not isinstance(digest, str)
             or SHA256.fullmatch(digest) is None
         ):
-            raise PreflightFailure("identity_mismatch", "source audit record is invalid")
+            raise PreflightFailure("identity_mismatch", "source audit record is incorrect")
         tree_digest.update(
             mode.encode("ascii")
             + b"\0"
@@ -771,7 +771,7 @@ def _source_audit_records(
         or total_bytes > MAX_ARTIFACT_BYTES
         or report.get("source_tree_sha256") != tree_digest.hexdigest()
     ):
-        raise PreflightFailure("identity_mismatch", "source audit totals are invalid")
+        raise PreflightFailure("identity_mismatch", "source audit totals are incorrect")
     return records
 
 
@@ -798,7 +798,7 @@ def _tracked_source_records(
                 relative = _safe_checksum_path(path)
                 if ".git" in relative.parts:
                     raise PreflightFailure(
-                        "git_identity_invalid", "tracked source path is invalid"
+                        "git_identity_invalid", "tracked source path is incorrect"
                     )
                 if member.isdir():
                     continue
@@ -810,7 +810,7 @@ def _tracked_source_records(
                     or path in records
                 ):
                     raise PreflightFailure(
-                        "git_identity_invalid", "tracked source record is invalid"
+                        "git_identity_invalid", "tracked source record is incorrect"
                     )
                 stream = archive.extractfile(member)
                 if stream is None:
@@ -830,7 +830,7 @@ def _tracked_source_records(
                 )
     except (OSError, tarfile.TarError):
         raise PreflightFailure(
-            "git_identity_invalid", "tracked source archive is invalid"
+            "git_identity_invalid", "tracked source archive is incorrect"
         ) from None
     if not records:
         raise PreflightFailure("git_identity_invalid", "tracked source tree is empty")
@@ -842,7 +842,7 @@ def _archive_member_path(name: str, prefix: str) -> Optional[str]:
         return None
     marker = prefix + "/"
     if not name.startswith(marker):
-        raise PreflightFailure("identity_mismatch", "release archive path is invalid")
+        raise PreflightFailure("identity_mismatch", "release archive path is incorrect")
     relative = name[len(marker) :].rstrip("/")
     _safe_checksum_path(relative)
     return relative
@@ -872,26 +872,26 @@ def _verify_project_archive(
                 member_count += 1
                 if member_count > len(records) * 4 + 1:
                     raise PreflightFailure(
-                        "identity_mismatch", "project source archive is invalid"
+                        "identity_mismatch", "project source archive is incorrect"
                     )
                 relative = _archive_member_path(member.name, prefix)
                 if relative is None:
                     if not member.isdir() or member.mode != 0o755 or root_seen:
                         raise PreflightFailure(
-                            "identity_mismatch", "project source archive root is invalid"
+                            "identity_mismatch", "project source archive root is incorrect"
                         )
                     root_seen = True
                     continue
                 if member.isdir():
                     if member.mode != 0o755 or relative in actual_directories:
                         raise PreflightFailure(
-                            "identity_mismatch", "project source archive directory is invalid"
+                            "identity_mismatch", "project source archive directory is incorrect"
                         )
                     actual_directories.add(relative)
                     continue
                 if not member.isfile() or relative in actual:
                     raise PreflightFailure(
-                        "identity_mismatch", "project source archive type is invalid"
+                        "identity_mismatch", "project source archive type is incorrect"
                     )
                 expected = records.get(relative)
                 if expected is None or member.size != expected[1]:
@@ -959,7 +959,7 @@ def _verify_sample_bundle(
         or manifest_qa.get("status") != "passed"
         or qa.get("status") != "passed"
     ):
-        raise PreflightFailure("identity_mismatch", "sample evidence is invalid")
+        raise PreflightFailure("identity_mismatch", "sample evidence is incorrect")
     for name in hashed_names:
         item = described.get(name)
         record = artifact_records.get("sample/" + name)
@@ -992,16 +992,16 @@ def _verify_sample_bundle(
             for member in archive:
                 member_count += 1
                 if member_count > len(sample_names) * 4 + 1:
-                    raise PreflightFailure("identity_mismatch", "sample archive is invalid")
+                    raise PreflightFailure("identity_mismatch", "sample archive is incorrect")
                 relative = _archive_member_path(member.name, "sample")
                 if relative is None:
                     if not member.isdir() or member.mode != 0o755 or root_seen:
-                        raise PreflightFailure("identity_mismatch", "sample archive root is invalid")
+                        raise PreflightFailure("identity_mismatch", "sample archive root is incorrect")
                     root_seen = True
                     continue
                 if member.isdir():
                     if member.mode != 0o755 or relative in actual_directories:
-                        raise PreflightFailure("identity_mismatch", "sample archive directory is invalid")
+                        raise PreflightFailure("identity_mismatch", "sample archive directory is incorrect")
                     actual_directories.add(relative)
                     continue
                 expected = artifact_records.get("sample/" + relative)
@@ -1012,7 +1012,7 @@ def _verify_sample_bundle(
                     or member.size != expected[0]
                     or relative in actual
                 ):
-                    raise PreflightFailure("identity_mismatch", "sample archive is invalid")
+                    raise PreflightFailure("identity_mismatch", "sample archive is incorrect")
                 stream = archive.extractfile(member)
                 if stream is None:
                     raise PreflightFailure("identity_mismatch", "sample archive is unreadable")
@@ -1057,13 +1057,13 @@ def _verify_supplement_schemas(
                 if isinstance(package, dict)
             }
         ):
-            raise PreflightFailure("identity_mismatch", "release SBOM is invalid")
+            raise PreflightFailure("identity_mismatch", "release SBOM is incorrect")
     try:
         notice = _read_regular(
             release_dir / "SERVICE_THIRD_PARTY_NOTICES.txt", MAX_ARTIFACT_BYTES
         ).decode("utf-8", "strict")
     except UnicodeError:
-        raise PreflightFailure("identity_mismatch", "service notices are invalid") from None
+        raise PreflightFailure("identity_mismatch", "service notices are incorrect") from None
     if "Lock SHA-256:" not in notice or "License:" not in notice:
         raise PreflightFailure("identity_mismatch", "service notices are incomplete")
     try:
@@ -1071,11 +1071,11 @@ def _verify_supplement_schemas(
             release_dir / "BLENDER_SOURCE_NOTICE.md", MAX_ARTIFACT_BYTES
         ).decode("utf-8", "strict")
     except UnicodeError:
-        raise PreflightFailure("identity_mismatch", "Blender notice is invalid") from None
+        raise PreflightFailure("identity_mismatch", "Blender notice is incorrect") from None
     if source_policy is not None:
         blender = source_policy.get("blender")
         if not isinstance(blender, dict):
-            raise PreflightFailure("identity_mismatch", "Blender source policy is invalid")
+            raise PreflightFailure("identity_mismatch", "Blender source policy is incorrect")
         required_markers = (
             "Corresponding source archive: <%s>" % blender.get("source_url"),
             "Corresponding source bytes: `%s`" % blender.get("bytes"),
@@ -1142,7 +1142,7 @@ def _image_records(
             or set(record) != IMAGE_RECORD_FIELDS
             or not isinstance(source_record, dict)
         ):
-            raise PreflightFailure("identity_mismatch", "release image record is invalid")
+            raise PreflightFailure("identity_mismatch", "release image record is incorrect")
         image_id = record.get("image_id")
         labels = record.get("labels")
         layers = record.get("rootfs_layers")
@@ -1184,7 +1184,7 @@ def _image_records(
                 for layer in layers
             )
         ):
-            raise PreflightFailure("identity_mismatch", "release image evidence is inconsistent")
+            raise PreflightFailure("identity_mismatch", "release image evidence does not agree")
         normalized[role] = record
     image_ids = [str(normalized[role]["image_id"]) for role in sorted(normalized)]
     if len(set(image_ids)) != len(image_ids):
@@ -1222,18 +1222,18 @@ def verify_bundle(
             )
         )
     ):
-        raise PreflightFailure("invalid_identity", "release version or revision is invalid")
+        raise PreflightFailure("invalid_identity", "release version or revision is incorrect")
     original_release_dir = release_dir
     try:
         metadata = original_release_dir.lstat()
     except OSError:
-        raise PreflightFailure("release_unavailable", "release directory is unavailable") from None
+        raise PreflightFailure("release_unavailable", "release directory is not available") from None
     if original_release_dir.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
         raise PreflightFailure("release_unavailable", "release directory is not a regular directory")
     try:
         release_dir = original_release_dir.resolve(strict=True)
     except OSError:
-        raise PreflightFailure("release_unavailable", "release directory is unavailable") from None
+        raise PreflightFailure("release_unavailable", "release directory is not available") from None
     checksummed = verify_checksums(release_dir)
     image_metadata = _json_file(release_dir / "image-metadata.json")
     release_metadata = _json_file(release_dir / "release-metadata.json")
@@ -1326,7 +1326,7 @@ def _remote_manifest_digest(
         )
     except (UnicodeError, ValueError, RecursionError):
         raise PreflightFailure(
-            "remote_manifest_invalid", "reviewed private-registry manifest is invalid"
+            "remote_manifest_invalid", "reviewed private-registry manifest is incorrect"
         ) from None
     accepted_manifest_types = {
         "application/vnd.docker.distribution.manifest.v2+json",
@@ -1405,12 +1405,12 @@ def finalize_published_bundle(
                 "builder, API, and worker private-registry manifests are required",
             )
         if REGISTRY_OWNER.fullmatch(registry_owner) is None:
-            raise PreflightFailure("invalid_registry_owner", "registry owner is invalid")
+            raise PreflightFailure("invalid_registry_owner", "registry owner is incorrect")
         termination.raise_if_pending()
         image_metadata = dict(_json_file(input_dir / "image-metadata.json"))
         version = image_metadata.get("distribution_version")
         if not isinstance(version, str) or SEMVER.fullmatch(version) is None:
-            raise PreflightFailure("identity_mismatch", "release distribution version is invalid")
+            raise PreflightFailure("identity_mismatch", "release distribution version is incorrect")
         images = image_metadata.get("images")
         if not isinstance(images, dict) or set(images) != set(IMAGE_TAGS):
             raise PreflightFailure("identity_mismatch", "release image inventory is incomplete")
@@ -1449,12 +1449,12 @@ def finalize_published_bundle(
         release_metadata = dict(_json_file(input_dir / "release-metadata.json"))
         artifacts = release_metadata.get("artifacts")
         if not isinstance(artifacts, list):
-            raise PreflightFailure("identity_mismatch", "release artifact inventory is invalid")
+            raise PreflightFailure("identity_mismatch", "release artifact inventory is incorrect")
         finalized_artifacts = []
         image_records = 0
         for item in artifacts:
             if not isinstance(item, dict):
-                raise PreflightFailure("identity_mismatch", "release artifact inventory is invalid")
+                raise PreflightFailure("identity_mismatch", "release artifact inventory is incorrect")
             finalized_item = dict(item)
             if finalized_item.get("name") == "image-metadata.json":
                 image_records += 1
@@ -1830,7 +1830,7 @@ def current_revision(repo: Path, git: str = "git") -> str:
         "ascii", "strict"
     ).strip()
     if GIT_OID.fullmatch(head) is None:
-        raise PreflightFailure("git_identity_invalid", "current Git revision is invalid")
+        raise PreflightFailure("git_identity_invalid", "current Git revision is incorrect")
     if _command((git, "status", "--porcelain"), cwd=repo, maximum=MAX_JSON_BYTES):
         raise PreflightFailure("worktree_dirty", "publication requires a clean exact checkout")
     return head
@@ -1847,7 +1847,7 @@ def current_index_digest(repo: Path, git: str = "git") -> str:
             prefix, path = record.split(b"\t", 1)
             mode, oid, stage = prefix.split(b" ", 2)
         except ValueError:
-            raise PreflightFailure("git_identity_invalid", "current Git index is invalid") from None
+            raise PreflightFailure("git_identity_invalid", "current Git index is incorrect") from None
         if (
             stage != b"0"
             or mode not in {b"100644", b"100755"}
@@ -1856,7 +1856,7 @@ def current_index_digest(repo: Path, git: str = "git") -> str:
             or b"\0" in path
             or path in seen
         ):
-            raise PreflightFailure("git_identity_invalid", "current Git index is invalid")
+            raise PreflightFailure("git_identity_invalid", "current Git index is incorrect")
         seen.add(path)
         digest.update(mode + b"\0" + oid + b"\0" + path + b"\n")
     if not seen:
@@ -1892,7 +1892,7 @@ def _live_image(payload: bytes, role: str, version: str, revision: str) -> Mappi
             parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("constant")),
         )
     except (UnicodeError, ValueError, RecursionError):
-        raise PreflightFailure("live_image_invalid", "local release image inspect is invalid") from None
+        raise PreflightFailure("live_image_invalid", "local release image inspect is incorrect") from None
     if isinstance(value, list) and len(value) == 1:
         value = value[0]
     config = value.get("Config") if isinstance(value, dict) else None
@@ -1950,14 +1950,14 @@ def _safe_tool(value: str, label: str) -> str:
         or value.startswith("-")
         or any(ord(character) < 32 or ord(character) == 127 for character in value)
     ):
-        raise PreflightFailure("unsafe_tool", label + " selector is unsafe")
+        raise PreflightFailure("unsafe_tool", label + " selector is not safe")
     path = Path(value)
     if "/" not in value:
         if SAFE_TOOL.fullmatch(value) is None:
-            raise PreflightFailure("unsafe_tool", label + " selector is unsafe")
+            raise PreflightFailure("unsafe_tool", label + " selector is not safe")
         return value
     if not path.is_absolute() or path.is_symlink() or not path.is_file() or not os.access(path, os.X_OK):
-        raise PreflightFailure("unsafe_tool", label + " selector is unsafe")
+        raise PreflightFailure("unsafe_tool", label + " selector is not safe")
     return str(path)
 
 
@@ -1970,29 +1970,29 @@ def _arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--git", default="git")
     parser.add_argument(
         "--registry-owner",
-        help="also bind the three outgoing ghcr.io OWNER tags immediately before push",
+        help="also bind the three ghcr.io OWNER tags to their image IDs immediately before the push",
     )
     parser.add_argument(
         "--require-published-digests",
         action="store_true",
-        help="require checksum-bound private-registry manifest digests",
+        help="make checksum-bound private-registry manifest digests necessary",
     )
     parser.add_argument(
         "--finalize-output-dir",
         type=Path,
-        help="write a new checksum-bound bundle with reviewed private manifests",
+        help="write a new checksum-bound bundle with private manifests from the review",
     )
     parser.add_argument(
         "--remote-manifest",
         action="append",
         default=[],
         metavar="ROLE=PATH",
-        help="raw reviewed private-registry manifest for builder, api, or worker",
+        help="raw private-registry manifest from the review for builder, api, or worker",
     )
     parser.add_argument(
         "--print-image-id",
         choices=tuple(IMAGE_TAGS),
-        help="after all checks pass, print only this immutable local image ID",
+        help="after all checks pass, print only this local image ID. The ID cannot change",
     )
     return parser.parse_args(argv)
 
@@ -2010,7 +2010,7 @@ def _manifest_arguments(values: Sequence[str]) -> Mapping[str, Path]:
         ):
             raise PreflightFailure(
                 "remote_manifest_invalid",
-                "private-registry manifest selectors are invalid",
+                "private-registry manifest selectors are incorrect",
             )
         result[role] = Path(raw_path)
     return result
@@ -2025,7 +2025,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             arguments.registry_owner
         ) is None:
             raise PreflightFailure(
-                "invalid_registry_owner", "registry owner is invalid"
+                "invalid_registry_owner", "registry owner is incorrect"
             )
         manifests = _manifest_arguments(arguments.remote_manifest)
         if arguments.finalize_output_dir is not None:

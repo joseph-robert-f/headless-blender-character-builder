@@ -43,7 +43,7 @@ elif [ "$#" -ne 0 ]; then
 fi
 
 if [ "$mode" = full ] && [ -z "${HBCB_RELEASE_RUN_ID:-}" ]; then
-  fail 'HBCB_RELEASE_RUN_ID is required for a full release check; choose a unique safe value'
+  fail 'HBCB_RELEASE_RUN_ID is necessary for a full release check. Choose a unique safe value'
 fi
 
 python_bin=${PYTHON:-python3}
@@ -51,9 +51,9 @@ docker_bin=${DOCKER:-docker}
 case "$python_bin:$docker_bin" in
   *' '*) fail 'PYTHON and DOCKER must each name one executable' ;;
 esac
-command -v "$python_bin" >/dev/null 2>&1 || fail 'Python is unavailable'
-command -v git >/dev/null 2>&1 || fail 'Git is unavailable'
-command -v make >/dev/null 2>&1 || fail 'Make is unavailable'
+command -v "$python_bin" >/dev/null 2>&1 || fail 'Python is not available'
+command -v git >/dev/null 2>&1 || fail 'Git is not available'
+command -v make >/dev/null 2>&1 || fail 'Make is not available'
 
 repo=$(git rev-parse --show-toplevel 2>/dev/null) || fail 'run from a Git worktree'
 repo=$(cd "$repo" && pwd -P)
@@ -61,7 +61,7 @@ cd "$repo"
 
 version=$(sed -n '1p' VERSION)
 case "$version" in
-  ''|*[!0-9A-Za-z.-]*) fail 'VERSION is invalid' ;;
+  ''|*[!0-9A-Za-z.-]*) fail 'VERSION is incorrect' ;;
 esac
 rc_version=${HBCB_RELEASE_VERSION:-$version-rc.1}
 if ! valid_release_version "$rc_version"; then
@@ -97,12 +97,12 @@ chmod 0700 "$scratch"
 
 if ! git diff --quiet --; then
   rm -rf -- "$scratch"
-  fail 'unstaged tracked changes are not allowed; stage the intended release index'
+  fail 'unstaged tracked changes are not allowed. Stage the intended release index'
 fi
 untracked=$(git ls-files --others --exclude-standard)
 if [ -n "$untracked" ]; then
   rm -rf -- "$scratch"
-  fail 'untracked publication files are not allowed; stage or ignore them intentionally'
+  fail 'untracked publication files are not allowed. Stage or ignore them intentionally'
 fi
 git diff --check
 git diff --cached --check
@@ -367,33 +367,33 @@ if ! git diff --cached --quiet --; then
 fi
 source_revision=$("$python_bin" -c \
   'import json,sys; value=json.load(open(sys.argv[1],encoding="utf-8"))["git_head"]; print(value if isinstance(value,str) else "")' \
-  "$audit_report") || fail 'audited source revision is unavailable'
+  "$audit_report") || fail 'audited source revision is not available'
 case "$source_revision" in
   ????????????????????????????????????????) ;;
   ????????????????????????????????????????????????????????????????) ;;
-  *) fail 'audited source revision is invalid' ;;
+  *) fail 'audited source revision is incorrect' ;;
 esac
 case "$source_revision" in
-  *[!0-9a-f]*) fail 'audited source revision is invalid' ;;
+  *[!0-9a-f]*) fail 'audited source revision is incorrect' ;;
 esac
 
-command -v "$docker_bin" >/dev/null 2>&1 || fail 'Docker is unavailable'
-"$docker_bin" info >/dev/null 2>&1 || fail 'Docker daemon is unavailable'
+command -v "$docker_bin" >/dev/null 2>&1 || fail 'Docker is not available'
+"$docker_bin" info >/dev/null 2>&1 || fail 'Docker daemon is not available'
 release_owner=$(PYTHONDONTWRITEBYTECODE=1 "$python_bin" -c \
   'import secrets; print(secrets.token_hex(16))') || \
   fail 'release ownership identity could not be generated'
 case "$release_owner" in
   ????????????????????????????????) ;;
-  *) fail 'release ownership identity is invalid' ;;
+  *) fail 'release ownership identity is incorrect' ;;
 esac
-case "$release_owner" in *[!0-9a-f]*) fail 'release ownership identity is invalid' ;; esac
+case "$release_owner" in *[!0-9a-f]*) fail 'release ownership identity is incorrect' ;; esac
 release_claim_attempted=1
 if ! release_claim_id=$("$docker_bin" volume create \
   --label "io.hbcb.release-claim-owner=$release_owner" \
   "$release_claim_name"); then
   fail 'another full release check owns this Docker daemon or its claim is stale'
 fi
-[ "$release_claim_id" = "$release_claim_name" ] || fail 'release claim identity is invalid'
+[ "$release_claim_id" = "$release_claim_name" ] || fail 'release claim identity is incorrect'
 release_claim_identity=$("$docker_bin" volume inspect --format \
   '{{.Name}}|{{ index .Labels "io.hbcb.release-claim-owner" }}' \
   "$release_claim_name") || fail 'release claim ownership could not be inspected'
@@ -403,14 +403,14 @@ fi
 initial_resources=$(project_resources) || \
   fail 'release Compose project resources could not be inspected'
 if [ -n "$initial_resources" ]; then
-  fail 'release Compose project already exists; choose a unique HBCB_RELEASE_RUN_ID'
+  fail 'release Compose project already exists. Choose a unique HBCB_RELEASE_RUN_ID'
 fi
 builder_container_name=hbcb-release-$run_id-sbom
 initial_builder=$("$docker_bin" ps --all --no-trunc --quiet \
   --filter "name=^/$builder_container_name$") || \
   fail 'temporary release container could not be inspected'
 if [ -n "$initial_builder" ]; then
-  fail 'temporary release container already exists; choose a unique HBCB_RELEASE_RUN_ID'
+  fail 'temporary release container already exists. Choose a unique HBCB_RELEASE_RUN_ID'
 fi
 
 corresponding_source=$scratch/corresponding-source
@@ -428,7 +428,7 @@ fi
 evidence_parent=$repo/build/release-check
 evidence=$evidence_parent/$run_id
 if [ -L "$repo/build" ] || [ -L "$evidence_parent" ] || [ -e "$evidence" ] || [ -L "$evidence" ]; then
-  fail 'release evidence target already exists or is unsafe'
+  fail 'release evidence target already exists or is not safe'
 fi
 mkdir -p "$evidence_parent"
 chmod 0700 "$evidence_parent"
@@ -473,7 +473,7 @@ worker_release_image=headless-blender-character-builder-worker:$rc_version
   pre_service_resources=$(project_resources) || \
     fail 'release Compose project resources could not be inspected before startup'
   if [ -n "$pre_service_resources" ]; then
-    fail 'release Compose project appeared before startup; choose a unique HBCB_RELEASE_RUN_ID'
+    fail 'release Compose project appeared before startup. Choose a unique HBCB_RELEASE_RUN_ID'
   fi
   : > "$service_ownership"
   chmod 0600 "$service_ownership"
@@ -551,10 +551,10 @@ builder_container_id=$("$docker_bin" create \
   "$builder_release_image")
 case "$builder_container_id" in
   ????????????????????????????????????????????????????????????????) ;;
-  *) fail 'temporary release container identity is invalid' ;;
+  *) fail 'temporary release container identity is incorrect' ;;
 esac
 case "$builder_container_id" in
-  *[!0-9a-f]*) fail 'temporary release container identity is invalid' ;;
+  *[!0-9a-f]*) fail 'temporary release container identity is incorrect' ;;
 esac
 "$docker_bin" cp \
   "$builder_container_id:/opt/builder/provenance/sbom.spdx.json" \

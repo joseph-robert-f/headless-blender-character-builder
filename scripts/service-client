@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded loopback client for one local HBCB service build."""
+"""Send one build request to the local HBCB service."""
 
 from __future__ import annotations
 
@@ -111,9 +111,9 @@ class Client:
         try:
             document = json.loads(body.decode("utf-8", "strict"))
         except (UnicodeError, ValueError):
-            raise ClientFailure("local API response is invalid") from None
+            raise ClientFailure('local API response is incorrect') from None
         if not isinstance(document, dict):
-            raise ClientFailure("local API response is invalid")
+            raise ClientFailure('local API response is incorrect')
         return document
 
     def submit(self, payload: bytes) -> str:
@@ -123,7 +123,7 @@ class Client:
         try:
             build_id = str(UUID(document["build_id"]))
         except (KeyError, TypeError, ValueError, AttributeError):
-            raise ClientFailure("build submission response is invalid") from None
+            raise ClientFailure('build submission response is incorrect') from None
         self.build_id = build_id
         return build_id
 
@@ -160,12 +160,12 @@ class Client:
             status = document.get("status")
             code = document.get("terminal_code")
             if document.get("build_id") != self.build_id or status not in nonterminal | terminal:
-                raise ClientFailure("build status response is invalid")
+                raise ClientFailure('build status response is incorrect')
             if status in {"failed", "canceled", "needs_review"}:
                 if not isinstance(code, str) or SAFE_CODE.fullmatch(code) is None:
-                    raise ClientFailure("build terminal code is invalid")
+                    raise ClientFailure('build terminal code is incorrect')
             elif code is not None:
-                raise ClientFailure("build terminal code is invalid")
+                raise ClientFailure('build terminal code is incorrect')
             print(f"status: {status}")
             if status in terminal:
                 self.terminal = True
@@ -233,7 +233,7 @@ class Client:
                 or not isinstance(expected_hash, str)
                 or re.fullmatch(r"[0-9a-f]{64}", expected_hash) is None
             ):
-                raise ClientFailure("artifact evidence is invalid")
+                raise ClientFailure('artifact evidence is incorrect')
             url = self._checked_download_url(entry.get("download_url"))
             declared_total += expected_bytes
             if declared_total > MAX_ARTIFACT_BYTES:
@@ -245,7 +245,7 @@ class Client:
                 raise _RecordedSignal
             relative_path = PurePosixPath(relative)
             if relative_path.is_absolute() or any(part in {"", ".", ".."} for part in relative_path.parts):
-                raise ClientFailure("artifact path is invalid")
+                raise ClientFailure('artifact path is incorrect')
             destination = stage.joinpath(*relative_path.parts)
             destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             digest = hashlib.sha256()
@@ -368,7 +368,7 @@ def _regular_private_file(path: Path, maximum_bytes: int, *, mode: int | None = 
         ):
             raise OSError
     except OSError:
-        raise ClientFailure("required local client input is unavailable or unsafe") from None
+        raise ClientFailure('required local client input is not available or not safe') from None
     finally:
         if descriptor is not None:
             os.close(descriptor)
@@ -388,7 +388,7 @@ def _local_settings(env_file: Path) -> tuple[str, str, str]:
             if separator and name in selected:
                 selected[name].append(value)
     except UnicodeError:
-        raise ClientFailure("private environment file is invalid") from None
+        raise ClientFailure('private environment file is incorrect') from None
     tokens = selected["HBCB_API_TOKEN"]
     if len(tokens) != 1 or re.fullmatch(r"[0-9a-f]{64}", tokens[0]) is None:
         raise ClientFailure("private environment file has no valid unique API token")
@@ -412,9 +412,9 @@ def _owned_output_parent(path: Path) -> Path:
         resolved = path.resolve(strict=True)
         metadata = resolved.lstat()
     except OSError:
-        raise ClientFailure("output parent is unavailable or unsafe") from None
+        raise ClientFailure('output parent is not available or not safe') from None
     if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
-        raise ClientFailure("output parent is unavailable or unsafe")
+        raise ClientFailure('output parent is not available or not safe')
     return resolved
 
 
@@ -426,7 +426,7 @@ def run(argv: Sequence[str] | None = None) -> int:
         )
     except ClientFailure:
         raise ClientFailure(
-            "private .env is unavailable or unsafe; run make init-env and keep it mode 0600"
+            'private .env is not available or not safe. Run make init-env and keep it mode 0600'
         ) from None
     api_port = _port(arguments.api_port or persisted_api_port, "API port")
     storage_port = _port(
@@ -487,7 +487,7 @@ def run(argv: Sequence[str] | None = None) -> int:
         try:
             candidate.mkdir(mode=0o700)
         except FileExistsError:
-            raise ClientFailure("verified result already exists; refusing to overwrite it") from None
+            raise ClientFailure('The result folder is not new. The program will not replace it.') from None
         except OSError:
             raise ClientFailure("verified result could not be reserved safely") from None
         reservation = candidate

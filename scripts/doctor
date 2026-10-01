@@ -8,9 +8,9 @@ usage() {
   printf '%s\n' \
     'usage: scripts/doctor [--demo|--service|--native]' \
     '' \
-    '  --demo     Check the keyless Docker path (default).' \
-    '  --service  Also require Compose 2.24.4+ and Python 3.11+.' \
-    '  --native   Check Python 3.11+ and Blender 4.5.12 without Docker.'
+    '  --demo     Do the Docker path checks without credentials (default).' \
+    '  --service  Also do checks for Compose 2.24.4+ and Python 3.11+.' \
+    '  --native   Do checks for Python 3.11+ and Blender 4.5.12 without Docker.'
 }
 
 mode=demo
@@ -60,7 +60,7 @@ first_line() {
 
 platform=$(uname -s 2>/dev/null || printf unknown)
 architecture=$(uname -m 2>/dev/null || printf unknown)
-printf 'HBCB_DOCTOR: checking %s prerequisites on %s/%s\n' \
+printf 'HBCB_DOCTOR: prerequisite checks for %s on %s/%s\n' \
   "$mode" "$platform" "$architecture"
 
 if [ ! -f Makefile ] || [ ! -f docker/builder.Dockerfile ]; then
@@ -75,7 +75,7 @@ if command -v "$doctor_git" >/dev/null 2>&1; then
     fail 'Git was found but did not report a version'
   fi
 else
-  fail "Git is unavailable ($doctor_git)"
+  fail "Git is not available ($doctor_git)"
 fi
 
 check_make() {
@@ -84,16 +84,16 @@ check_make() {
     case "$make_version" in
       *'GNU Make'*) ok "$make_version" ;;
       '') fail 'Make was found but did not report a version' ;;
-      *) fail "GNU Make is required (found: $make_version)" ;;
+      *) fail "GNU Make is necessary (found: $make_version)" ;;
     esac
   else
-    fail "GNU Make is unavailable ($doctor_make)"
+    fail "GNU Make is not available ($doctor_make)"
   fi
 }
 
 check_python() {
   if ! command -v "$doctor_python" >/dev/null 2>&1; then
-    fail "Python 3.11+ is unavailable ($doctor_python)"
+    fail "Python 3.11+ is not available ($doctor_python)"
     return
   fi
   python_version=$("$doctor_python" --version 2>&1 | first_line || true)
@@ -103,18 +103,18 @@ check_python() {
     python_ready=1
     ok "$python_version"
   else
-    fail "Python 3.11+ is required (found: ${python_version:-unknown})"
+    fail "Python 3.11+ is necessary (found: ${python_version:-unknown})"
   fi
 }
 
 check_curl() {
   if ! command -v "$doctor_curl" >/dev/null 2>&1; then
-    note 'curl is unavailable; only the optional manual API protocol example needs it'
+    note 'curl is not available. For the manual API protocol example, curl is necessary.'
     return
   fi
   curl_version=$("$doctor_curl" --version 2>/dev/null | first_line || true)
   if [ -z "$curl_version" ]; then
-    note 'curl was found but did not report a version; the lightweight client does not need it'
+    note 'curl was found but did not report a version. The lightweight client does not need it'
     return
   fi
   curl_help=$("$doctor_curl" --help all 2>/dev/null || true)
@@ -123,7 +123,7 @@ check_curl() {
       ok "$curl_version (supports the optional manual API protocol example)"
       ;;
     *)
-      note "curl lacks --fail-with-body or --noproxy; use the stdlib lightweight client (found: $curl_version)"
+      note "curl has no --fail-with-body or --noproxy option. Use the standard-library client (found: $curl_version)"
       ;;
   esac
 }
@@ -140,7 +140,7 @@ check_service_docker_endpoint() {
   case "$docker_endpoint_scheme" in
     ssh|tcp|http|https)
       service_docker_local=0
-      fail 'the local service requires a local Docker daemon/context; switch from the selected remote Docker context before continuing'
+      fail 'the local service requires a local Docker daemon/context. Switch from the selected remote Docker context before you continue'
       ;;
     unix|npipe)
       ok 'selected Docker endpoint is local'
@@ -153,7 +153,7 @@ check_service_docker_endpoint() {
       if [ "$docker_endpoint" = default ]; then
         ok 'selected Docker endpoint is local'
       else
-        note 'Docker endpoint metadata is unrecognized; daemon reachability remains authoritative'
+        note 'Docker endpoint metadata is unrecognized. Daemon reachability remains authoritative'
       fi
       ;;
   esac
@@ -161,7 +161,7 @@ check_service_docker_endpoint() {
 
 check_docker() {
   if ! command -v "$doctor_docker" >/dev/null 2>&1; then
-    fail "Docker is unavailable ($doctor_docker)"
+    fail "Docker is not available ($doctor_docker)"
     return
   fi
   docker_version=$("$doctor_docker" --version 2>/dev/null | first_line || true)
@@ -177,19 +177,19 @@ check_docker() {
     docker_ready=1
     ok "Docker daemon is reachable (server $daemon_version)"
   else
-    fail 'Docker daemon is not reachable; start Docker and check current-user access'
+    fail 'Docker daemon is not reachable. Start Docker and check current-user access'
   fi
   if "$doctor_docker" buildx version >/dev/null 2>&1; then
     ok 'Docker Buildx/BuildKit frontend is available'
   else
-    note 'Buildx was not detected; docker build must still support BuildKit and --platform'
+    note 'Buildx was not detected. Docker build must still support BuildKit and --platform'
   fi
   case "$platform/$architecture" in
     Darwin/arm64|Darwin/aarch64)
-      note 'Apple Silicon uses linux/amd64 emulation; the first build is slower'
+      note 'Apple Silicon uses linux/amd64 emulation. The first build can take more time.'
       ;;
     Linux/aarch64|Linux/arm64)
-      note 'Linux arm64 is best effort; the release path targets linux/amd64'
+      note 'Linux arm64 has no release validation. Use linux/amd64 for the release procedure.'
       ;;
   esac
 }
@@ -209,7 +209,7 @@ check_service_env() {
     return
   fi
   if [ ! -e .env ]; then
-    note 'no .env exists yet; run make init-env after this check passes'
+    note 'There is no .env file. Run make init-env after this check passes.'
     return
   fi
   if [ ! -f .env ]; then
@@ -220,12 +220,12 @@ check_service_env() {
   env_mode=$(file_mode .env || true)
   env_owner=$(file_owner .env || true)
   if [ "$env_mode" != 600 ] || [ "$env_owner" != "$(id -u)" ]; then
-    fail '.env must be owned by the current user with mode 0600; do not replace it while service volumes exist'
+    fail 'The current user must own .env. Its mode must be 0600. Do not replace .env while there are service volumes.'
     service_env_ready=0
     return
   fi
   ok '.env is an owned mode-0600 regular file'
-  note 'preserve .env while its matching service volumes exist'
+  note 'Keep .env while there are service volumes that use it.'
 }
 
 report_loopback_port() {
@@ -278,14 +278,14 @@ check_capacity() {
     memory_baseline_gib=8
     disk_baseline_kib=20971520
     disk_baseline_gib=20
-    cpu_note='the service can use about 8 CPUs'
+    cpu_note='The service can use about 8 CPUs'
   else
     capacity_label=one-shot
     memory_baseline_bytes=8589934592
     memory_baseline_gib=8
     disk_baseline_kib=10485760
     disk_baseline_gib=10
-    cpu_note='the one-shot builder is capped at 4 CPUs and 4 GiB; the 8 GiB host baseline allows overhead'
+    cpu_note='The one-shot builder uses a maximum of 4 CPUs and 4 GiB. The 8 GiB host baseline includes overhead'
   fi
   if [ "$docker_ready" -eq 1 ] && [ "$service_docker_local" -eq 1 ]; then
     capacity=$("$doctor_docker" info --format '{{.NCPU}}|{{.MemTotal}}' 2>/dev/null | first_line || true)
@@ -300,10 +300,10 @@ check_capacity() {
       ''|*[!0-9:]*|*:|:*) capacity_valid=0 ;;
     esac
     if [ "$capacity_valid" -ne 1 ]; then
-      note "Docker CPU/RAM allocation could not be measured; the advisory $capacity_label Docker-memory baseline is ${memory_baseline_gib} GiB"
+      note "Docker CPU/RAM allocation could not be measured. The advisory $capacity_label Docker-memory baseline is ${memory_baseline_gib} GiB"
     else
       capacity_gib=$((capacity_memory / 1073741824))
-      note "Docker reports $capacity_cpus CPU(s) and ${capacity_gib} GiB RAM; $cpu_note"
+      note "Docker reports $capacity_cpus CPU(s) and ${capacity_gib} GiB RAM. $cpu_note"
       if [ "$capacity_memory" -lt "$memory_baseline_bytes" ]; then
         note "Docker has less than the advisory ${memory_baseline_gib} GiB $capacity_label memory baseline"
       else
@@ -316,11 +316,11 @@ check_capacity() {
   fi
   free_kib=$(df -Pk . 2>/dev/null | awk 'END { print $4 }' || true)
   case "$free_kib" in
-    ''|*[!0-9]*) note "checkout free disk could not be measured; allow at least ${disk_baseline_gib} GiB for the $capacity_label path" ;;
+    ''|*[!0-9]*) note "checkout free disk could not be measured. Allow at least ${disk_baseline_gib} GiB for the $capacity_label path" ;;
     *)
       free_gib=$((free_kib / 1048576))
       if [ "$free_kib" -lt "$disk_baseline_kib" ]; then
-        note "checkout has about ${free_gib} GiB free; the advisory $capacity_label baseline is ${disk_baseline_gib} GiB"
+        note "checkout has about ${free_gib} GiB free. The advisory $capacity_label baseline is ${disk_baseline_gib} GiB"
       else
         ok "checkout has about ${free_gib} GiB free (${disk_baseline_gib} GiB $capacity_label baseline)"
       fi
@@ -330,13 +330,13 @@ check_capacity() {
 
 check_service_settings() {
   if [ ! -r ./scripts/service-common ]; then
-    fail 'shared local-service settings are unavailable'
+    fail 'shared local-service settings are not available'
     return
   fi
   # shellcheck source=service-common
   . ./scripts/service-common
   if ! hbcb_service_settings; then
-    fail 'local-service project or loopback-port settings are invalid'
+    fail 'local-service project or loopback-port settings are incorrect'
     return
   fi
   ok "selected Compose project is $HBCB_COMPOSE_PROJECT_NAME"
@@ -346,11 +346,11 @@ check_service_settings() {
 check_compose() {
   compose_version=$("$doctor_docker" compose version 2>/dev/null | first_line || true)
   if [ -z "$compose_version" ]; then
-    fail 'Docker Compose v2 is unavailable'
+    fail 'Docker Compose v2 is not available'
     return
   fi
   if [ "$python_ready" -ne 1 ]; then
-    note "Docker Compose reports $compose_version; select Python 3.11+ to check its minimum version"
+    note "Docker Compose reports $compose_version. Select Python 3.11+ to check its minimum version"
     return
   fi
   if "$doctor_python" -c '
@@ -361,20 +361,20 @@ raise SystemExit(0 if match and tuple(map(int, match.groups())) >= (2, 24, 4) el
 ' "$compose_version" >/dev/null 2>&1; then
     ok "$compose_version"
   else
-    fail "Docker Compose 2.24.4+ is required (found: $compose_version)"
+    fail "Docker Compose 2.24.4+ is necessary (found: $compose_version)"
   fi
 }
 
 check_blender() {
   if ! command -v "$doctor_blender" >/dev/null 2>&1; then
-    fail "Blender 4.5.12 is unavailable ($doctor_blender)"
+    fail "Blender 4.5.12 is not available ($doctor_blender)"
     return
   fi
   blender_version=$("$doctor_blender" --version 2>/dev/null | first_line || true)
   case "$blender_version" in
     'Blender 4.5.12'*) ok "$blender_version" ;;
     '') fail 'Blender was found but did not report a version' ;;
-    *) fail "Blender 4.5.12 is required (found: $blender_version)" ;;
+    *) fail "Blender 4.5.12 is necessary (found: $blender_version)" ;;
   esac
 }
 
@@ -400,7 +400,7 @@ case "$mode" in
   native)
     check_python
     check_blender
-    note 'native mode is best effort; the release-blocking path is linux/amd64 Docker'
+    note 'Native mode is for development. Release checks use linux/amd64 Docker.'
     ;;
 esac
 

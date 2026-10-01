@@ -31,10 +31,10 @@ ServiceFactory = Callable[[Mapping[str, str]], MaintenanceService]
 def _bounded_cli_integer(label: str, minimum: int, maximum: int) -> Callable[[str], int]:
     def parse(value: str) -> int:
         if not isinstance(value, str) or not value.isascii() or not value.isdigit():
-            raise argparse.ArgumentTypeError(f"{label} is outside policy")
+            raise argparse.ArgumentTypeError(f'{label} is not permitted by policy')
         parsed = int(value)
         if not minimum <= parsed <= maximum:
-            raise argparse.ArgumentTypeError(f"{label} is outside policy")
+            raise argparse.ArgumentTypeError(f'{label} is not permitted by policy')
         return parsed
 
     return parse
@@ -47,9 +47,9 @@ def build_parser() -> argparse.ArgumentParser:
     retention = commands.add_parser(
         "retain",
         aliases=["retention"],
-        help="preview or apply terminal-build retention",
+        help="Show or apply the retention policy for terminal builds.",
     )
-    retention.add_argument("--apply", action="store_true", help="perform the deletion transaction")
+    retention.add_argument("--apply", action="store_true", help="Do the deletion transaction.")
     retention.add_argument(
         "--limit",
         type=_bounded_cli_integer("retention limit", 1, MAX_MAINTENANCE_BATCH),
@@ -69,9 +69,9 @@ def build_parser() -> argparse.ArgumentParser:
         )
 
     deletion = commands.add_parser(
-        "delete-artifacts", help="preview or delete exact queued object versions"
+        "delete-artifacts", help="Show or remove the queued object versions."
     )
-    deletion.add_argument("--apply", action="store_true", help="delete exact recorded versions")
+    deletion.add_argument("--apply", action="store_true", help="Remove the recorded object versions.")
     deletion.add_argument(
         "--limit",
         type=_bounded_cli_integer("deletion limit", 1, MAX_MAINTENANCE_BATCH),
@@ -86,12 +86,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     orphan = commands.add_parser(
         "discover-orphans",
-        help="preview or durably queue old unreferenced immutable object versions",
+        help="Show old immutable object versions with no reference, or put them in the durable queue.",
     )
     orphan.add_argument(
         "--apply",
         action="store_true",
-        help="queue exact orphan evidence for later delete-artifacts processing",
+        help="Put orphan evidence in the queue. The delete-artifacts command can then use this evidence.",
     )
     orphan.add_argument(
         "--limit",
@@ -111,9 +111,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     reconstruct = commands.add_parser(
         "reconstruct-redis",
-        help="derive Redis wakeups from current PostgreSQL queued builds",
+        help="Make Redis wakeups from builds in the PostgreSQL queue.",
     )
-    reconstruct.add_argument("--apply", action="store_true", help="enqueue the derived UUIDs")
+    reconstruct.add_argument("--apply", action="store_true", help="Put these UUIDs in the queue.")
     reconstruct.add_argument(
         "--limit",
         type=_bounded_cli_integer("Redis reconstruction limit", 1, MAX_MAINTENANCE_BATCH),
@@ -122,23 +122,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser(
         "backup-inventory",
-        help="emit exact PostgreSQL artifact version/hash inventory JSON",
+        help="Show the PostgreSQL artifact version and hash inventory in JSON format.",
     )
     backup_export = commands.add_parser(
         "backup-export",
-        help="download exact referenced object versions into a new private directory",
+        help="Download the referenced object versions into a new private folder.",
     )
     backup_export.add_argument("--output", required=True)
 
     restore = commands.add_parser(
         "restore-objects",
-        help="validate an object backup and restore exact canonical keys",
+        help="Do the object backup checks and restore the canonical keys.",
     )
     restore.add_argument("--input", required=True)
     restore.add_argument(
         "--apply",
         action="store_true",
-        help="upload verified objects and atomically remap PostgreSQL version IDs",
+        help="Upload objects after verification. Change the PostgreSQL version IDs in one atomic operation.",
     )
     return parser
 
@@ -198,10 +198,10 @@ def _environment_integer(
     if value is None:
         return default
     if not isinstance(value, str) or not value.isascii() or not value.isdigit():
-        raise MaintenanceError("invalid_integer", f"{name} is outside policy")
+        raise MaintenanceError("invalid_integer", f'{name} is not permitted by policy')
     parsed = int(value)
     if not 1 <= parsed <= MAX_RETENTION_DAYS:
-        raise MaintenanceError("invalid_integer", f"{name} is outside policy")
+        raise MaintenanceError("invalid_integer", f'{name} is not permitted by policy')
     return parsed
 
 
@@ -374,7 +374,7 @@ def run(
                 },
             )
         else:  # pragma: no cover - argparse makes this unreachable.
-            raise MaintenanceError("invalid_command", "maintenance command is invalid")
+            raise MaintenanceError("invalid_command", 'maintenance command is incorrect')
         return 0
     except ServiceError as exc:
         _write_json(stderr, {"error": {"code": exc.code}, "ok": False})

@@ -448,7 +448,7 @@ class PortableReviewTests(PortableCase):
         before = snapshot(self.store)
         duplicate = self.cli("review", "--project", self.root, "--experimental-platform-review")
         self.assertEqual(duplicate.returncode, 2, duplicate.stdout)
-        self.assertIn("already running", duplicate.stdout.lower())
+        self.assertIn("session is active for this project", duplicate.stdout.lower())
         self.assertEqual(state_path.read_bytes(), running)
         self.assertEqual(request(origin, "/api/project")[0], 200)
         self.assertEqual(snapshot(self.store), before)

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "manifest-v1.schema.json",
   "title": "Successful build manifest v1",
-  "description": "Provenance, dimensions, artifact hashes, and passing QA summary. manifest.json excludes its own hash.",
+  "description": "Provenance, dimensions, artifact hashes, and a QA summary that passes. manifest.json excludes its own hash.",
   "type": "object",
   "additionalProperties": false,
   "required": [

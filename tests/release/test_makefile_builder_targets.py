@@ -496,7 +496,7 @@ class MakefileBuilderTargetTests(unittest.TestCase):
                         "HBCB_MAKE: FAIL[request_missing]", rejected.stdout
                     )
                     self.assertIn(
-                        "set REQUEST to an existing regular JSON file",
+                        "Set REQUEST to a regular JSON file that is available.",
                         rejected.stdout,
                     )
                     self.assertFalse(docker_log.exists())
@@ -524,7 +524,7 @@ class MakefileBuilderTargetTests(unittest.TestCase):
             self.assertIn(
                 "HBCB_MAKE: FAIL[output_exists]", rejected_build.stdout
             )
-            self.assertIn("choose a new OUTPUT_NAME", rejected_build.stdout)
+            self.assertIn("Select a new OUTPUT_NAME", rejected_build.stdout)
             self.assertEqual(sentinel.read_text(encoding="utf-8"), "preserve\n")
             self.assertFalse(docker_log.exists())
 
@@ -567,7 +567,7 @@ class MakefileBuilderTargetTests(unittest.TestCase):
             self.assertIn(
                 "HBCB_MAKE: FAIL[output_missing]", rejected_linked_verify.stdout
             )
-            self.assertIn("non-symlink directory", rejected_linked_verify.stdout)
+            self.assertIn("folder without symlinks", rejected_linked_verify.stdout)
             self.assertTrue(linked_output.is_symlink())
             self.assertFalse(docker_log.exists())
 
@@ -584,7 +584,7 @@ class MakefileBuilderTargetTests(unittest.TestCase):
                 "HBCB_MAKE: FAIL[output_missing]", rejected_verify.stdout
             )
             self.assertIn(
-                "run make build with the same REQUEST and OUTPUT_NAME first",
+                "Run make build with the same REQUEST and OUTPUT_NAME first",
                 rejected_verify.stdout,
             )
             self.assertFalse(docker_log.exists())

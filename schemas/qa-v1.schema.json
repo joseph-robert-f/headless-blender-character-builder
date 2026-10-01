@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "qa-v1.schema.json",
   "title": "Geometry QA report v1",
-  "description": "Detailed mandatory geometry-v1 evidence. Null mandatory evidence requires needs_review.",
+  "description": "Mandatory geometry-v1 evidence. Null mandatory evidence gives needs_review.",
   "$comment": "QualityReport.from_mapping is normative for cross-field status derivation. Runtime mapping: passed -> succeeded/exit 0/success manifest allowed; failed -> failed/exit 11/no success manifest; needs_review -> needs_review/exit 11/no success manifest. Runtime status derivation also compares requested/evaluated height and GLB/STL dimensions per axis using max(0.2 mm, 0.5%).",
   "type": "object",
   "additionalProperties": false,

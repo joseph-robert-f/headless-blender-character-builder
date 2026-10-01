@@ -32,7 +32,7 @@ def read_object(path: Path) -> dict:
     if not path.is_file() or path.stat().st_size > 16384:
         raise ValueError("Expected a regular JSON file of at most 16 KiB")
     value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object,
-                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Invalid JSON number")))
+                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError('Incorrect JSON number')))
     if not isinstance(value, dict):
         raise ValueError("Expected a JSON object")
     return value
@@ -77,16 +77,16 @@ class Project:
         root = local_path(root)
         value = read_object(root / DESCRIPTOR)
         if set(value) != {"schema_version", "name", "folders", "runtime_policy"}:
-            raise ValueError("Unknown project fields; credentials and machine paths do not belong in the descriptor")
+            raise ValueError("Unknown project fields. Do not put credentials or machine paths in the descriptor.")
         if type(value["schema_version"]) is not int or value["schema_version"] != 1:
-            raise ValueError("Unsupported project schema; no automatic migration is available")
+            raise ValueError('Not permitted project schema. The program does not change the schema version.')
         name = value["name"]
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80 or any(ord(c) < 32 for c in name):
             raise ValueError("Project name must be 1–80 printable characters")
         if value["folders"] != FOLDERS:
-            raise ValueError("Project folder layout must match version 1; arbitrary paths are forbidden")
+            raise ValueError("The project folder layout must match version 1. Do not use other paths.")
         if value["runtime_policy"] != RUNTIME_POLICY:
-            raise ValueError("Unsupported runtime policy; no automatic runtime upgrade is available")
+            raise ValueError('Not permitted runtime policy. The program does not change the runtime version.')
         project = cls(root, name)
         for role in FOLDERS:
             project.folder(role)  # Reject redirected folders before any other operation.
@@ -103,7 +103,7 @@ class Project:
     def validate_folders(self) -> None:
         for role in FOLDERS:
             if not self.folder(role).is_dir():
-                raise ValueError(f"Missing project folder {FOLDERS[role]}; rerun init to finish setup")
+                raise ValueError(f"Missing project folder {FOLDERS[role]}. Run init again to complete setup.")
 
 
 def initialize(root: Path, name: str | None = None) -> Project:
@@ -112,10 +112,10 @@ def initialize(root: Path, name: str | None = None) -> Project:
     if descriptor.exists() or descriptor.is_symlink():
         project = Project.open(root)
         if name is not None and name != project.name:
-            raise ValueError("Existing project has a different name; init never replaces it")
+            raise ValueError("The project has a different name. The init command does not replace it.")
     else:
         if root.exists() and (not root.is_dir() or any(root.iterdir())):
-            raise ValueError("Use a new or empty folder; init never adopts or overwrites existing files")
+            raise ValueError("Use a new or empty folder. The init command does not accept or replace files in that folder.")
         selected_name = name if name is not None else root.name
         if not isinstance(selected_name, str) or not 1 <= len(selected_name.strip()) <= 80 or any(ord(c) < 32 for c in selected_name):
             raise ValueError("Project name must be 1–80 printable characters")
@@ -128,7 +128,7 @@ def initialize(root: Path, name: str | None = None) -> Project:
             pass
         project = Project.open(root)
         if project.name != selected_name:
-            raise ValueError("Existing project has a different name; init never replaces it")
+            raise ValueError("The project has a different name. The init command does not replace it.")
     # Descriptor first: an interrupted initialization can be resumed safely.
     for role in FOLDERS:
         project.folder(role).mkdir(parents=True, exist_ok=True)

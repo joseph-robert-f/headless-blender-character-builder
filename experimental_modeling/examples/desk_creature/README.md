@@ -1,11 +1,14 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Independent desk-creature modeling probe
 
-This second, independently authored source program uses no robot-fixture imports
-and needs no built-in shape registration. One novel scene is evidence beyond the
-robot fixture, not statistical proof of general text-to-3D capability.
+This independently authored program imports no robot fixture.
+It uses no built-in shape registration.
+This scene gives verification evidence in addition to the robot fixture.
+One scene is not statistical proof of general text-to-3D capability.
 
 ## Written brief
+
+<!-- ste-preserve:start historical original desk-creature brief -->
 
 Create a faceted jade desk creature with mismatched dark eyes, three differently
 posed legs, a tapered orange curved tail, and a separate lilac crescent-shaped
@@ -20,6 +23,8 @@ plane. Keep every part individually identifiable and editable. No external asset
 
 The dimensions use the scene contract's meters, not a printable desk-toy scale.
 
+<!-- ste-preserve:end -->
+
 ## Program and policy separation
 
 - `source/mesh_shapes.py`: independently authored swept tube and curved U-section vessel
@@ -30,32 +35,39 @@ The dimensions use the scene contract's meters, not a printable desk-toy scale.
 - `tests/experimental_modeling/verify_desk_creature.py`: independent vertex assertions,
   with no author imports
 
-Tail ring groups are indices `8*i .. 8*i+7`. Container sections are eight vertices
-per station: outer bottom/top, outer inner-rim/top/floor, inner floor/top/rim/bottom.
-The radial U section is swept through 240 degrees, with tapered width and capped
-ends. The cavity remains open at the top. Measurements intentionally depend on
-this reviewed topology; arbitrary remeshing would need new measurement definitions.
+Tail ring groups use indices `8*i .. 8*i+7`.
+Each container station has eight vertices: outer bottom/top,
+outer inner-rim/top/floor, and inner floor/top/rim/bottom.
+The radial U section has a 240-degree sweep, tapered width, and capped ends.
+The cavity is open at the top.
+Measurements depend on this reviewed topology.
+A remesh operation must have new measurement definitions.
 
 ## Reproduce
 
-From the repository root, review all source first and choose an empty external store:
+First examine all source. From the repository root, use an empty external store:
 
 ```sh
 python tests/experimental_modeling/run_desk_creature.py \
   --store /tmp/reviewed-desk-creature --trusted-reviewed-source
 ```
 
-This is reviewed native development, **NOT SANDBOXED**. It must not be used for
-unreviewed generated code. The runner also accepts the controller's `--sandbox-image`
-option when a supported Docker backend is available; this probe's reported execution
-was native and does not verify Docker containment. Omitting both modes fails closed.
+This is reviewed native development, **NOT SANDBOXED**.
+Do not use it for generated code that you have not reviewed.
+The runner also accepts the controller's `--sandbox-image` option with a supported Docker backend.
+If you omit the two mode options, the runner stops.
+The historical result below used native execution. It does not show Docker isolation.
 
-The runner retains all three full-view builds, GLB and .blend reopen evidence,
-independent assertions, a fresh clean final rebuild and a deliberately wrong
-centroid-target negative control. The negative control must fail exactly its centroid
-check. Generated binaries, renders and JSON evidence stay in the supplied store.
+The runner keeps the three builds with all views, GLB and .blend reopen evidence,
+and independent assertions.
+It also keeps a new clean rebuild of the last revision
+and a negative control with an incorrect centroid target.
+Only the centroid check must fail for that control.
+Generated binaries, renders, and JSON evidence stay in the specified store.
 
 ## Results and quality review
+
+<!-- ste-preserve:start historical recorded native desk-creature results -->
 
 Native r0/r1/r2 each passed full pipeline acceptance. Independent measurements
 confirmed 7 unchanged geometry/transform/material fingerprints per edit; maximum
@@ -81,7 +93,12 @@ centroid constraint now declares all 17 station locations, and the separate veri
 also checks the entire displacement/radius prescription. This is still a reviewed
 indexed measurement contract, not a universal semantic shape validator.
 
-Closed edges and positive signed volume do not rule out every self-intersection or
-establish physical stability, stress limits, printing quality or manufacturing fitness.
-The creature contains intersecting semantic parts. No print-ready, malicious-source
-safety, broad artistic quality or cross-version determinism claim is made.
+<!-- ste-preserve:end -->
+
+## Coverage limits
+
+Closed edges and positive signed volume do not exclude all self-intersections.
+They do not show physical stability, stress limits, print quality, or manufacturing fitness.
+The creature has intersecting semantic parts.
+These results do not show print readiness, malicious-source safety,
+general artistic quality, or cross-version determinism.

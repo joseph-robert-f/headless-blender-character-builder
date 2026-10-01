@@ -24,10 +24,10 @@ def is_redirected(path: Path) -> bool:
 def safe_path(path: Path) -> Path:
     path = Path(path)
     if ".." in path.parts:
-        raise ValueError("Parent traversal is forbidden in project/runtime paths")
+        raise ValueError("Parent traversal is not permitted in project or runtime paths.")
     path = Path(os.path.abspath(path))
     if os.name == "nt" and path.drive.startswith("\\\\"):
-        raise ValueError("Use an ordinary local drive; network and device paths are unsupported")
+        raise ValueError("Use a local drive. Do not use network paths or device paths.")
     for part in (path, *path.parents):
         if is_redirected(part):
             raise ValueError("Project paths must not contain symlinks, junctions or other reparse points")
@@ -59,7 +59,7 @@ def exclusive_lock(path: Path):
                 msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
             except OSError as exc:
                 if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
-                    raise BlockingIOError(errno.EAGAIN, "Project lease is already held") from exc
+                    raise BlockingIOError(errno.EAGAIN, "A process holds the project lease.") from exc
                 raise
         else:
             import fcntl

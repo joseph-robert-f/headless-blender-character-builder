@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "character-spec-v1.schema.json",
   "title": "CharacterSpec v1",
-  "description": "A bounded declarative character specification; it is not a Blender operation graph.",
+  "description": "A declarative character specification with fixed limits. It is not a Blender operation graph.",
   "type": "object",
   "additionalProperties": false,
   "required": [

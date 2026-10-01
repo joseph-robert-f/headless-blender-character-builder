@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate offline service SPDX/notices and validate the actual builder SBOM."""
+"""Write service SPDX files and notices offline. Validate the SBOM from the builder image."""
 
 from __future__ import annotations
 
@@ -41,11 +41,11 @@ def _regular_bytes(path: Path, maximum: int = MAX_INPUT_BYTES) -> bytes:
     try:
         metadata = path.lstat()
     except OSError:
-        raise SbomFailure("input_unavailable", "required input is unavailable: " + path.name) from None
+        raise SbomFailure("input_unavailable", "required input is not available: " + path.name) from None
     if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
-        raise SbomFailure("unsafe_input", "required input must be a regular non-symlink: " + path.name)
+        raise SbomFailure("unsafe_input", "necessary input must be a regular file, not a symlink: " + path.name)
     if metadata.st_size <= 0 or metadata.st_size > maximum:
-        raise SbomFailure("input_size_invalid", "required input size is outside policy: " + path.name)
+        raise SbomFailure("input_size_invalid", "necessary input size does not obey the size policy: " + path.name)
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(str(path), flags)
@@ -54,7 +54,7 @@ def _regular_bytes(path: Path, maximum: int = MAX_INPUT_BYTES) -> bytes:
     except OSError:
         raise SbomFailure("input_unreadable", "required input cannot be read: " + path.name) from None
     if len(payload) != metadata.st_size:
-        raise SbomFailure("input_changed", "required input changed while reading: " + path.name)
+        raise SbomFailure("input_changed", "necessary input changed during the read: " + path.name)
     return payload
 
 
@@ -99,7 +99,7 @@ def parse_lock(payload: bytes) -> Dict[str, Dict[str, object]]:
         if hash_match is not None and current is not None:
             hashes.append(hash_match.group(1))
             continue
-        raise SbomFailure("invalid_service_lock", "invalid service lock syntax at line %d" % number)
+        raise SbomFailure("invalid_service_lock", "incorrect service lock syntax at line %d" % number)
     finish()
     if not packages:
         raise SbomFailure("empty_service_lock", "service dependency lock contains no packages")
@@ -110,7 +110,7 @@ def load_inventory(payload: bytes, lock_payload: bytes) -> Dict[str, Dict[str, s
     try:
         document = json.loads(payload.decode("utf-8", "strict"))
     except (UnicodeDecodeError, ValueError):
-        raise SbomFailure("invalid_license_inventory", "service license inventory is invalid JSON") from None
+        raise SbomFailure("invalid_license_inventory", "service license inventory is incorrect JSON") from None
     expected = {"dependencies", "format", "requirements_lock", "requirements_sha256"}
     if not isinstance(document, dict) or set(document) != expected:
         raise SbomFailure("invalid_license_inventory", "service license inventory has an unsupported contract")
@@ -125,7 +125,7 @@ def load_inventory(payload: bytes, lock_payload: bytes) -> Dict[str, Dict[str, s
     for raw_name, item in dependencies.items():
         name = _normalize_name(raw_name)
         if name != raw_name or name in result or not isinstance(item, dict):
-            raise SbomFailure("invalid_license_inventory", "service license inventory package key is invalid")
+            raise SbomFailure("invalid_license_inventory", "service license inventory package key is incorrect")
         if set(item) != {"license", "source_url", "version"}:
             raise SbomFailure("invalid_license_inventory", "service license inventory entry is incomplete: " + name)
         license_expression = item.get("license")
@@ -141,7 +141,7 @@ def load_inventory(payload: bytes, lock_payload: bytes) -> Dict[str, Dict[str, s
             or not isinstance(version, str)
             or not version
         ):
-            raise SbomFailure("invalid_license_inventory", "service license inventory value is invalid: " + name)
+            raise SbomFailure("invalid_license_inventory", "service license inventory value is incorrect: " + name)
         if source_url != "https://pypi.org/project/%s/%s/" % (name, version):
             raise SbomFailure("invalid_license_inventory", "service license source URL is not canonical: " + name)
         result[name] = {
@@ -156,7 +156,7 @@ def validate_builder_sbom(payload: bytes) -> Dict[str, object]:
     try:
         document = json.loads(payload.decode("utf-8", "strict"))
     except (UnicodeDecodeError, ValueError):
-        raise SbomFailure("invalid_builder_sbom", "builder SBOM is invalid JSON") from None
+        raise SbomFailure("invalid_builder_sbom", "builder SBOM is incorrect JSON") from None
     if not isinstance(document, dict):
         raise SbomFailure("invalid_builder_sbom", "builder SBOM root must be an object")
     if (
@@ -164,7 +164,7 @@ def validate_builder_sbom(payload: bytes) -> Dict[str, object]:
         or document.get("dataLicense") != "CC0-1.0"
         or document.get("SPDXID") != "SPDXRef-DOCUMENT"
     ):
-        raise SbomFailure("invalid_builder_sbom", "builder SBOM SPDX header is invalid")
+        raise SbomFailure("invalid_builder_sbom", "builder SBOM SPDX header is incorrect")
     packages = document.get("packages")
     if not isinstance(packages, list) or not packages:
         raise SbomFailure("invalid_builder_sbom", "builder SBOM contains no packages")
@@ -178,7 +178,7 @@ def validate_builder_sbom(payload: bytes) -> Dict[str, object]:
         name = package.get("name")
         identifier = package.get("SPDXID")
         if not isinstance(name, str) or not name or not isinstance(identifier, str) or not identifier.startswith("SPDXRef-"):
-            raise SbomFailure("invalid_builder_sbom", "builder SBOM package identity is invalid")
+            raise SbomFailure("invalid_builder_sbom", "builder SBOM package identity is incorrect")
         if identifier in identifiers:
             raise SbomFailure("invalid_builder_sbom", "builder SBOM has duplicate SPDX identifiers")
         identifiers.add(identifier)
@@ -192,10 +192,10 @@ def validate_builder_sbom(payload: bytes) -> Dict[str, object]:
                 and bool(package.get("checksums"))
             )
     if not project_valid or not blender_valid:
-        raise SbomFailure("builder_sbom_incomplete", "builder SBOM lacks reviewed project/Blender packages")
+        raise SbomFailure("builder_sbom_incomplete", "builder SBOM does not include project/Blender packages with a completed review")
     relationships = document.get("relationships")
     if not isinstance(relationships, list) or not relationships:
-        raise SbomFailure("builder_sbom_incomplete", "builder SBOM lacks relationships")
+        raise SbomFailure("builder_sbom_incomplete", "builder SBOM does not include relationships")
     return document
 
 
@@ -207,13 +207,13 @@ def _project_version(payload: bytes) -> str:
     versions = re.findall(r'(?m)^version\s*=\s*"([^"]+)"\s*$', text)
     licenses = re.findall(r'(?m)^license\s*=\s*"([^"]+)"\s*$', text)
     if len(versions) != 1 or SEMVER.fullmatch(versions[0]) is None or licenses != ["GPL-3.0-or-later"]:
-        raise SbomFailure("invalid_service_project", "service project version/license metadata is invalid")
+        raise SbomFailure("invalid_service_project", "service project version/license metadata is incorrect")
     return versions[0]
 
 
 def _created(epoch: int) -> str:
     if epoch < 0 or epoch > 2147483647:
-        raise SbomFailure("invalid_source_date_epoch", "source date epoch is outside portable range")
+        raise SbomFailure("invalid_source_date_epoch", "source date epoch is not in the portable range")
     return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -363,7 +363,7 @@ def generate(root: Path, builder_sbom: Path, output_dir: Path, source_date_epoch
     )
     builder_namespace = builder_document.get("documentNamespace")
     if not isinstance(builder_namespace, str) or not builder_namespace.startswith("https://"):
-        raise SbomFailure("invalid_builder_sbom", "builder SBOM namespace is invalid")
+        raise SbomFailure("invalid_builder_sbom", "builder SBOM namespace is incorrect")
     worker_document["externalDocumentRefs"] = [
         {
             "checksum": {
@@ -390,10 +390,10 @@ def generate(root: Path, builder_sbom: Path, output_dir: Path, source_date_epoch
     }
     output_dir = output_dir.resolve()
     if output_dir.exists() or output_dir.is_symlink():
-        raise SbomFailure("output_exists", "refusing to overwrite SBOM output directory")
+        raise SbomFailure("output_exists", "cannot overwrite the SBOM output directory")
     parent = output_dir.parent
     if not parent.is_dir() or parent.is_symlink():
-        raise SbomFailure("output_parent_unsafe", "SBOM output parent is unavailable")
+        raise SbomFailure("output_parent_unsafe", "SBOM output parent is not available")
     temporary = Path(tempfile.mkdtemp(prefix=".hbcb-sbom-", dir=str(parent)))
     try:
         temporary.chmod(0o700)
@@ -412,9 +412,9 @@ def generate(root: Path, builder_sbom: Path, output_dir: Path, source_date_epoch
 def _arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=ROOT, help="source root (default: project root)")
-    parser.add_argument("--builder-sbom", type=Path, required=True, help="actual SPDX JSON extracted from the builder image")
+    parser.add_argument("--builder-sbom", type=Path, required=True, help="SPDX JSON from the builder image")
     parser.add_argument("--output-dir", type=Path, required=True, help="new output directory")
-    parser.add_argument("--source-date-epoch", type=int, default=0, help="portable reproducible timestamp")
+    parser.add_argument("--source-date-epoch", type=int, default=0, help="reproducible timestamp in the portable range")
     return parser.parse_args(argv)
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a native, unsigned, read-only developer preview. Never publishes it."""
+"""Make a native, unsigned, read-only developer preview. This command does not publish files."""
 from __future__ import annotations
 
 import argparse
@@ -148,7 +148,7 @@ def native_inventory(bundle, work, target):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, required=True, help="New or empty build output directory")
+    parser.add_argument("--output", type=Path, required=True, help="Select a new or empty build output folder.")
     parser.add_argument("--target", choices=["windows-x64", "macos-arm64", "linux-validation"], required=True)
     args = parser.parse_args()
     systems = {"windows-x64": ("Windows", {"amd64", "x86_64"}),
@@ -156,13 +156,13 @@ def main():
                "linux-validation": ("Linux", {"x86_64", "amd64"})}
     system, machines = systems[args.target]
     if platform.system() != system or platform.machine().lower() not in machines:
-        raise ValueError("Build must run natively on the stated OS and CPU; no cross-compilation evidence")
+        raise ValueError('Build must run natively on the stated OS and CPU. No cross-compilation evidence')
     if args.target != "linux-validation" and platform.python_version() != PYTHON_VERSION:
         raise ValueError(f"Use the pinned official CPython {PYTHON_VERSION} standard-GIL runtime")
     if sysconfig.get_config_var("Py_GIL_DISABLED"):
         raise ValueError("Free-threaded Python is not a reviewed preview input")
     if git("diff", "--name-only"):
-        raise ValueError("Stage the reviewed source first; working tree must match the Git index")
+        raise ValueError('Stage the reviewed source first. Working tree must match the Git index')
     tree = git("write-tree")
     commit = git("rev-parse", "HEAD")
     clean = tree == git("rev-parse", "HEAD^{tree}")
@@ -170,7 +170,7 @@ def main():
         raise ValueError("CI packages must match the exact checked-out commit")
     out = args.output.resolve()
     if out.exists() and any(out.iterdir()):
-        raise ValueError("Output must be new or empty; no existing package is overwritten")
+        raise ValueError('Output must be new or empty. No existing package is overwritten')
     out.mkdir(parents=True, exist_ok=True)
     deps = dependencies()
     work = out / "work"

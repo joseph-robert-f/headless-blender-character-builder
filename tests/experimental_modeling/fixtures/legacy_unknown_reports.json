@@ -1,0 +1,1016 @@
+{
+  "baseline_commit": "e5efac203e04672830c9d6772f88f510f8127123",
+  "scope": "Synthetic, version-1 saved-report compatibility fixtures. No model execution.",
+  "cases": [
+    {
+      "name": "invalid-edge",
+      "result": {
+        "schema_version": 1,
+        "revision": "legacy-unknown",
+        "parent": null,
+        "status": "needs_review",
+        "jobs": {
+          "author": {
+            "exit_code": 0
+          },
+          "inspect": {
+            "exit_code": 0
+          },
+          "roundtrip": {
+            "exit_code": 0
+          },
+          "reopen": {
+            "exit_code": 0
+          }
+        },
+        "provenance_verified": true,
+        "source_files": {},
+        "policy_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "runtime_hash": "synthetic-legacy-fixture",
+        "requirements_hash": "07836710518dbc7d3513126a7564abb99c7ee6031a681862d48984a695c395f9"
+      },
+      "policy": {
+        "schema_version": 1,
+        "parts": [
+          "body"
+        ],
+        "changed_parts": [],
+        "constraints": [],
+        "profile": "scene"
+      },
+      "requirements": {
+        "schema_version": 1,
+        "requirements": [
+          {
+            "id": "legacy-edge-check",
+            "title": "Legacy edge check",
+            "kind": "connected_path",
+            "hard": true,
+            "phase": "always",
+            "params": {
+              "part": "body",
+              "region": [
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ],
+              "from": [
+                [
+                  null,
+                  0.1
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ],
+              "to": [
+                [
+                  0.9,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      "observation": {
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                1,
+                0,
+                0
+              ],
+              [
+                0,
+                1,
+                0
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                1,
+                2
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                99
+              ]
+            ],
+            "geometry_hash": "synthetic-geometry",
+            "transform_hash": "synthetic-transform",
+            "material_hash": "synthetic-material"
+          }
+        }
+      },
+      "report": {
+        "schema_version": 1,
+        "requirements_hash": "07836710518dbc7d3513126a7564abb99c7ee6031a681862d48984a695c395f9",
+        "requirements": [
+          {
+            "id": "pipeline-author",
+            "title": "Author job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "author",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-inspect",
+            "title": "Independent inspection job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "inspect",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-roundtrip",
+            "title": "GLB roundtrip",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "roundtrip",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-reopen",
+            "title": "Saved Blender scene reopened",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "reopen",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-provenance",
+            "title": "Source, rules and previous revision integrity",
+            "kind": "integrity",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "verified": true
+            },
+            "expected": {
+              "verified": true
+            },
+            "evidence": {
+              "stage": "controller_integrity"
+            },
+            "coverage": "Controller-checked file hashes; native mode is not a hostile-code security boundary."
+          },
+          {
+            "id": "policy-overall",
+            "title": "Declared parts, geometric policy and revision scope",
+            "kind": "policy",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "failures": []
+            },
+            "expected": {
+              "all_declared_policy_checks_pass": true
+            },
+            "evidence": {
+              "stage": "policy_geometry"
+            },
+            "coverage": "Includes exact semantic-part inventory, removed/new-part scope and complete preserved-part comparisons."
+          },
+          {
+            "id": "legacy-edge-check",
+            "title": "Legacy edge check",
+            "kind": "connected_path",
+            "hard": true,
+            "applicable": true,
+            "status": "unknown",
+            "measured": null,
+            "expected": {
+              "part": "body",
+              "region": [
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ],
+              "from": [
+                [
+                  null,
+                  0.1
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ],
+              "to": [
+                [
+                  0.9,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ]
+            },
+            "evidence": {
+              "stage": "geometry_relation",
+              "reason": "Measurement not verified: invalid edges"
+            },
+            "coverage": "Mesh-edge connectivity within the declared world-space region; not load-bearing strength or watertight union."
+          }
+        ],
+        "summary": {
+          "pass": 6,
+          "fail": 0,
+          "unknown": 1
+        },
+        "requirements_satisfied": false,
+        "revision": "legacy-unknown",
+        "parent": null,
+        "build_status": "needs_review",
+        "execution_mode": "unknown",
+        "security_boundary": "unknown",
+        "bindings": {
+          "policy_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "requirements_hash": "07836710518dbc7d3513126a7564abb99c7ee6031a681862d48984a695c395f9",
+          "runtime_hash": "synthetic-legacy-fixture",
+          "source_files": {
+            "count": 0,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+          },
+          "parent_result_hash": null,
+          "requirements_lock_hash": null
+        },
+        "machine_verified": false,
+        "human_accepted": false
+      },
+      "report_sha256": "4302d75212c7941da2d185a2760b2ee29d51bc6951c1d73b6ce02b055319b07c"
+    },
+    {
+      "name": "invalid-vertex",
+      "result": {
+        "schema_version": 1,
+        "revision": "legacy-unknown",
+        "parent": null,
+        "status": "needs_review",
+        "jobs": {
+          "author": {
+            "exit_code": 0
+          },
+          "inspect": {
+            "exit_code": 0
+          },
+          "roundtrip": {
+            "exit_code": 0
+          },
+          "reopen": {
+            "exit_code": 0
+          }
+        },
+        "provenance_verified": true,
+        "source_files": {},
+        "policy_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "runtime_hash": "synthetic-legacy-fixture",
+        "requirements_hash": "07836710518dbc7d3513126a7564abb99c7ee6031a681862d48984a695c395f9"
+      },
+      "policy": {
+        "schema_version": 1,
+        "parts": [
+          "body"
+        ],
+        "changed_parts": [],
+        "constraints": [],
+        "profile": "scene"
+      },
+      "requirements": {
+        "schema_version": 1,
+        "requirements": [
+          {
+            "id": "legacy-edge-check",
+            "title": "Legacy edge check",
+            "kind": "connected_path",
+            "hard": true,
+            "phase": "always",
+            "params": {
+              "part": "body",
+              "region": [
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ],
+              "from": [
+                [
+                  null,
+                  0.1
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ],
+              "to": [
+                [
+                  0.9,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      "observation": {
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                0,
+                0
+              ],
+              [
+                0,
+                1,
+                0
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                1,
+                2
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                1
+              ],
+              [
+                1,
+                2
+              ]
+            ],
+            "geometry_hash": "synthetic-geometry",
+            "transform_hash": "synthetic-transform",
+            "material_hash": "synthetic-material"
+          }
+        }
+      },
+      "report": {
+        "schema_version": 1,
+        "requirements_hash": "07836710518dbc7d3513126a7564abb99c7ee6031a681862d48984a695c395f9",
+        "requirements": [
+          {
+            "id": "pipeline-author",
+            "title": "Author job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "author",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-inspect",
+            "title": "Independent inspection job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "inspect",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-roundtrip",
+            "title": "GLB roundtrip",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "roundtrip",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-reopen",
+            "title": "Saved Blender scene reopened",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "reopen",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-provenance",
+            "title": "Source, rules and previous revision integrity",
+            "kind": "integrity",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "verified": true
+            },
+            "expected": {
+              "verified": true
+            },
+            "evidence": {
+              "stage": "controller_integrity"
+            },
+            "coverage": "Controller-checked file hashes; native mode is not a hostile-code security boundary."
+          },
+          {
+            "id": "policy-overall",
+            "title": "Declared parts, geometric policy and revision scope",
+            "kind": "policy",
+            "hard": true,
+            "applicable": true,
+            "status": "unknown",
+            "measured": null,
+            "expected": {
+              "all_declared_policy_checks_pass": true
+            },
+            "evidence": {
+              "stage": "policy_geometry",
+              "reason": "invalid observed vertex"
+            },
+            "coverage": "Includes exact semantic-part inventory, removed/new-part scope and complete preserved-part comparisons."
+          },
+          {
+            "id": "legacy-edge-check",
+            "title": "Legacy edge check",
+            "kind": "connected_path",
+            "hard": true,
+            "applicable": true,
+            "status": "unknown",
+            "measured": null,
+            "expected": {
+              "part": "body",
+              "region": [
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ],
+              "from": [
+                [
+                  null,
+                  0.1
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ],
+              "to": [
+                [
+                  0.9,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ]
+            },
+            "evidence": {
+              "stage": "geometry_relation",
+              "reason": "Measurement not verified: expected 3-vector"
+            },
+            "coverage": "Mesh-edge connectivity within the declared world-space region; not load-bearing strength or watertight union."
+          }
+        ],
+        "summary": {
+          "pass": 5,
+          "fail": 0,
+          "unknown": 2
+        },
+        "requirements_satisfied": false,
+        "revision": "legacy-unknown",
+        "parent": null,
+        "build_status": "needs_review",
+        "execution_mode": "unknown",
+        "security_boundary": "unknown",
+        "bindings": {
+          "policy_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "requirements_hash": "07836710518dbc7d3513126a7564abb99c7ee6031a681862d48984a695c395f9",
+          "runtime_hash": "synthetic-legacy-fixture",
+          "source_files": {
+            "count": 0,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+          },
+          "parent_result_hash": null,
+          "requirements_lock_hash": null
+        },
+        "machine_verified": false,
+        "human_accepted": false
+      },
+      "report_sha256": "7abd3c9e61624a6b256aa7ac427f3b06a15821b0fc3801634b31b4b9c58f6fd9"
+    },
+    {
+      "name": "nonfinite-vertex",
+      "result": {
+        "schema_version": 1,
+        "revision": "legacy-unknown",
+        "parent": null,
+        "status": "needs_review",
+        "jobs": {
+          "author": {
+            "exit_code": 0
+          },
+          "inspect": {
+            "exit_code": 0
+          },
+          "roundtrip": {
+            "exit_code": 0
+          },
+          "reopen": {
+            "exit_code": 0
+          }
+        },
+        "provenance_verified": true,
+        "source_files": {},
+        "policy_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "runtime_hash": "synthetic-legacy-fixture",
+        "requirements_hash": "07836710518dbc7d3513126a7564abb99c7ee6031a681862d48984a695c395f9"
+      },
+      "policy": {
+        "schema_version": 1,
+        "parts": [
+          "body"
+        ],
+        "changed_parts": [],
+        "constraints": [],
+        "profile": "scene"
+      },
+      "requirements": {
+        "schema_version": 1,
+        "requirements": [
+          {
+            "id": "legacy-edge-check",
+            "title": "Legacy edge check",
+            "kind": "connected_path",
+            "hard": true,
+            "phase": "always",
+            "params": {
+              "part": "body",
+              "region": [
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ],
+              "from": [
+                [
+                  null,
+                  0.1
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ],
+              "to": [
+                [
+                  0.9,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      "observation": {
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0,
+                0,
+                "bad"
+              ],
+              [
+                1,
+                0,
+                0
+              ],
+              [
+                0,
+                1,
+                0
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                1,
+                2
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                1
+              ],
+              [
+                1,
+                2
+              ]
+            ],
+            "geometry_hash": "synthetic-geometry",
+            "transform_hash": "synthetic-transform",
+            "material_hash": "synthetic-material"
+          }
+        }
+      },
+      "report": {
+        "schema_version": 1,
+        "requirements_hash": "07836710518dbc7d3513126a7564abb99c7ee6031a681862d48984a695c395f9",
+        "requirements": [
+          {
+            "id": "pipeline-author",
+            "title": "Author job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "author",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-inspect",
+            "title": "Independent inspection job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "inspect",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-roundtrip",
+            "title": "GLB roundtrip",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "roundtrip",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-reopen",
+            "title": "Saved Blender scene reopened",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "reopen",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-provenance",
+            "title": "Source, rules and previous revision integrity",
+            "kind": "integrity",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "verified": true
+            },
+            "expected": {
+              "verified": true
+            },
+            "evidence": {
+              "stage": "controller_integrity"
+            },
+            "coverage": "Controller-checked file hashes; native mode is not a hostile-code security boundary."
+          },
+          {
+            "id": "policy-overall",
+            "title": "Declared parts, geometric policy and revision scope",
+            "kind": "policy",
+            "hard": true,
+            "applicable": true,
+            "status": "unknown",
+            "measured": null,
+            "expected": {
+              "all_declared_policy_checks_pass": true
+            },
+            "evidence": {
+              "stage": "policy_geometry",
+              "reason": "expected finite number"
+            },
+            "coverage": "Includes exact semantic-part inventory, removed/new-part scope and complete preserved-part comparisons."
+          },
+          {
+            "id": "legacy-edge-check",
+            "title": "Legacy edge check",
+            "kind": "connected_path",
+            "hard": true,
+            "applicable": true,
+            "status": "unknown",
+            "measured": null,
+            "expected": {
+              "part": "body",
+              "region": [
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ],
+              "from": [
+                [
+                  null,
+                  0.1
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ],
+              "to": [
+                [
+                  0.9,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ],
+                [
+                  null,
+                  null
+                ]
+              ]
+            },
+            "evidence": {
+              "stage": "geometry_relation",
+              "reason": "Measurement not verified: expected finite number"
+            },
+            "coverage": "Mesh-edge connectivity within the declared world-space region; not load-bearing strength or watertight union."
+          }
+        ],
+        "summary": {
+          "pass": 5,
+          "fail": 0,
+          "unknown": 2
+        },
+        "requirements_satisfied": false,
+        "revision": "legacy-unknown",
+        "parent": null,
+        "build_status": "needs_review",
+        "execution_mode": "unknown",
+        "security_boundary": "unknown",
+        "bindings": {
+          "policy_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "requirements_hash": "07836710518dbc7d3513126a7564abb99c7ee6031a681862d48984a695c395f9",
+          "runtime_hash": "synthetic-legacy-fixture",
+          "source_files": {
+            "count": 0,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+          },
+          "parent_result_hash": null,
+          "requirements_lock_hash": null
+        },
+        "machine_verified": false,
+        "human_accepted": false
+      },
+      "report_sha256": "8da11365f0b65e11cfea5b5e332b3e6da90f8dd97f0343c01888d3b0e7b609c3"
+    }
+  ]
+}

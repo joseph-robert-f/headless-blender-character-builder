@@ -53,9 +53,9 @@ def _parse(argv: Sequence[str]) -> tuple[str, argparse.Namespace]:
     try:
         arguments, extras = parser.parse_known_args(argv[1:])
     except (argparse.ArgumentError, SystemExit) as exc:
-        raise BuilderCliFailure(int(ExitCode.INVALID_CLI), "invalid command") from exc
+        raise BuilderCliFailure(int(ExitCode.INVALID_CLI), 'incorrect command') from exc
     if extras:
-        raise BuilderCliFailure(int(ExitCode.INVALID_CLI), "unsupported option or argument")
+        raise BuilderCliFailure(int(ExitCode.INVALID_CLI), 'not permitted option or argument')
     return command, arguments
 
 

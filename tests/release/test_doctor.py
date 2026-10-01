@@ -226,7 +226,7 @@ esac
             )
         self.assertEqual(completed.returncode, 1, completed.stdout)
         self.assertIn("Docker daemon is not reachable", completed.stdout)
-        self.assertIn("Docker Compose 2.24.4+ is required", completed.stdout)
+        self.assertIn("Docker Compose 2.24.4+ is necessary", completed.stdout)
         self.assertIn("HBCB_DOCTOR: FAIL (2 prerequisite check(s) failed)", completed.stdout)
 
     def test_service_rejects_clear_remote_endpoints_but_tolerates_local_and_unknown(self) -> None:
@@ -420,7 +420,7 @@ esac
                 check=False,
             )
             self.assertEqual(rejected.returncode, 1, rejected.stdout)
-            self.assertIn("Python 3.11+ is unavailable", rejected.stdout)
+            self.assertIn("Python 3.11+ is not available", rejected.stdout)
 
     def test_service_capacity_is_advisory_and_valid_response_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -481,7 +481,7 @@ esac
         self.assertIn("service-smoke path recommends at least 12 GiB", completed.stdout)
         self.assertRegex(
             completed.stdout,
-            r"checkout has about [0-9]+ GiB free(?:; the advisory service "
+            r"checkout has about [0-9]+ GiB free(?:\. The advisory service "
             r"baseline is 20 GiB| \(20 GiB service baseline\))",
         )
 
@@ -523,11 +523,11 @@ esac
                 check=False,
             )
         self.assertEqual(completed.returncode, 0, completed.stdout)
-        self.assertIn("builder is capped at 4 CPUs and 4 GiB", completed.stdout)
+        self.assertIn("builder uses a maximum of 4 CPUs and 4 GiB", completed.stdout)
         self.assertIn("less than the advisory 8 GiB one-shot", completed.stdout)
         self.assertRegex(
             completed.stdout,
-            r"checkout has about [0-9]+ GiB free(?:; the advisory one-shot "
+            r"checkout has about [0-9]+ GiB free(?:\. The advisory one-shot "
             r"baseline is 10 GiB| \(10 GiB one-shot baseline\))",
         )
 
@@ -574,9 +574,9 @@ esac
                 check=False,
             )
         self.assertEqual(completed.returncode, 1, completed.stdout)
-        self.assertIn("Python 3.11+ is unavailable", completed.stdout)
+        self.assertIn("Python 3.11+ is not available", completed.stdout)
         self.assertIn("Docker Compose reports Docker Compose version v2.24.4", completed.stdout)
-        self.assertNotIn("Docker Compose 2.24.4+ is required", completed.stdout)
+        self.assertNotIn("Docker Compose 2.24.4+ is necessary", completed.stdout)
         self.assertIn("FAIL (1 prerequisite check(s) failed)", completed.stdout)
 
     def test_service_curl_selector_is_advisory_and_never_contacts_network(self) -> None:
@@ -664,7 +664,7 @@ esac
             curl_calls = curl_log.read_text(encoding="utf-8").splitlines()
         self.assertEqual(unsupported.returncode, 0, unsupported.stdout)
         self.assertIn(
-            "curl lacks --fail-with-body or --noproxy; use the stdlib lightweight client",
+            "curl has no --fail-with-body or --noproxy option. Use the standard-library client",
             unsupported.stdout,
         )
         self.assertEqual(supported.returncode, 0, supported.stdout)
@@ -754,7 +754,7 @@ esac
         self.assertIn("regular non-symlink", completed.stdout)
         self.assertNotIn(canary, completed.stdout)
         self.assertEqual(permissive.returncode, 1, permissive.stdout)
-        self.assertIn("owned by the current user with mode 0600", permissive.stdout)
+        self.assertIn("The current user must own .env. Its mode must be 0600.", permissive.stdout)
         self.assertNotIn(canary, permissive.stdout)
 
     def test_occupied_ports_are_allowed_only_for_the_selected_project(self) -> None:

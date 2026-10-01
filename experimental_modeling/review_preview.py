@@ -1,4 +1,4 @@
-"""HBCB REVIEW PREVIEW: existing-project, read-only local evidence review."""
+"""Open project evidence with the HBCB REVIEW PREVIEW program."""
 from __future__ import annotations
 
 import argparse
@@ -13,8 +13,8 @@ from .preview_manifest import verify
 from .project import Project
 from .review_server import LocalReviewServer, ReviewProject
 
-BANNER = ("REVIEW PREVIEW: read-only existing-project evidence. No generation, AI, "
-          "account connection, runtime downloads or background service. Decisions and requests are disabled.")
+BANNER = ("REVIEW PREVIEW: Read-only mode. The program shows project evidence. It does not make models or use AI. "
+          "It cannot connect to an account, download runtime files, or start background services. You cannot record decisions or change requests.")
 
 
 def bundle_root() -> Path | None:
@@ -66,29 +66,29 @@ def serve(project: Project, port: int) -> None:
             reader.start()
             print(BANNER, flush=True)
             print(f"Local project review: {server.origin}", flush=True)
-            print("Open that address in your browser. Type q then Enter, or Ctrl-C, to stop.", flush=True)
+            print("Open this address in your browser. To stop, type q and push Enter, or push Ctrl-C.", flush=True)
             while not stop.is_set():
                 server.handle_request()
     finally:
         stop.set()
         server.server_close()
-        print("Review stopped. Project files were not modified.", flush=True)
+        print("Review stopped. The program did not change project files.", flush=True)
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     action = parser.add_mutually_exclusive_group(required=True)
-    action.add_argument("--project", type=Path, help="Existing version-1 project folder; never created or migrated")
-    action.add_argument("--verify", action="store_true", help="Check the complete extracted package inventory offline")
-    action.add_argument("--provenance", action="store_true", help="Print the verified build/runtime provenance")
-    parser.add_argument("--port", type=int, default=0, help="Local port, default is a free ephemeral port")
+    action.add_argument("--project", type=Path, help="Select a version-1 project folder. The program does not change project files.")
+    action.add_argument("--verify", action="store_true", help="Do the package integrity check without a network connection.")
+    action.add_argument("--provenance", action="store_true", help="Show the package provenance after the integrity check.")
+    parser.add_argument("--port", type=int, default=0, help="Set the local port. The program selects a free port if you do not set one.")
     args = parser.parse_args(argv)
     try:
         root = bundle_root()
         if root is not None:
             result = verify(root)
         elif args.verify or args.provenance:
-            raise ValueError("Package verification requires the extracted standalone REVIEW PREVIEW executable")
+            raise ValueError("Use the REVIEW PREVIEW executable from the complete package for this integrity check.")
         if args.verify:
             print(json.dumps(result, indent=2))
         elif args.provenance:

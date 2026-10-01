@@ -35,7 +35,7 @@ def inventory(root: Path) -> dict:
                 continue
             info = path.lstat()
             if not stat.S_ISLNK(info.st_mode) and getattr(info, "st_file_attributes", 0) & 0x400:
-                raise ValueError("Bundle junctions and other reparse points are forbidden")
+                raise ValueError("Bundle junctions and other reparse points are not permitted.")
             if stat.S_ISLNK(info.st_mode):
                 # PyInstaller's macOS onedir layout requires internal symlinks.
                 target = os.readlink(path)
@@ -50,7 +50,7 @@ def inventory(root: Path) -> dict:
                     raise ValueError("Preview bundle exceeds its size limit")
                 result[relative] = {"type": "file", "size": info.st_size, "sha256": sha256(path)}
             else:
-                raise ValueError("Unsupported bundle member")
+                raise ValueError('Not permitted bundle member')
             if len(result) > MAX_FILES:
                 raise ValueError("Preview bundle exceeds its file limit")
     return result
@@ -61,13 +61,13 @@ def verify(root: Path) -> dict:
     info = path.lstat()
     if (not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400
             or info.st_size > 2 * 1024 * 1024):
-        raise ValueError("Missing or invalid preview manifest; extract the complete archive")
+        raise ValueError('Missing or incorrect preview manifest. Extract the complete archive.')
     value = json.loads(path.read_text(encoding="utf-8"))
     if (not isinstance(value, dict) or set(value) != {"schema_version", "files"}
             or type(value["schema_version"]) is not int or value["schema_version"] != 1 or not isinstance(value["files"], dict)):
-        raise ValueError("Unsupported preview manifest")
+        raise ValueError('Not permitted preview manifest')
     actual = inventory(root)
     if actual != value["files"]:
-        raise ValueError("Preview bundle integrity mismatch; obtain and extract a fresh complete archive")
+        raise ValueError("Preview bundle integrity mismatch. Get the complete archive again and extract it into a new folder.")
     return {"schema_version": 1, "verified": True, "files": len(actual),
             "scope": "Byte integrity only; unsigned developer preview, no publisher authentication"}

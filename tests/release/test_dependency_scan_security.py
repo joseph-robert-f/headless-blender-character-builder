@@ -285,7 +285,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
                 self.assertTrue((advisory / "osv-source.json").is_file())
                 self.assertEqual(seen_policies[-1]["dispositions"], [])
                 self.assertIn(
-                    "Vulnerability findings are advisory",
+                    "vulnerability findings alone give exit code `0`",
                     (advisory / "scan-summary.md").read_text(encoding="utf-8"),
                 )
 
@@ -482,7 +482,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
                 scan_tool.os,
                 "fstat",
                 side_effect=rewrite_after_open,
-            ), self.assertRaisesRegex(scan_tool.ScanError, "changed while being read"):
+            ), self.assertRaisesRegex(scan_tool.ScanError, "changed during the read"):
                 scan_tool._bind_disposition_context(
                     "caddy",
                     image_identity,
@@ -501,17 +501,17 @@ class DependencyScanSecurityTests(unittest.TestCase):
 
             caddyfile = root / paths[0]
             caddyfile.unlink()
-            with self.assertRaisesRegex(scan_tool.ScanError, "unavailable"):
+            with self.assertRaisesRegex(scan_tool.ScanError, "not available"):
                 scan_tool._bind_disposition_context("caddy", image_identity, root)
             caddyfile.write_bytes(b"")
-            with self.assertRaisesRegex(scan_tool.ScanError, "unsafe"):
+            with self.assertRaisesRegex(scan_tool.ScanError, "not safe"):
                 scan_tool._bind_disposition_context("caddy", image_identity, root)
             caddyfile.write_text("reviewed control\n", encoding="utf-8")
             with mock.patch.object(
                 scan_tool,
                 "MAX_DISPOSITION_CONTEXT_BYTES",
                 caddyfile.stat().st_size - 1,
-            ), self.assertRaisesRegex(scan_tool.ScanError, "unsafe"):
+            ), self.assertRaisesRegex(scan_tool.ScanError, "not safe"):
                 scan_tool._bind_disposition_context("caddy", image_identity, root)
             with mock.patch.object(
                 scan_tool,
@@ -711,7 +711,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temporary, self.assertRaisesRegex(
             scan_tool.ScanError,
-            "archive is invalid",
+            "archive is incorrect",
         ):
             scan_tool.scan_image(
                 Path("/scanner"),
@@ -1290,7 +1290,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
                 ), mock.patch.object(scan_tool, "scan_image"), mock.patch.object(
                     scan_tool, "run_postgres_runtime_gate"
                 ) as gate, self.assertRaisesRegex(
-                    scan_tool.ScanError, "immutable image identities are unavailable"
+                    scan_tool.ScanError, "immutable image identities are not available"
                 ):
                     scan_tool.scan_local_image(
                         Path("/scanner"),
@@ -2491,7 +2491,7 @@ class DependencyScanSecurityTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(
                     scan_tool.ScanError,
-                    "composite recipe identity was invalid",
+                    "composite recipe identity was incorrect",
                 ) as raised:
                     scan_tool.minio_recipe_id()
                 self.assertNotIn("secret", str(raised.exception))

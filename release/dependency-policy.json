@@ -96,7 +96,7 @@
       ],
       "id": "dockerfile-frontend",
       "name": "Dockerfile frontend and build engine",
-      "reason": "Review the shared exact-version digest-pinned docker/dockerfile frontend and BuildKit behavior before changing Dockerfile syntax or the hosted runner."
+      "reason": "Before a Dockerfile syntax or hosted-runner change, examine the docker/dockerfile version and digest pins in all Dockerfiles. Examine BuildKit behavior."
     },
     {
       "files": [
@@ -112,7 +112,7 @@
       ],
       "id": "blender",
       "name": "Blender binary and corresponding source",
-      "reason": "Confirm the selected LTS release, binary and source archive checksums, runtime compatibility, notices, image mapping, and corresponding-source delivery gate together."
+      "reason": "Examine the selected LTS release and archive checksums. Include binary and source archives. Examine runtime compatibility, notices, image mapping, and the corresponding-source delivery gate together."
     },
     {
       "files": [
@@ -124,7 +124,7 @@
       ],
       "id": "minio-fixture",
       "name": "MinIO, mc, and Go source-build fixture",
-      "reason": "Review upstream release, source commit, download checksums, Go module vulnerabilities, and local-only support policy together."
+      "reason": "Examine the upstream release, source commit, download checksums, Go module vulnerabilities, and local-only support policy together."
     },
     {
       "files": [
@@ -137,7 +137,7 @@
       ],
       "id": "github-actions",
       "name": "GitHub Actions and hosted runners",
-      "reason": "Verify full action commit pins against reviewed upstream releases and review intentional hosted-runner drift."
+      "reason": "Compare full action commit pins with the upstream releases that you examined. Examine the hosted-runner changes."
     },
     {
       "files": [
@@ -149,7 +149,7 @@
       ],
       "id": "osv-scanner",
       "name": "OSV-Scanner release and vulnerability service",
-      "reason": "Review the scanner version, platform asset checksums, CLI and report contract, network behavior, hosted workflow, and documented trust boundary together."
+      "reason": "Examine the scanner version, platform asset checksums, CLI, and report contract. Include network behavior, hosted workflow, and trust boundary in the same check."
     },
     {
       "files": [
@@ -158,12 +158,12 @@
       ],
       "id": "python-build-backend",
       "name": "Python build backend",
-      "reason": "The setuptools build-system floor is intentionally ranged and is not installed in production images; review it separately from hash-locked runtime wheels."
+      "reason": "The setuptools build-system requirement has a minimum version. Production images do not install setuptools. Examine this requirement independently from hash-locked runtime wheels."
     },
     {
       "id": "review-preview",
       "name": "Unsigned native review preview runtime and packaging",
-      "reason": "Review exact Python/PyInstaller inputs, platform wheel hashes, native component inventory and notices, Microsoft prerequisites, corresponding project source, and extracted native executable smoke evidence together. No public release or support promotion.",
+      "reason": "Compare Python and PyInstaller inputs with their pins. Examine platform wheel hashes, native component inventory, and notices together. Include Microsoft prerequisites, corresponding project source, and smoke evidence from the extracted native executable. Do not publish a public release or increase product support.",
       "files": [
         "packaging/review-preview-requirements.lock",
         "packaging/runtime-notices.json",

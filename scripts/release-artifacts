@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a deterministic, local-only source release bundle and metadata."""
+"""Write a local source release bundle and metadata with reproducible content."""
 
 from __future__ import annotations
 
@@ -104,11 +104,11 @@ def _read_regular(path: Path, maximum: int) -> bytes:
     try:
         metadata = path.lstat()
     except OSError:
-        raise PackagingFailure("input_unavailable", "required input is unavailable: " + path.name) from None
+        raise PackagingFailure("input_unavailable", "required input is not available: " + path.name) from None
     if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
-        raise PackagingFailure("unsafe_input", "required input must be a regular non-symlink: " + path.name)
+        raise PackagingFailure("unsafe_input", "necessary input must be a regular file, not a symlink: " + path.name)
     if metadata.st_size < 0 or metadata.st_size > maximum:
-        raise PackagingFailure("input_size_invalid", "required input size is outside policy: " + path.name)
+        raise PackagingFailure("input_size_invalid", "necessary input size does not obey the size policy: " + path.name)
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(str(path), flags)
@@ -117,7 +117,7 @@ def _read_regular(path: Path, maximum: int) -> bytes:
     except OSError:
         raise PackagingFailure("input_unreadable", "required input cannot be read: " + path.name) from None
     if len(payload) != metadata.st_size:
-        raise PackagingFailure("input_changed", "required input changed while packaging: " + path.name)
+        raise PackagingFailure("input_changed", "necessary input changed during release assembly: " + path.name)
     return payload
 
 
@@ -134,7 +134,7 @@ def _load_audit(payload: bytes) -> Dict[str, object]:
     try:
         report = json.loads(payload.decode("utf-8", "strict"))
     except (UnicodeDecodeError, ValueError):
-        raise PackagingFailure("invalid_audit_report", "release audit report is invalid JSON") from None
+        raise PackagingFailure("invalid_audit_report", "release audit report is incorrect JSON") from None
     expected = {
         "asset_license",
         "file_count",
@@ -149,14 +149,14 @@ def _load_audit(payload: bytes) -> Dict[str, object]:
     if not isinstance(report, dict) or set(report) != expected or report.get("format") != "hbcb-release-audit/v1":
         raise PackagingFailure("invalid_audit_report", "release audit report contract is unsupported")
     if report.get("source_license") != "GPL-3.0-or-later" or report.get("asset_license") != "CC0-1.0":
-        raise PackagingFailure("invalid_audit_report", "release audit report license result is invalid")
+        raise PackagingFailure("invalid_audit_report", "release audit report license result is incorrect")
     if not isinstance(report.get("git_index_sha256"), str) or SHA256.fullmatch(report["git_index_sha256"]) is None:  # type: ignore[arg-type]
-        raise PackagingFailure("invalid_audit_report", "release audit index digest is invalid")
+        raise PackagingFailure("invalid_audit_report", "release audit index digest is incorrect")
     if not isinstance(report.get("source_tree_sha256"), str) or SHA256.fullmatch(report["source_tree_sha256"]) is None:  # type: ignore[arg-type]
-        raise PackagingFailure("invalid_audit_report", "release audit tree digest is invalid")
+        raise PackagingFailure("invalid_audit_report", "release audit tree digest is incorrect")
     head = report.get("git_head")
     if not isinstance(head, str) or GIT_OID.fullmatch(head) is None:
-        raise PackagingFailure("invalid_audit_report", "release audit Git revision is invalid")
+        raise PackagingFailure("invalid_audit_report", "release audit Git revision is incorrect")
     files = report.get("files")
     if not isinstance(files, list) or not files:
         raise PackagingFailure("invalid_audit_report", "release audit file inventory is empty")
@@ -165,26 +165,26 @@ def _load_audit(payload: bytes) -> Dict[str, object]:
     total = 0
     for item in files:
         if not isinstance(item, dict) or set(item) != {"bytes", "git_mode", "path", "sha256"}:
-            raise PackagingFailure("invalid_audit_report", "release audit file entry is invalid")
+            raise PackagingFailure("invalid_audit_report", "release audit file entry is incorrect")
         path = item.get("path")
         mode = item.get("git_mode")
         size = item.get("bytes")
         digest = item.get("sha256")
         if not isinstance(path, str):
-            raise PackagingFailure("invalid_audit_report", "release audit path is invalid")
+            raise PackagingFailure("invalid_audit_report", "release audit path is incorrect")
         _safe_relative(path)
         encoded = path.encode("utf-8")
         if encoded <= previous or path in seen:
             raise PackagingFailure("invalid_audit_report", "release audit paths are unsorted or duplicated")
         if mode not in {"100644", "100755"} or not isinstance(size, int) or size < 0 or size > MAX_SOURCE_BYTES:
-            raise PackagingFailure("invalid_audit_report", "release audit mode/size is invalid: " + path)
+            raise PackagingFailure("invalid_audit_report", "release audit mode/size is incorrect: " + path)
         if not isinstance(digest, str) or SHA256.fullmatch(digest) is None:
-            raise PackagingFailure("invalid_audit_report", "release audit file digest is invalid: " + path)
+            raise PackagingFailure("invalid_audit_report", "release audit file digest is incorrect: " + path)
         previous = encoded
         seen.add(path)
         total += size
     if report.get("file_count") != len(files) or report.get("total_bytes") != total:
-        raise PackagingFailure("invalid_audit_report", "release audit totals are inconsistent")
+        raise PackagingFailure("invalid_audit_report", "release audit totals do not agree")
     return report
 
 
@@ -193,7 +193,7 @@ def _load_corresponding_source_policy(payload: bytes) -> Dict[str, object]:
         document = json.loads(payload.decode("utf-8", "strict"))
     except (UnicodeDecodeError, ValueError):
         raise PackagingFailure(
-            "invalid_source_policy", "corresponding-source policy is invalid JSON"
+            "invalid_source_policy", "corresponding-source policy is incorrect JSON"
         ) from None
     if not isinstance(document, dict) or set(document) != {"blender", "format", "publication"}:
         raise PackagingFailure(
@@ -279,7 +279,7 @@ def _validate_source_notice(payload: bytes, policy: Mapping[str, object]) -> Non
         notice = payload.decode("utf-8", "strict")
     except UnicodeDecodeError:
         raise PackagingFailure(
-            "invalid_source_notice", "Blender source notice is not valid UTF-8"
+            "invalid_source_notice", "Blender source notice is incorrect UTF-8"
         ) from None
     required = (
         "Corresponding source archive: <%s>" % blender["source_url"],
@@ -299,7 +299,7 @@ def _tree_paths(root: Path) -> List[str]:
     try:
         metadata = root.lstat()
     except OSError:
-        raise PackagingFailure("source_unavailable", "source export is unavailable") from None
+        raise PackagingFailure("source_unavailable", "source export is not available") from None
     if root.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
         raise PackagingFailure("unsafe_source_root", "source export must be a real directory")
     paths: List[str] = []
@@ -370,7 +370,7 @@ def _validate_spdx(payload: bytes, expected_name: str) -> None:
     try:
         document = json.loads(payload.decode("utf-8", "strict"))
     except (UnicodeDecodeError, ValueError):
-        raise PackagingFailure("invalid_supplement", "release SPDX supplement is invalid JSON") from None
+        raise PackagingFailure("invalid_supplement", "release SPDX supplement is incorrect JSON") from None
     if (
         not isinstance(document, dict)
         or document.get("spdxVersion") != "SPDX-2.3"
@@ -379,7 +379,7 @@ def _validate_spdx(payload: bytes, expected_name: str) -> None:
         or not isinstance(document.get("packages"), list)
         or not document.get("packages")
     ):
-        raise PackagingFailure("invalid_supplement", "release SPDX supplement header is invalid: " + expected_name)
+        raise PackagingFailure("invalid_supplement", "release SPDX supplement header is incorrect: " + expected_name)
     expected_package = {
         "api.spdx.json": "headless-blender-character-builder-api",
         "builder.spdx.json": "headless-blender-character-builder",
@@ -403,11 +403,11 @@ def _normalize_image_inspect(
     try:
         decoded = json.loads(payload.decode("utf-8", "strict"))
     except (UnicodeDecodeError, ValueError):
-        raise PackagingFailure("invalid_image_metadata", "Docker image inspect JSON is invalid: " + role) from None
+        raise PackagingFailure("invalid_image_metadata", "Docker image inspect JSON is incorrect: " + role) from None
     if isinstance(decoded, list) and len(decoded) == 1:
         decoded = decoded[0]
     if not isinstance(decoded, dict):
-        raise PackagingFailure("invalid_image_metadata", "Docker image inspect root is invalid: " + role)
+        raise PackagingFailure("invalid_image_metadata", "Docker image inspect root is incorrect: " + role)
     image_id = decoded.get("Id")
     architecture = decoded.get("Architecture")
     operating_system = decoded.get("Os")
@@ -417,7 +417,7 @@ def _normalize_image_inspect(
         or architecture != "amd64"
         or operating_system != "linux"
     ):
-        raise PackagingFailure("invalid_image_metadata", "release image identity/platform is invalid: " + role)
+        raise PackagingFailure("invalid_image_metadata", "release image identity/platform is incorrect: " + role)
     tags = decoded.get("RepoTags")
     digests = decoded.get("RepoDigests")
     if tags is None:
@@ -431,7 +431,7 @@ def _normalize_image_inspect(
         or not isinstance(digests, list)
         or any(not isinstance(item, str) or IMAGE_DIGEST.fullmatch(item) is None for item in digests)
     ):
-        raise PackagingFailure("invalid_image_metadata", "release image references are invalid: " + role)
+        raise PackagingFailure("invalid_image_metadata", "release image references are incorrect: " + role)
     config = decoded.get("Config")
     labels = config.get("Labels") if isinstance(config, dict) else None
     if not isinstance(labels, dict):
@@ -450,7 +450,7 @@ def _normalize_image_inspect(
         )
     selected_labels = {key: labels[key] for key in sorted(expected_labels)}
     if any(not isinstance(value, str) or not value or len(value) > 1024 for value in selected_labels.values()):
-        raise PackagingFailure("invalid_image_metadata", "release image label value is invalid: " + role)
+        raise PackagingFailure("invalid_image_metadata", "release image label value is incorrect: " + role)
     title = selected_labels.get("org.opencontainers.image.title", "").casefold()
     role_title_valid = (
         (role == "api" and "service" in title and "supervisor" not in title)
@@ -469,7 +469,7 @@ def _normalize_image_inspect(
     if not isinstance(layers, list) or not layers or any(
         not isinstance(layer, str) or IMAGE_ID.fullmatch(layer) is None for layer in layers
     ):
-        raise PackagingFailure("invalid_image_metadata", "release image layer inventory is invalid: " + role)
+        raise PackagingFailure("invalid_image_metadata", "release image layer inventory is incorrect: " + role)
     return {
         "architecture": architecture,
         "expected_public_tag": expected_tag,
@@ -530,7 +530,7 @@ def _sample_artifacts(root: Path, builder_image_id: str) -> Dict[str, bytes]:
         manifest = json.loads(payloads["manifest.json"].decode("utf-8", "strict"))
         qa = json.loads(payloads["qa.json"].decode("utf-8", "strict"))
     except (UnicodeDecodeError, ValueError):
-        raise PackagingFailure("invalid_sample_evidence", "demo manifest or QA is invalid JSON") from None
+        raise PackagingFailure("invalid_sample_evidence", "demo manifest or QA is incorrect JSON") from None
     if (
         not isinstance(manifest, dict)
         or manifest.get("manifest_version") != "manifest/v1"
@@ -561,7 +561,7 @@ def _supplements(root: Path) -> Dict[str, bytes]:
     try:
         metadata = root.lstat()
     except OSError:
-        raise PackagingFailure("supplements_unavailable", "SBOM supplements directory is unavailable") from None
+        raise PackagingFailure("supplements_unavailable", "SBOM supplements directory is not available") from None
     if root.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
         raise PackagingFailure("unsafe_supplements", "SBOM supplements must be a real directory")
     actual = sorted(path.name for path in root.iterdir())
@@ -587,7 +587,7 @@ def _corresponding_source(root: Path, policy: Mapping[str, object]) -> Tuple[str
         metadata = root.lstat()
     except OSError:
         raise PackagingFailure(
-            "corresponding_source_unavailable", "corresponding-source directory is unavailable"
+            "corresponding_source_unavailable", "corresponding-source directory is not available"
         ) from None
     if root.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
         raise PackagingFailure(
@@ -690,7 +690,7 @@ def _corresponding_source_inventory(
 
 def _timestamp(epoch: int) -> str:
     if epoch < 0 or epoch > 2147483647:
-        raise PackagingFailure("invalid_source_date_epoch", "source date epoch is outside portable range")
+        raise PackagingFailure("invalid_source_date_epoch", "source date epoch is not in the portable range")
     return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -777,9 +777,9 @@ def package(
     else:
         raise PackagingFailure("unsafe_output_location", "release output cannot be inside the source export")
     if output_dir.exists() or output_dir.is_symlink():
-        raise PackagingFailure("output_exists", "refusing to overwrite release output directory")
+        raise PackagingFailure("output_exists", "cannot overwrite the release output directory")
     if not output_dir.parent.is_dir() or output_dir.parent.is_symlink():
-        raise PackagingFailure("output_parent_unsafe", "release output parent is unavailable")
+        raise PackagingFailure("output_parent_unsafe", "release output parent is not available")
     audit_payload = _read_regular(audit_report.resolve(), MAX_FILE_BYTES)
     report = _load_audit(audit_payload)
     files = _verify_source(source, report)
@@ -929,7 +929,7 @@ def _arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", type=Path, required=True, help="new local release directory")
     parser.add_argument("--version", required=True, help="semantic release version")
-    parser.add_argument("--source-date-epoch", type=int, default=0, help="portable reproducible timestamp")
+    parser.add_argument("--source-date-epoch", type=int, default=0, help="reproducible timestamp in the portable range")
     return parser.parse_args(argv)
 
 
@@ -940,7 +940,7 @@ def _image_arguments(values: Sequence[str]) -> Dict[str, Path]:
             raise PackagingFailure("invalid_image_argument", "--image-inspect must use ROLE=PATH")
         role, raw_path = value.split("=", 1)
         if role not in IMAGE_ROLES or role in result or not raw_path:
-            raise PackagingFailure("invalid_image_argument", "image inspect role is invalid or duplicated")
+            raise PackagingFailure("invalid_image_argument", "image inspect role is incorrect or duplicated")
         result[role] = Path(raw_path)
     if set(result) != set(IMAGE_ROLES):
         raise PackagingFailure("image_evidence_incomplete", "exactly builder, api, and worker image inspect inputs are required")

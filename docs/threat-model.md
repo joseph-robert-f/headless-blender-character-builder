@@ -4,67 +4,77 @@
 
 ## Separate unsigned REVIEW PREVIEW boundary
 
-The experimental [standalone review preview](review-preview.md) freezes the
-existing review backend and static assets with Python. It exposes only an
-existing-project command and offline package verification/provenance. It always
-constructs the backend in read-only mode, independent of UI controls and OS;
-acceptance/request POSTs fail even with valid CSRF credentials. It does not invoke
-the build controller, import project source, write project leases/state, register
-an installer, download runtimes, connect providers, or expose a remote listener.
-The existing loopback/Host/Origin/CSRF, artifact-hash, and safe-path controls apply.
-Concurrent readers are allowed; concurrent project modification is unsupported.
+The experimental [standalone review preview](review-preview.md) packages the
+existing review backend, static assets, and Python.
+It opens existing projects and gives offline package verification and provenance.
+It always creates a read-only backend, on each OS and independent of UI controls.
+Acceptance and request POSTs fail, even with valid CSRF credentials.
 
-Package startup checks a bounded exact file/link manifest. Internal PyInstaller
-macOS links must resolve within the extracted folder; project symlinks, junctions,
-and reparse points remain forbidden. Fresh extraction, backend write-denial,
-tamper, shutdown, crash/reopen, and unchanged-project tests run against the actual
-native executable with no Python/Node on PATH. The test harness itself runs on
-Python-equipped hosted runners; this is not clean-consumer-installation evidence.
+The preview does not call the build controller or import project source.
+It does not write project leases or state, register an installer,
+download runtimes, connect providers, or open a remote listener.
+The existing loopback, Host, Origin, CSRF, artifact-hash, and safe-path controls apply.
+Concurrent readers are permitted. Concurrent project changes are not supported.
 
-Unsigned archive hashes detect accidental corruption, not a malicious publisher,
-replaced verifier, compromised host, or authenticity failure. CI artifacts are
-time-limited developer evidence, never public releases. No security warning is
-bypassed. Microsoft runtime components are not redistributed without an identified
-basis; any existing-runtime prerequisite is explicit. Apple system libraries stay
-external. Exact project source, upstream notices, native component hashes and
-runtime/build provenance accompany each package. Unknown native components fail
-packaging, and native build/smoke evidence must not be presented as cross-platform
-generation, installer trust, or full product support.
+At startup, the package validates a complete file and link manifest in fixed limits.
+Internal PyInstaller macOS links must resolve in the extracted folder.
+Project symlinks, junctions, and reparse points are not permitted.
+
+Tests use the actual native executable without Python or Node on PATH.
+They cover new extraction, backend write denial, tamper, shutdown, crash/reopen,
+and unchanged project data.
+The test harness uses hosted runners with Python.
+These results are not evidence of installation on a clean consumer computer.
+
+Unsigned archive hashes detect accidental corruption.
+They do not show publisher authenticity or prevent attacks from a replaced verifier or compromised host.
+CI artifacts are temporary developer evidence, not public releases.
+Do not bypass security warnings.
+
+Microsoft runtime redistribution must have an identified basis.
+Documents identify each prerequisite for an existing runtime.
+Apple system libraries stay external.
+Each package includes complete project source, upstream notices,
+native component hashes, and runtime and build provenance.
+An unknown native component prevents package creation.
+Native build and smoke tests do not show cross-platform generation,
+installer trust, or full product support.
 
 ## Purpose and scope
 
-This document defines the security assumptions and release boundary for
-Headless Blender Character Builder v0.1. It covers the keyless one-shot
-builder, the local asynchronous service, and the single-operator VPS reference
-deployment so experimental and future paths receive security analysis. v0.1
-support is narrower: one trusted user building their own model locally with
-the one-shot Docker builder. The Compose service is experimental and
-loopback-only; Internet-facing, hostile-input, multi-tenant, and VPS operation
-are outside v0.1 support.
+This document defines the security assumptions and release scope for
+Headless Blender Character Builder v0.1.
+Its security analysis includes the one-shot builder, local asynchronous service,
+and future single-operator VPS design.
 
-The core design treats every caller-supplied request as untrusted and every
-project-controlled generator and image as trusted release code. “Untrusted” is
-a defensive data-handling rule: every request is validated even when its
-author is the trusted local user. It does not mean that v0.1 supports accepting
-hostile requests or operating a public service. The accepted input format is a
-strict, bounded `BuildRequest v1` containing a declarative `CharacterSpec v1`.
-Customer- or model-authored Python, Blender commands, add-ons, drivers, node
-graphs, uploaded `.blend` files, host paths, remote URLs, reference-image
-ingestion, and container controls are outside v0.1.
+v0.1 supports only one trusted local user with the one-shot Docker builder.
+The Compose service is experimental and loopback-only.
+Internet-facing services, hostile inputs, multi-tenant services, and VPS operation are outside v0.1 support.
+
+The core design validates each caller request as untrusted data.
+It trusts project-controlled generators and images as release code.
+The same input validation applies when the trusted local user writes the request.
+This does not support hostile requests or public service operation in v0.1.
+
+The input must be a strict `BuildRequest v1` with a declarative `CharacterSpec v1`.
+Both have limits.
+The v0.1 input excludes customer- or model-authored Python, Blender commands,
+add-ons, drivers, node graphs, uploaded `.blend` files, and host paths.
+It also excludes remote URLs, reference images, and container controls.
 
 ## Assets to protect
 
-- host, container runtime, worker, and Blender process integrity;
-- API and internal service credentials;
-- database job/attempt state and queue integrity;
-- private artifacts, exact object versions, and signed download URLs;
-- source, dependency, image, generator, schema, and manifest provenance;
-- service availability and operator cloud/compute budget; and
+- host, container runtime, worker, and Blender process integrity.
+- API and internal service credentials.
+- database job/attempt state and queue integrity.
+- private artifacts, specified object versions, and signed download URLs.
+- source, dependency, image, generator, schema, and manifest provenance.
+- service availability and operator cloud/compute budget. And
 - user-supplied names and build specifications.
 
 The v0.1 schema does not accept reference images or arbitrary file uploads.
-Those would introduce additional privacy, parser, malware, and intellectual-
-property risks and require a new threat-model review.
+These inputs would add privacy, parser, malware, and intellectual-property risks.
+A new threat-model review is necessary before such a change.
 
 ## Actors
 
@@ -74,13 +84,13 @@ property risks and require a new threat-model review.
   storage, backups, and public edge.
 - **Contributor or dependency publisher:** can propose code or publish an
   upstream artifact that may enter a future release.
-- **Attacker:** may send malformed requests, replay requests, guess build IDs,
-  exhaust resources, exploit a dependency, obtain a leaked URL/token, or try
-  to make trusted code execute untrusted instructions.
+- **Attacker:** can send malformed requests, replay requests, guess build IDs,
+  use all available resources, exploit a dependency, or get a leaked URL/token.
+  An attacker can try to make trusted code execute untrusted instructions.
 
-The self-hosting operator and reviewed release code are trusted. A compromised
-host administrator, kernel, container runtime, release signer, or upstream
-artifact is outside what application-level isolation can fully contain.
+The design trusts the self-hosting operator and reviewed release code.
+Application isolation cannot prevent all effects of a compromised host administrator,
+kernel, container runtime, release signer, or upstream artifact.
 
 ## Data flow and trust boundaries
 
@@ -105,184 +115,208 @@ fresh Blender child ----> private attempt staging ----> immutable publication
 
 Primary boundaries are:
 
-1. caller to authenticated API;
-2. API/worker to role-separated database, queue, and object storage;
-3. worker supervisor to one fresh Blender child;
-4. private attempt staging to successful immutable artifact publication;
-5. artifact metadata to an authorized version-pinned download;
-6. source/dependency publication to the pinned release images; and
+1. caller to authenticated API.
+2. API/worker to role-differentd database, queue, and object storage.
+3. worker supervisor to one new Blender child.
+4. private attempt staging to successful immutable artifact publication.
+5. artifact metadata to an authorized version-pinned download.
+6. source/dependency publication to the pinned release images. And
 7. containers to the operator-controlled host and network.
 
-The one-shot path removes the network services: it mounts one read-only request
-and one caller-owned output parent into a network-disabled disposable worker.
+The one-shot mode uses no network services.
+It mounts one read-only request and one caller-owned output parent in a temporary worker with no network access.
 
 ## Security invariants
 
-The following are release invariants, not optional recommendations:
+These release conditions are mandatory:
 
-- Only strict declarative schema input reaches the trusted generator.
-- One attempt starts one fresh Blender process from factory state.
+- The trusted generator accepts only strict declarative schema input.
+- Each attempt starts one new Blender process from factory state.
 - Blender automatic embedded-script execution is disabled.
 - A Blender child receives no API, database, Redis, object-storage, Docker,
   OpenAI, or other provider credential.
-- In one-shot mode the entire worker uses `--network none`. In service mode the
-  child shares the worker container's internal-only network namespace; its
-  scrubbed environment, closed nonstandard inherited descriptors, and
-  non-dumpable Linux supervisor keep credentials outside the child. The
-  container has every capability dropped, including `CAP_SYS_PTRACE`; this is
-  a process-inspection boundary, not a separate network namespace.
-- The keyless demo reads no `.env` and requires no secret.
-- Caller-controlled values never become shell commands, Blender flags, host
-  paths, object keys, environment-variable names, or remote fetch targets.
-- Incomplete, failed, canceled, or `needs_review` attempts cannot publish a
-  success manifest.
-- Successful artifacts are hash verified, tied to exact object versions, and
-  published only after fresh reload/re-import evidence passes.
-- The 2 GiB publication limit includes all nine files, including the canonical
-  manifest and its final newline. Local validation and service publication
-  enforce the same total. The standalone client checks the total before download.
-- Both state adapters reject retry flags that are not booleans before they
-  change an attempt or build.
-- Normal API and worker identities cannot administer database or storage
-  permissions; the worker cannot delete artifacts.
-- The worker has no Docker socket, host home, device mount, or general public
-  ingress.
+- In one-shot mode, the complete worker uses `--network none`.
+- In service mode, the child uses the worker container's internal-only network namespace.
+  The launcher removes credentials from the child environment and closes nonstandard inherited descriptors.
+  The Linux supervisor is non-dumpable.
+  The container has no Linux capabilities, including `CAP_SYS_PTRACE`.
+  These controls prevent child process inspection of the supervisor.
+  They do not create a different network namespace.
+- The demo reads no `.env` and uses no secret.
+- Caller values cannot become shell commands, Blender flags, host paths,
+  object keys, environment-variable names, or remote download targets.
+- Incomplete, failed, canceled, or `needs_review` attempts cannot publish a success manifest.
+- Before publication, artifacts must pass hash validation and new reload/re-import tests.
+  The service records their specified object versions.
+- The 2 GiB publication limit includes all nine files,
+  the canonical manifest, and its last newline.
+  Local validation and service publication enforce the same total.
+  The standalone client does a check of the total before download.
+- The two state adapters reject non-boolean retry flags before an attempt or build change.
+- Usual API and worker identities cannot administer database or storage permissions.
+  The worker cannot delete artifacts.
+- The worker has no Docker socket, host home, device mount, or general public ingress.
 
 ## Threats and controls
 
 | Threat | v0.1 controls | Residual risk / follow-up |
 |---|---|---|
-| Arbitrary code or Blender-operation injection | Closed schemas reject extra fields, code, flags, paths, URLs, add-ons, and unsupported generators. The runner exposes only reviewed request/output arguments. | A defect in trusted generator code still executes with worker privileges. Code review and release tests remain necessary. |
-| Embedded scripts or hostile `.blend` files | No uploaded `.blend` input; Blender uses factory startup and `--disable-autoexec`. | `--disable-autoexec` is defense in depth, not a general Python sandbox. Future file import needs a separate high-isolation design. |
-| Command, path, archive, or SSRF injection | Subprocess arguments are fixed; output paths and attempt/object keys are server-controlled; v0.1 accepts no URLs, archives, symlinks, or remote asset fetches. | New import or callback features require explicit allowlists and threat-model changes. |
-| Secret theft or exfiltration | Demo is keyless; optional provider keys are out of v0.1; `.env` is ignored; runtime roles are distinct; Blender gets a scrubbed environment and no inherited nonstandard supervisor descriptors. Before credential clients initialize, the Linux supervisor disables dumpability and core dumps, verifies both controls, and fails closed; the launcher reasserts the boundary before every child. With all capabilities dropped, same-UID descendants cannot read supervisor `/proc` environment/memory or ptrace it. Logs are structured and secret-free. | Host administrators, kernel/runtime compromise, and compromised control-plane code can access role credentials. This closes same-UID process inspection, but it does not make Blender a sandbox for customer-authored code. Use a secret manager and rotate on suspicion. |
-| Network exfiltration | One-shot build uses `--network none`; Blender uses `--offline-mode`; VPS worker lacks the public edge network and reaches storage only through a private controlled path. | Blender offline mode cannot constrain malicious third-party code. Network policy/container isolation is the real boundary. |
-| Resource exhaustion and cost abuse | Request, object, polygon, artifact, CPU, memory, PID, scratch-space, concurrency, lease, and wall-clock bounds; asynchronous API; one VPS worker. | v0.1 has no public hosted abuse-control plane, billing, or multi-tenant quotas. Do not expose it as an open public service. |
-| Authentication bypass, IDOR, or leaked URLs | Auth precedes request handling; opaque build IDs; artifact authorization; short-lived, exact-version signed URLs; no secrets in URLs. | A bearer token or signed URL grants its documented access until revoked/expired. TLS and careful client handling remain mandatory. |
-| Replay and duplicate execution | HMAC-bound idempotency, durable unique state, fenced leases, transactional outbox, and stale-claim recovery. | Legitimate retries can still consume bounded resources; monitor queue depth and failures. |
-| Retry/cancellation race | Attempt fencing, cancellation-wins publication locking, nested-process termination, private attempt keys, success-last publication, and a bounded grace-period orphan inventory reconciled under PostgreSQL build locks. | Host loss at a boundary can temporarily leave private versions until the separately applied janitor runs. Ambiguous/delete-marker listings fail closed. |
-| Cross-attempt or cross-tenant artifact disclosure | Canonical attempt-scoped keys, exact object versions, authorization, private buckets, version-pinned URLs, and separate API/worker/maintenance storage roles. | v0.1 is one deployment namespace and not a fully designed multi-tenant service. |
-| Artifact corruption or false success | Private staging, atomic/local or immutable/object publication, SHA-256 and byte-size evidence, fresh Blender reload, GLB/STL re-import, and success-only manifest. | Hashes prove recorded bytes, not artistic quality, legal clearance, or manufacturing fitness. |
-| Dependency or image compromise | Digest-pinned base/service images, checksum-pinned Blender and downloads, hash-locked wheels, immutable Debian snapshot, generated SPDX SBOM, preserved notices, clean-source release gates, and a scheduled checksum-pinned vulnerability scan. | Upstream compromise before pinning, scanner/database errors, and vulnerabilities absent from current advisory data remain possible. Maintain supported-version and patch review. |
-| Container escape or host compromise | Non-root containers, read-only roots, dropped capabilities, no-new-privileges, fixed mounts, resource limits, and no Docker socket. | Containers share the host kernel. A kernel/runtime/native-code exploit can cross the boundary; use a dedicated patched host and stronger isolation for future hostile-file processing. |
-| Database/queue/storage privilege escalation | Generated distinct API, worker, migrator, and maintenance identities; explicit grants; negative permission probes; private/internal networks. | Operator misconfiguration or provider-side IAM mistakes remain possible and must be checked during deployment. |
+| Arbitrary code or Blender-operation injection | Closed schemas reject fields not in the schema, code, flags, paths, URLs, add-ons, and unsupported generators. The runner exposes only reviewed request/output arguments. | A defect in trusted generator code executes with worker privileges. Code review and release tests are necessary. |
+| Embedded scripts or hostile `.blend` files | Uploaded `.blend` input is not permitted. Blender uses factory startup and `--disable-autoexec`. | `--disable-autoexec` is defense in depth, not a general Python sandbox. Future file import must have a different high-isolation design. |
+| Command, path, archive, or SSRF injection | Subprocess arguments are fixed. The server sets output paths and attempt/object keys. v0.1 accepts no URLs, archives, symlinks, or remote asset downloads. | New import or callback features must have explicit allowlists and threat-model changes. |
+| Secret theft or exfiltration | The demo uses no key. Optional provider keys are not part of v0.1. Git ignores `.env`. Runtime roles differ. See the credential controls below. Logs are structured and secret-free. | Host administrators, kernel/runtime compromise, and compromised control-plane code can access role credentials. This closes same-UID process inspection, but it does not make Blender a sandbox for customer-authored code. Use a secret manager. Replace credentials if you suspect theft. |
+| Network exfiltration | The one-shot build uses `--network none`. Blender uses `--offline-mode`. The VPS worker has no public edge network. It accesses storage only through a private controlled path. | Blender offline mode cannot constrain malicious third-party code. Network policy and container isolation set the security boundary. |
+| Resource exhaustion and cost abuse | Request, object, polygon, artifact, CPU, memory, PID, scratch-space, concurrency, lease, and wall-clock bounds. Asynchronous API. One VPS worker. | v0.1 has no public hosted abuse-control plane, billing, or multi-tenant quotas. Do not expose it as an open public service. |
+| Authentication bypass, IDOR, or leaked URLs | Authentication occurs before request processing. Build IDs are opaque. Artifact access uses authorization. Temporary signed URLs identify fixed versions. URLs contain no secrets. | A bearer token or signed URL grants its documented access until revoked/expired. TLS and careful client handling are mandatory. |
+| Replay and duplicate execution | HMAC-bound idempotency, durable unique state, fenced leases, transactional outbox, and stale-claim recovery. | Permitted retries can consume resources up to their limits. Monitor queue depth and failures. |
+| Retry/cancellation race | Attempt fencing, cancellation-wins publication locking, nested-process termination, private attempt keys, success-last publication, and a bounded grace-period orphan inventory reconciled under PostgreSQL build locks. | Host loss at a boundary can temporarily leave private versions until the independently applied janitor runs. Ambiguous/delete-marker listings fail closed. |
+| Cross-attempt or cross-tenant artifact disclosure | Canonical attempt-scoped keys, specified object versions, authorization, private buckets, version-pinned URLs, and different API/worker/maintenance storage roles. | v0.1 is one deployment namespace and not a fully designed multi-tenant service. |
+| Artifact corruption or false success | Private staging, atomic/local or immutable/object publication, SHA-256 and byte-size evidence, new Blender reload, GLB/STL re-import, and success-only manifest. | Hashes prove recorded bytes, not artistic quality, legal clearance, or manufacturing fitness. |
+| Dependency or image compromise | Digest-pinned base/service images, checksum-pinned Blender and downloads, hash-locked wheels, immutable Debian snapshot, generated SPDX SBOM, preserved notices, and clean-source release gates. A scheduled vulnerability scan uses a fixed checksum. | Upstream compromise before pinning, scanner/database errors, and vulnerabilities absent from current advisory data can occur. Maintain supported-version and patch review. |
+| Container escape or host compromise | Non-root containers, read-only roots, dropped capabilities, no-new-privileges, fixed mounts, resource limits, and no Docker socket. | Containers share the host kernel. A kernel, runtime, or native-code exploit can pass this boundary. Use a dedicated patched host and stronger isolation for future hostile-file processing. |
+| Database/queue/storage privilege escalation | Generated distinct API, worker, migrator, and maintenance identities. Explicit grants. Negative permission probes. Private/internal networks. | Do checks during deployment for operator configuration errors and provider-side IAM errors. |
 | Sensitive logging or retention | Structured redacted logs, private storage, explicit retention/maintenance path, version-aware deletion, bounded Redis dead-letter retention, and protected backups. | Operators choose retention, backup access, and log export destinations and must publish their own privacy policy. |
-| Unauthorized character, brand, or likeness use | Original `facet-bot` default, declarative original-character scope, and `OUTPUT_POLICY.md` rights requirements. | The software cannot automatically clear IP rights. Operators need policy, review, and takedown processes for a hosted service. |
+| Unauthorized character, brand, or likeness use | Original `facet-bot` default, declarative original-character scope, and `OUTPUT_POLICY.md` rights requirements. | The software cannot automatically clear IP rights. Operators must have policy, review, and takedown processes for a hosted service. |
 | Unsafe physical print | Objective geometry QA and explicit `needs_review`/failure states. | No slicer-, printer-, material-, strength-, safety-, or physical-print guarantee. See `OUTPUT_POLICY.md`. |
+
+Credential controls for secret theft and exfiltration:
+Blender receives an environment without credentials and no inherited nonstandard supervisor descriptors.
+Before credential client initialization, the Linux supervisor disables dumpability and core dumps.
+It validates the two controls and stops on failure.
+The launcher sets these controls again before each child starts.
+With all capabilities dropped, same-UID descendants cannot read the supervisor's `/proc` environment or memory, or use ptrace on it.
 
 ## Supply-chain and CI rules
 
-- Release builds must use tracked source and pinned inputs, generate an SBOM,
-  and retain upstream notices.
-- Third-party GitHub Actions should be pinned to immutable commits and receive
-  the minimum token permissions.
-- Untrusted pull requests must not execute on a privileged/self-hosted runner
-  or receive repository, registry, cloud, signing, or deployment credentials.
-- Workflows using `pull_request_target` must not execute untrusted checkout
-  content.
-- The disposable orphan-cleanup test waits for both setup containers to exit
-  successfully within 300 seconds. Missing containers, failed setup, or a wait
-  error block the live deletion test. Cleanup still removes only resources
-  with the test's exact project and owner labels.
-- Dependency updates require the same tests and security/licensing review as
-  direct edits. Repository code reports candidates and findings but has no
-  permission or path to create dependency pull requests. Operators who want no
-  Dependabot PRs must also disable repository-level Dependabot security updates;
-  removing its configuration disables only configured version updates.
-- The networked dependency workflow runs only on the default branch schedule or
-  explicit maintainer dispatch. It sends public package names, versions,
-  ecosystems, file hashes, and public image metadata to the OSV/deps.dev APIs,
-  PyPI, Docker registries, and GitHub-hosted official manifests; OSV-Scanner
-  does not transmit source code. Docker builds also access only the pinned
-  public sources already declared by the Dockerfiles. No repository, provider,
-  registry, or deployment credential is supplied to the scan.
-- Scanner binaries and GitHub Actions are immutable/checksum pinned; detailed
-  reports have per-file and aggregate byte limits, are retained for seven days,
-  and rendered summaries exclude remote vulnerability descriptions.
-  Registry/advisory outages fail the scan as incomplete rather than clean.
-- Release publication, image signing, remote creation, DNS/TLS changes, and
-  live deployment are explicit operator actions, not local-test side effects.
+- Release builds must use tracked source and pinned inputs.
+  They must generate an SBOM and keep upstream notices.
+- Pin third-party GitHub Actions to immutable commits.
+  Give them only the necessary token permissions.
+- Do not execute untrusted pull requests on privileged or self-hosted runners.
+  Do not give them repository, registry, cloud, signing, or deployment credentials.
+- Workflows with `pull_request_target` must not execute untrusted checkout content.
+- The temporary orphan-cleanup test waits for the two setup containers to exit
+  successfully in 300 seconds or less.
+  Missing containers, failed setup, or a wait error prevents the live deletion test.
+  Cleanup removes only resources with the test's specified project and owner labels.
+- Dependency updates must pass the same tests and security and license review as direct changes.
+  Repository code reports candidates and findings. It cannot create dependency pull requests.
+  To prevent Dependabot PRs, also disable repository-level Dependabot security updates.
+  Removal of its configuration stops only configured version updates.
+- The networked dependency workflow operates only from the default branch schedule
+  or an explicit maintainer dispatch.
+  It sends public package names, versions, ecosystems, file hashes,
+  and public image metadata to the OSV/deps.dev APIs, PyPI, Docker registries,
+  and GitHub-hosted official manifests.
+  OSV-Scanner does not transmit source code.
+  Docker builds access only the pinned public sources that the Dockerfiles specify.
+  The scan receives no repository, provider, registry, or deployment credential.
+- Scanner binaries and GitHub Actions use fixed commits or checksums.
+  Detailed reports have individual and total byte limits.
+  The system keeps reports for seven days.
+  Displayed summaries exclude remote vulnerability descriptions.
+  A registry or advisory outage makes the scan incomplete. It does not pass.
+- Release publication, image signing, remote creation, DNS/TLS changes,
+  and live deployment are explicit operator actions.
+  Local tests do not do these operations.
 
 ## Out-of-scope features requiring a new review
 
-- arbitrary Python, Blender expressions, add-ons, drivers, nodes, or flags;
-- uploaded `.blend`, archive, mesh, texture, font, or reference-image parsing;
-- remote URL ingestion, callbacks, webhooks, or general worker egress;
-- prompt planning, OpenAI credentials, or remote MCP tools;
+- arbitrary Python, Blender expressions, add-ons, drivers, nodes, or flags.
+- uploaded `.blend`, archive, mesh, texture, font, or reference-image parsing.
+- remote URL ingestion, callbacks, webhooks, or general worker egress.
+- prompt planning, OpenAI credentials, or remote MCP tools.
 - GPU/device passthrough, multiple workers, multi-host scheduling, or public
-  multi-tenancy;
-- browser UI, accounts, billing, subscriptions, or public anonymous access;
+  multi-tenancy.
+- browser UI, accounts, billing, subscriptions, or public anonymous access.
 - slicer automation or claims of physical-print success.
 
 ## Vulnerability handling and review cadence
 
-Follow `SECURITY.md` for reporting. GitHub private vulnerability reporting is
-enabled for this repository. Do not post exploit details publicly.
+Use `SECURITY.md` for vulnerability reports.
+GitHub private vulnerability reporting is enabled for this repository.
+Do not publish exploit details.
 
-Review this threat model whenever a trust boundary changes and at each release.
-A pull request that changes input shape, process execution, network access,
-credentials, persistence, file parsing, IAM, artifact publication, or CI trust
-must update the relevant threats and tests in the same change.
+Review this threat model at each release and when a trust boundary changes.
+Update threats and tests in the same PR as an applicable change.
+Applicable changes include input shape, process execution, network access,
+credentials, persistence, file parsing, IAM, artifact publication, and CI trust.
 
 ## Opt-in source-modeling experiment (outside v0.1)
 
-`experimental_modeling/` is an isolated research lane, not imported by the stable
-builder or service and not distributed as a supported package. It introduces
-reviewed Blender Python source bundles, separate trusted geometry observations,
-scoped revision policies and immutable attempt evidence. It does not change the
-v1 input contract or authorize source execution through the API.
+`experimental_modeling/` is a different research implementation.
+The stable builder and service do not import it.
+It is not a supported package.
+It uses reviewed Blender Python bundles, different trusted geometry observations,
+revision policies, and immutable attempt evidence.
+It does not change the v1 input contract or enable source execution through the API.
 
-The explicit native `--trusted-reviewed-source` mode is **not sandboxed** and must
-never receive unreviewed generated code. Resource limits and independent jobs
-reduce accidental failures but cannot protect the host/controller from malicious
-native Python or a Blender parser exploit. Untrusted mode fails closed without an
-audited isolated backend. Print acceptance also fails closed pending generic
-print-profile gates. See [the experimental design and limitations](experimental-source-modeling.md).
+Native `--trusted-reviewed-source` mode is **not sandboxed**.
+Do not give it generated code that you have not reviewed.
+Resource limits and independent jobs decrease accidental failures.
+They cannot prevent malicious native Python or a Blender parser exploit from access to the host or controller.
+
+Untrusted mode stops if the isolated backend is unavailable.
+The implemented Docker backend has tests, but these tests are not a security audit.
+Print acceptance stops until generic print-profile gates exist.
+See [the experimental design and limitations](experimental-source-modeling.md).
 
 ### Local experimental review program
 
-The local review process accepts one operator-selected trusted project store and
-binds only `127.0.0.1`. Exact Host/Origin, CSRF, bounded JSON, fixed artifact routes,
-CSP and path/hash validation constrain its browser interface. It never executes
-source or consumes prompts automatically, grants no remote access, and uses no
-CDN. Human approval and queued intent live separately from immutable machine
-results; neither can alter requirements or promote a failed candidate. Requirement
-locks and accepted parent hashes are checked independently of candidate-authored
-flags, including missing-baseline and deleted-lock cases. This is a local-owner
-trust boundary, not multi-user authentication or protection against a filesystem
-owner rewriting every trust root. See [local review details](local-model-review.md).
+The operator selects one trusted project store for the local review process.
+The server binds only to `127.0.0.1`.
+It uses Host/Origin equality, CSRF, JSON limits, fixed artifact routes,
+CSP, and path/hash validation for its browser interface.
+It does not execute source or automatically process prompts.
+It gives no remote access and uses no CDN.
+
+Human approval and queued requests are different from immutable machine results.
+Neither can change requirements or promote a failed candidate.
+The program validates requirement locks and accepted parent hashes independently
+of candidate-authored flags.
+These checks include missing baselines and deleted locks.
+
+The program trusts the local owner.
+It does not give multi-user authentication or prevent attacks from a filesystem
+owner who replaces all trust roots.
+See [local review details](local-model-review.md).
 
 ## Experimental portable project/review scaffold
 
-The [project launcher](local-project-launcher.md) is a separate opt-in source-
-checkout surface. A project descriptor can select only fixed version-1 relative
-folders and a reviewed runtime policy; it cannot select executables, authorize
-native execution, carry provider credentials or weaken acceptance requirements.
-The default doctor reads state without launching programs. Explicit probes/builds
-use caller-selected trusted absolute runtime paths outside the project, with no
-PATH discovery, image pull, runtime install or isolated-to-native fallback.
+The [project launcher](local-project-launcher.md) is a different optional source-checkout interface.
+A project descriptor can select only fixed version-1 relative folders and a reviewed runtime policy.
+It cannot select executables, enable native execution, contain provider credentials,
+or decrease acceptance requirements.
 
-The review server remains loopback-only with Host/Origin/CSRF checks. POSIX review
-writes retain the original store lock and fsync contract. Candidate Windows
-review is intentionally read-only: it creates no review metadata and denies both
-acceptance and change-request mutation methods before any write, even if a client
-bypasses disabled UI controls. No Windows generated-source execution is enabled.
-Windows durable review writes require a separately implemented and tested adapter;
-this is an intermediate feature boundary, not a statement that Windows cannot
-provide durable writes.
+The default doctor reads state without program execution.
+For explicit probes and builds, the caller selects trusted absolute runtime paths outside the project.
+There is no PATH discovery, image pull, runtime installation, or automatic change from isolated to native execution.
 
-Project/session leases use existing POSIX flock semantics or a Windows kernel
-byte-range lock. Lock files are never removed to force a takeover, and persisted
-PIDs/URLs do not confer process ownership. Windows reparse-point attributes are
-checked on Python 3.11+, including junctions, before project or JSON metadata reads.
-These checks assume a trusted local OS user and local filesystem; they are not a
-sandbox or protection against another process with equivalent filesystem authority.
-A forced process termination releases the lease. Build errors retain a recovery
-marker requiring inspection and explicit acknowledgement; no automatic artifact or
-Docker-resource deletion is introduced. Console exit tests cover review only and
-do not establish containment of generated subprocess trees.
+The review server uses loopback and Host/Origin/CSRF checks.
+POSIX review writes keep the initial store-lock and fsync contract.
 
-Actual native-platform CI must validate each claimed review support level.
-A passing Windows/Mac review test does not establish Blender generation, Docker
-Desktop isolation, cross-runtime geometry determinism, installer safety, code
-signing/notarization or provider authentication support.
+The candidate Windows review interface is read-only.
+It creates no review metadata. Before a write, it rejects acceptance
+and change-request mutation methods, even if a client bypasses disabled UI controls.
+It does not enable generated-source execution on Windows.
+Persistent Windows review writes must use a different implemented and tested adapter.
+This limit does not mean that Windows cannot give persistent writes.
+
+Project and session leases use POSIX flock semantics or a Windows kernel byte-range lock.
+Do not remove lock files to force a takeover.
+Stored PIDs and URLs do not show process ownership.
+Before project or JSON metadata reads, the program examines Windows reparse-point attributes,
+such as junctions, on Python 3.11+.
+
+These controls assume a trusted local OS user and local filesystem.
+They are not a sandbox. They cannot prevent attacks from another process with equivalent filesystem authority.
+
+Forced process termination releases the lease.
+A build error keeps a recovery marker. Examine the marker and explicitly acknowledge it.
+The program does not automatically delete artifacts or Docker resources.
+Console exit tests cover review only. They do not show isolation of generated subprocess trees.
+
+Actual native-platform CI must validate each stated review support level.
+A Windows or Mac review test does not show Blender generation or Docker Desktop isolation.
+It also does not show cross-runtime geometry determinism, installer safety,
+code signing/notarization, or provider authentication support.

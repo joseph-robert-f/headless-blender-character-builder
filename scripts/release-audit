@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline, fail-closed audit of the Git publication index and its export."""
+"""Do an offline audit of the Git publication index and its export. Stop if an audit check does not pass."""
 
 from __future__ import annotations
 
@@ -194,12 +194,12 @@ def _blob(repo: Path, entry: IndexEntry) -> bytes:
     try:
         size = int(size_payload.strip())
     except ValueError:
-        raise AuditFailure("invalid_index_blob", "indexed blob has an invalid size") from None
+        raise AuditFailure("invalid_index_blob", "indexed blob has an incorrect size") from None
     if size < 0 or size > MAX_TRACKED_BYTES:
         raise AuditFailure("oversized_tracked_file", "indexed file exceeds the 5 MiB policy: " + entry.path)
     payload = _git(repo, ("cat-file", "blob", entry.oid))
     if len(payload) != size:
-        raise AuditFailure("invalid_index_blob", "indexed blob size changed while auditing")
+        raise AuditFailure("invalid_index_blob", "indexed blob size changed during the audit")
     return payload
 
 
@@ -273,7 +273,7 @@ def _validate_blob(entry: IndexEntry, payload: bytes) -> None:
         return
     assert text is not None
     if entry.mode == "100755" and not payload.startswith(b"#!"):
-        raise AuditFailure("unsafe_executable", "indexed executable lacks a shebang: " + entry.path)
+        raise AuditFailure("unsafe_executable", "indexed executable does not include a shebang: " + entry.path)
     _scan_text(entry.path, text)
 
 
@@ -301,7 +301,7 @@ def _safe_export_file(root: Path, entry: IndexEntry) -> Tuple[bytes, int]:
     except OSError:
         raise AuditFailure("export_unreadable", "exported file is unreadable: " + entry.path) from None
     if len(payload) != metadata.st_size:
-        raise AuditFailure("export_changed", "exported file changed while auditing: " + entry.path)
+        raise AuditFailure("export_changed", "exported file changed during the audit: " + entry.path)
     return payload, permissions
 
 
@@ -309,7 +309,7 @@ def _export_paths(root: Path) -> List[str]:
     try:
         metadata = root.lstat()
     except OSError:
-        raise AuditFailure("export_unavailable", "export path is unavailable") from None
+        raise AuditFailure("export_unavailable", "export path is not available") from None
     if root.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
         raise AuditFailure("unsafe_export_root", "export path must be a real directory")
     paths: List[str] = []
@@ -340,7 +340,7 @@ def _license_check(blobs: Mapping[str, bytes]) -> Tuple[str, str]:
     try:
         policy = json.loads(blobs[policy_path].decode("utf-8", "strict"))
     except (UnicodeDecodeError, ValueError):
-        raise AuditFailure("invalid_license_policy", "tracked license policy is invalid") from None
+        raise AuditFailure("invalid_license_policy", "tracked license policy is incorrect") from None
     expected_keys = {
         "asset_license",
         "asset_policy_path",
@@ -362,7 +362,7 @@ def _license_check(blobs: Mapping[str, bytes]) -> Tuple[str, str]:
         or not isinstance(policy["source_license"], str)
         or not isinstance(policy["asset_license"], str)
     ):
-        raise AuditFailure("invalid_license_policy", "tracked license policy value is invalid")
+        raise AuditFailure("invalid_license_policy", "tracked license policy value is incorrect")
     _validate_relative_path(root_path)
     _validate_relative_path(asset_path)
     if root_path not in blobs or asset_path not in blobs:
@@ -450,7 +450,7 @@ def audit(repo: Path, export: Path) -> Dict[str, object]:
     except UnicodeDecodeError:
         raise AuditFailure("invalid_git_head", "Git HEAD is not an ASCII object ID") from None
     if re.fullmatch(r"[0-9a-f]{40,64}", head) is None:
-        raise AuditFailure("invalid_git_head", "Git HEAD is missing or invalid")
+        raise AuditFailure("invalid_git_head", "Git HEAD is missing or incorrect")
     return {
         "asset_license": asset_license,
         "file_count": len(files),
@@ -466,10 +466,10 @@ def audit(repo: Path, export: Path) -> Dict[str, object]:
 
 def _write_report(path: Path, payload: bytes) -> None:
     if path.exists() or path.is_symlink():
-        raise AuditFailure("report_exists", "refusing to overwrite audit report")
+        raise AuditFailure("report_exists", "cannot overwrite the audit report")
     parent = path.parent
     if not parent.is_dir() or parent.is_symlink():
-        raise AuditFailure("report_parent_unsafe", "audit report parent is unavailable")
+        raise AuditFailure("report_parent_unsafe", "audit report parent is not available")
     temporary = parent / ("." + path.name + ".tmp-" + str(os.getpid()))
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     try:
@@ -492,7 +492,7 @@ def _arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=ROOT, help="Git worktree root (default: project root)")
     parser.add_argument("--export", type=Path, required=True, help="git checkout-index export to audit")
-    parser.add_argument("--report", type=Path, help="new JSON report path; stdout when omitted")
+    parser.add_argument("--report", type=Path, help="new JSON report path. If you do not supply a path, use stdout")
     return parser.parse_args(argv)
 
 

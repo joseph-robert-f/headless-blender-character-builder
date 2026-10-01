@@ -10,12 +10,12 @@ if test "$phase" = check-output-name; then
   output_name=${OUTPUT_NAME-}
   case "$output_name" in
     ''|-*|*-|*--*|*[!a-z0-9-]*)
-      echo "OUTPUT_NAME must be a 1-48 character lowercase safe slug" >&2
+      echo "OUTPUT_NAME must be a safe lowercase slug with 1-48 characters." >&2
       exit 2
       ;;
   esac
   if test "${#output_name}" -gt 48; then
-    echo "OUTPUT_NAME must be a 1-48 character lowercase safe slug" >&2
+    echo "OUTPUT_NAME must be a safe lowercase slug with 1-48 characters." >&2
     exit 2
   fi
   exit 0
@@ -25,7 +25,7 @@ operation=${2-}
 case "$phase:$operation" in
   preflight:validate|preflight:build|preflight:verify|preflight:inspect|\
   run:validate|run:build|run:verify|run:inspect) ;;
-  *) echo "HBCB_MAKE: expected preflight or run and a builder operation" >&2; exit 2 ;;
+  *) echo "HBCB_MAKE: Select preflight or run and a builder operation." >&2; exit 2 ;;
 esac
 shift 2
 
@@ -49,7 +49,7 @@ if test "$phase" = preflight; then
   case "$operation" in
     validate|build|verify)
       if ! test -f "$request"; then
-        echo "HBCB_MAKE: FAIL[request_missing]: set REQUEST to an existing regular JSON file" >&2
+        echo "HBCB_MAKE: FAIL[request_missing]: Set REQUEST to a regular JSON file that is available." >&2
         exit 2
       fi
       ;;
@@ -57,16 +57,16 @@ if test "$phase" = preflight; then
   case "$operation" in
     build)
       if test -e "$output_path" || test -L "$output_path"; then
-        echo "HBCB_MAKE: FAIL[output_exists]: the selected build output already exists; choose a new OUTPUT_NAME or move the existing output aside" >&2
+        echo "HBCB_MAKE: FAIL[output_exists]: There is a file, folder, or link at the output path. Select a new OUTPUT_NAME or move that item." >&2
         exit 2
       fi
       ;;
     verify|inspect)
       if test -L "$output_path" || ! test -d "$output_path"; then
         if test "$operation" = verify; then
-          echo "HBCB_MAKE: FAIL[output_missing]: the selected build output is not an existing non-symlink directory; run make build with the same REQUEST and OUTPUT_NAME first" >&2
+          echo "HBCB_MAKE: FAIL[output_missing]: The selected output must be a folder without symlinks. Run make build with the same REQUEST and OUTPUT_NAME first." >&2
         else
-          echo "HBCB_MAKE: FAIL[output_missing]: the selected build output is not an existing non-symlink directory; run make build with the same OUTPUT_NAME first" >&2
+          echo "HBCB_MAKE: FAIL[output_missing]: The selected output must be a folder without symlinks. Run make build with the same OUTPUT_NAME first." >&2
         fi
         exit 2
       fi
@@ -74,7 +74,7 @@ if test "$phase" = preflight; then
   esac
   if test "$operation" = inspect; then
     if test -L "$manifest_path" || ! test -f "$manifest_path"; then
-      echo "HBCB_MAKE: FAIL[manifest_missing]: the selected build has no regular non-symlink manifest.json" >&2
+      echo "HBCB_MAKE: FAIL[manifest_missing]: The selected build has no regular manifest.json file without symlinks." >&2
       exit 2
     fi
   fi

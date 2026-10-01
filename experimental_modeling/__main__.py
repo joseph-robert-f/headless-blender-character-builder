@@ -1,4 +1,4 @@
-"""Explicit opt-in developer CLI, separate from the stable builder CLI."""
+"""This is an optional developer CLI. It is not the stable builder CLI."""
 import argparse
 import json
 from pathlib import Path
@@ -8,18 +8,18 @@ from .controller import build
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands=parser.add_subparsers(dest="command",required=True)
-    review=commands.add_parser("review",help="Open a local-only review program; never executes source")
+    review=commands.add_parser("review",help="Open the local review program. The program does not run source.")
     review.add_argument("--store",type=Path,required=True);review.add_argument("--port",type=int,default=0)
-    build_parser=commands.add_parser("build",help="Rebuild and verify a source revision")
+    build_parser=commands.add_parser("build",help="Build a source revision again and do its verification checks.")
     for field in ("source", "params", "policy", "store"):
         build_parser.add_argument("--" + field, type=Path, required=True)
     build_parser.add_argument("--revision", required=True)
     build_parser.add_argument("--parent")
-    build_parser.add_argument("--requirements", type=Path, help="Versioned trusted project rules; locked on first build")
-    build_parser.add_argument("--intent", default="", help="Human-readable requested revision, recorded with evidence")
+    build_parser.add_argument("--requirements", type=Path, help="Versioned project rules. The first build prevents changes to these rules.")
+    build_parser.add_argument("--intent", default="", help="Description of the change that you want. The program records it with the evidence.")
     build_parser.add_argument("--blender", default="blender")
-    build_parser.add_argument("--trusted-reviewed-source", action="store_true", help="Unsafe for generated/unreviewed code. Explicitly trust this entire source bundle.")
-    build_parser.add_argument("--sandbox-image", help="Exact local Docker image ID sha256:..., no native fallback")
+    build_parser.add_argument("--trusted-reviewed-source", action="store_true", help='Not safe for generated code or source without review. Give permission to run all source in this bundle.')
+    build_parser.add_argument("--sandbox-image", help="Use the complete local Docker image ID sha256:.... The program cannot fall back to native execution.")
     build_parser.add_argument("--skip-renders", action="store_true")
     args = parser.parse_args()
     try:

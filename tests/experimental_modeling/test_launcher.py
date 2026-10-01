@@ -63,7 +63,7 @@ class ProjectTests(unittest.TestCase):
     def test_nonempty_destination_is_never_adopted(self):
         self.root.mkdir()
         (self.root / "keep").write_text("safe")
-        with self.assertRaisesRegex(ValueError, "never adopts"):
+        with self.assertRaisesRegex(ValueError, "does not accept or replace files"):
             initialize(self.root)
         self.assertEqual((self.root / "keep").read_text(), "safe")
 
@@ -279,7 +279,7 @@ class IntegrationTests(RuntimeFixture, unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 launcher.build_project(self.project, self.native, revision="r0")
         with linux(), self.ready(), patch("experimental_modeling.controller.build", side_effect=AssertionError("executed")):
-            with self.assertRaisesRegex(RuntimeError, "Interrupted build"):
+            with self.assertRaisesRegex(RuntimeError, "Build recovery is necessary"):
                 launcher.build_project(self.project, self.native, revision="r1")
         result = {"status": "rejected", "revision": "r1", "failures": []}
         with linux(), self.ready(), patch("experimental_modeling.controller.build", return_value=result):
@@ -303,7 +303,7 @@ class IntegrationTests(RuntimeFixture, unittest.TestCase):
         with linux(), self.ready():
             self.assertTrue(runtime.doctor(self.project, self.native, probe=True)["recovery_required"])
         with linux(), self.ready(), patch("experimental_modeling.controller.build", side_effect=AssertionError("executed")):
-            with self.assertRaisesRegex(RuntimeError, "Interrupted build"):
+            with self.assertRaisesRegex(RuntimeError, "Build recovery is necessary"):
                 launcher.build_project(self.project, self.native, revision="r1")
 
     def test_existing_revision_is_never_overwritten(self):
@@ -311,7 +311,7 @@ class IntegrationTests(RuntimeFixture, unittest.TestCase):
         directory.mkdir()
         (directory / "keep").write_text("crash evidence")
         with linux(), self.ready(), patch("experimental_modeling.controller.build", side_effect=AssertionError("executed")):
-            with self.assertRaisesRegex(ValueError, "already exists"):
+            with self.assertRaisesRegex(ValueError, "Revision ID is in use"):
                 launcher.build_project(self.project, self.native, revision="r0", acknowledge_interrupted=True)
         self.assertEqual((directory / "keep").read_text(), "crash evidence")
 
@@ -320,7 +320,7 @@ class IntegrationTests(RuntimeFixture, unittest.TestCase):
         with launcher.operation_lock(self.project, "review"):
             with store_lock(self.project.folder("evidence")):
                 pass
-            with self.assertRaisesRegex(RuntimeError, "already running"):
+            with self.assertRaisesRegex(RuntimeError, "session is active for this project"):
                 with launcher.operation_lock(self.project, "review"):
                     pass
         with launcher.operation_lock(self.project, "review"):
@@ -386,7 +386,7 @@ assert main(['doctor', '--project', sys.argv[1]]) == 1
             first = start()
             repeated = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=10)
             self.assertEqual(repeated.returncode, 2)
-            self.assertIn("already running", repeated.stdout)
+            self.assertIn("session is active for this project", repeated.stdout)
             first.terminate()
             first.communicate(timeout=15)
             self.assertEqual(first.returncode, 130)

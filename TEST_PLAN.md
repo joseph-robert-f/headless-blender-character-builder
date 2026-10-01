@@ -1,41 +1,50 @@
 # Feature Testing and Owner Review Plan
 
-Status: **living verification plan; historical G0–G9 evidence passed locally; current release-facing changes require a new exact-commit gate**
+Status: **Current verification plan. Historical G0–G9 evidence passed locally. New release changes must pass a new exact-commit gate.**
 
 Last updated: **August 12, 2026**
 
-> **v0.1 support boundary:** passing a gate proves an engineering property; it
-> does not expand product support. v0.1 supports the trusted local one-shot Docker
-> builder. Compose is experimental and loopback-only; public, hostile-input,
+> **v0.1 support boundary:** a gate result shows an engineering property.
+> It does not increase product support. v0.1 supports the trusted local one-shot Docker
+> builder. Compose is experimental and loopback-only. Public, hostile-input,
 > multi-tenant, public-OCI, and VPS operation remain outside v0.1 support.
 
 ## 1. Purpose and authority
 
-`PLAN.md` defines what v0.1 must build. This document defines how an owner or independent reviewer proves those requirements. If the documents conflict, `PLAN.md` remains authoritative until both are intentionally updated.
+`PLAN.md` defines the v0.1 scope. This document defines the verification procedure
+for the owner or an independent reviewer.
+If these documents disagree, `PLAN.md` is authoritative until both documents change.
 
-A test passes only when its documented command actually runs successfully and leaves reviewable evidence. Use these statuses:
+A test passes only if its specified command succeeds and gives evidence for review.
+Use these statuses:
 
-- `PASS` — expected behavior was observed and evidence was recorded.
-- `FAIL` — behavior differed from the contract.
-- `BLOCKED` — the implementation exists, but an external prerequisite is unavailable.
-- `NOT_IMPLEMENTED` — the feature has not been built yet; this is the correct initial status for most v0.1 tests.
-- `CONDITIONAL` — an optional live VPS, slicer, physical-print, or other external test.
-- `NOT_APPLICABLE` — the test does not apply to the selected platform or mode.
+- `PASS`: The behavior agrees with the contract. Evidence is recorded.
+- `FAIL`: The behavior does not agree with the contract.
+- `BLOCKED`: The implementation exists, but an external prerequisite is unavailable.
+- `NOT_IMPLEMENTED`: The feature does not exist yet. Use this initial status for absent v0.1 features.
+- `CONDITIONAL`: The test is optional and uses a live VPS, slicer, physical print, or other external resource.
+- `NOT_APPLICABLE`: The test does not apply to the selected platform or mode.
 
-Do not call an unimplemented feature blocked, and do not mark a gate passed from documentation or mock artifacts alone.
+Do not use `BLOCKED` for an absent implementation.
+Documentation or mock artifacts alone cannot establish `PASS`.
+
+Historical results, recorded counts, completed decisions, commands, and evidence
+paths below keep their original wording. The controlled-language revision covers maintained instructions.
 
 ## 2. Current state
 
+<!-- ste-preserve:start historical completed G0–G9 implementation summary -->
 Work packages G0 through G9 have passed every locally verifiable gate. The repository contains strict `BuildRequest`, `CharacterSpec`, QA, and manifest contracts plus a generic `geometric-character@1.0.0` registry/core. Two original requests generate real, materially different Blender geometry with stable structural fingerprints. The trusted builder saves `.blend`, exports display GLB and a raw-millimeter binary STL, renders four PNGs, measures complete geometry QA, verifies the model formats in a second fresh Blender process, and atomically publishes a success manifest last.
+<!-- ste-preserve:end -->
 
-The pass counts and `g9-final` record below describe the historical August 3
-index. They are not evidence for later lifecycle, worker, dependency, OCI, or
-release-tool changes. Every such pull request must run
-`HBCB_RELEASE_RUN_ID=<unique-safe-id> make release-check`
-against its final signed-off commit and record the unique run ID in the pull
-request; this tracked plan cannot name that result without changing the commit
-being attested.
+The pass counts and `g9-final` record below describe the historical August 3 index.
+They do not give evidence for later lifecycle, worker, dependency, OCI, or release-tool changes.
+Each such PR must use `HBCB_RELEASE_RUN_ID=<unique-safe-id> make release-check`
+against its last signed-off commit.
+Record the unique run ID in the PR.
+Do not put that result in this tracked plan, because the edit changes the commit under verification.
 
+<!-- ste-preserve:start historical completed implementation and reviewer environment -->
 The G4 `linux/amd64` image, narrow `builder build|verify` CLI, hardened one-shot Docker runtime, keyless Make targets, native fallback, baked provenance, notices, and SPDX SBOM are implemented and passed from a clean indexed source export. The current public-readiness layer adds request-only `builder validate` plus safe named Make outputs without changing the build/verify artifact contract. G5–G6 add Postgres/Redis/versioned-storage foundations, generated scoped configuration, the bounded authenticated FastAPI surface, durable repository, fenced concurrency-one worker, stale Redis claim recovery, complete nested-process termination, immutable artifact publication, fixed-region signing, and secret-free structured logs without changing the G4 builder revision. G7 packages those components into an experimental hardened local Compose service with convergent least-privilege initialization and a real HTTP-to-Blender-to-download gate. G8 validates a future digest-locked VPS design, HTTPS guidance, maintained external S3 boundary, retention, backup/restore, Redis reconstruction, upgrade/rollback handoff, and an isolated recovery drill; those tests do not make VPS operation a v0.1-supported path. G9 adds the public documentation, governance, fork-safe CI definitions, license/SBOM inventory, real-model preview, source audit, and deterministic local release bundle; the final clean-index rehearsal passed without a remote operation. The excluded hardcoded branded proof of concept is preserved baseline material, not v0.1 acceptance evidence.
 
 Known local reviewer environment:
@@ -46,6 +55,7 @@ Known local reviewer environment:
 | Blender | 4.5.12 LTS |
 | Docker client/server | 29.4.0 / 29.4.0; Docker Desktop Linux `arm64` host |
 | Make | GNU Make 3.81 |
+<!-- ste-preserve:end -->
 
 ## 3. What I need from the owner
 
@@ -55,10 +65,9 @@ Known local reviewer environment:
 - [x] Confirm the authorized GitHub connector has administrator and push access.
 - [x] Use `main` as the default branch.
 
-The repository and project/package slug are both
-`headless-blender-character-builder`. GitHub CLI is optional; contributors need
-Git or an equivalent GitHub client for normal clone, branch, and pull-request
-work.
+The repository and project/package slug are both `headless-blender-character-builder`.
+GitHub CLI is optional. For clone, branch, and pull-request operations,
+use Git or an equivalent GitHub client.
 
 ### Confirm before v0.1 implementation reaches its release gate
 
@@ -73,18 +82,18 @@ work.
 - [ ] Printer technology, exact printer, material, nozzle/resin, slicer, layer profile, support strategy, and minimum feature requirements.
 - [ ] VPS provider/OS, domain, TLS approach, and explicit authorization for a live deployment test.
 - [ ] Physical-print reviewer and acceptance measurements.
-- [ ] OpenAI API key only if the optional post-v0.1 prompt planner is later enabled; it is not needed for the deterministic release.
+- [ ] OpenAI API key only if the optional post-v0.1 prompt planner is later enabled. It is not needed for the deterministic release.
 
 ## 4. Evidence rules
 
-For every executed test, record:
+For each completed test, record these data:
 
-- test ID, date, reviewer, and result;
-- commit SHA and builder image ID or digest;
-- OS/architecture plus Docker, Compose, Make, and Blender versions;
-- exact redacted command, exit code, and elapsed time;
-- expected versus actual behavior;
-- manifest, QA, sanitized logs, hashes, and artifact locations;
+- test ID, date, reviewer, and result.
+- commit SHA and builder image ID or digest.
+- OS/architecture plus Docker, Compose, Make, and Blender versions.
+- exact redacted command, exit code, and elapsed time.
+- expected versus actual behavior.
+- manifest, QA, sanitized logs, hashes, and artifact locations.
 - issue link for every failure.
 
 Published build/test evidence normally belongs under this ignored path:
@@ -93,9 +102,15 @@ Published build/test evidence normally belongs under this ignored path:
 build/test-evidence/<commit-or-tree-hash>/<test-id>/
 ```
 
-The explicit native G2 and G3 harnesses are exceptions: they require caller-owned new temporary directories outside the repository so integration probes and generated artifacts cannot pollute or overwrite source. Record those temporary paths and durable result summaries in `docs/progress.md`; do not commit generated JSON or model artifacts.
+The native G2 and G3 harnesses are exceptions.
+Use new temporary directories that you own outside the repository.
+This prevents integration probes and generated artifacts from changing source files.
+Record the temporary paths and persistent result summaries in `docs/progress.md`.
+Do not commit generated JSON or model artifacts.
 
-Record milestone summaries in `docs/progress.md` once implementation begins. Never attach `.env`, credentials, tokens, private references, signed URLs, or unredacted environment dumps.
+When implementation starts, record milestone summaries in `docs/progress.md`.
+Do not attach `.env`, credentials, tokens, private references, signed URLs,
+or environment dumps with secret data.
 
 ## 5. Test sequence
 
@@ -108,7 +123,7 @@ Record milestone summaries in `docs/progress.md` once implementation begins. Nev
 | T4 — VPS and recovery | G8 | `PASS` locally / live `CONDITIONAL` | Validate the future VPS topology and recovery contracts without claiming a live deployment |
 | T5 — release candidate | G9 | `PASS` locally | Prove tests, security, licenses, docs, and packaging together |
 
-Do not execute later stages to compensate for a failed dependency gate.
+If a dependency gate fails, do not use later stages as replacement evidence.
 
 ## 6. T0 — repository publication tests
 
@@ -122,10 +137,12 @@ git ls-files
 git remote -v
 ```
 
-Pass when only intentional source, policy, documentation, workflow, test, and
-separately licensed static-asset files are tracked; no generated model output,
-backup, credential, or private evidence is present; and `origin` is the
-expected GitHub repository.
+The test passes only when all these conditions are true:
+
+- Git tracks only intended source, policy, documentation, workflow, test,
+  and separately licensed static-asset files.
+- No generated model output, backup, credential, or private evidence is present.
+- `origin` is the expected GitHub repository.
 
 ### PUB-02: local-path and secret scan
 
@@ -134,35 +151,38 @@ rg -n '/Users/|/home/|file://|BEGIN .*PRIVATE KEY|sk-[A-Za-z0-9_-]+' \
   --hidden -g '!.git/**' .
 ```
 
-Review every result. Documentation examples may mention prohibited patterns, but no real personal path, credential, signed URL, or private value may be tracked. Verify GitHub secret scanning and push protection as a conditional remote-repository setting.
+Examine each result. Documentation examples can show prohibited patterns.
+Git must not track real personal paths, credentials, signed URLs, or private values.
+Do a conditional remote-repository check of GitHub secret scanning and push protection.
 
 ### PUB-03: truthful documentation
 
-Verify that README:
+Make sure that README:
 
 - labels the repository as a local v0.1 release candidate and distinguishes
-  local proof from conditional hosted publication;
+  local proof from conditional hosted publication.
 - describes the implemented one-shot Docker, native, asynchronous service,
   VPS reference, recovery, and release-check paths without advertising an
-  unpublished container image or hosted service;
-- links `PLAN.md`, this test plan, security, contribution, and license documents;
-- distinguishes required no-key operation from optional future credentials;
+  unpublished container image or hosted service.
+- links `PLAN.md`, this test plan, security, contribution, and license documents.
+- distinguishes required no-key operation from optional future credentials.
 - states IP, security, and physical-print limitations.
 
 ### PUB-04: license and policy files
 
-Verify GPL-3.0-or-later is detected for source and `ASSET_LICENSE.md` separately
-licenses the tracked original preview, whose provenance is bound by
-`docs/assets/manifest.json`. Confirm `SECURITY.md`, `CONTRIBUTING.md`,
-`CODE_OF_CONDUCT.md`, and `SUPPORT.md` render correctly on GitHub.
+Make sure that license detection identifies GPL-3.0-or-later for source.
+Make sure that `ASSET_LICENSE.md` separately licenses the tracked original preview.
+`docs/assets/manifest.json` records its provenance.
+Make sure that `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `SUPPORT.md`
+show correctly on GitHub.
 
 ## 7. T1 — schema, engine, and authenticity tests
 
 ENG-01 through ENG-06 are runnable and passed after G1–G3.
 
-Current contract and engine commands. Use the containerized unit target for the
-complete test tree because the root and service packages intentionally have
-separate dependency environments:
+Use the containerized unit target for the complete test tree.
+The root and service packages have separate dependency environments.
+Use these contract and engine commands:
 
 ```sh
 make test-unit
@@ -179,19 +199,19 @@ export PYTHON=${PYTHON:-python3}
   --work-dir /absolute/path/to/dedicated-temporary-directory
 ```
 
-The two direct Blender commands are focused contributor probes and require the
-documented native Python/Blender environment. `make test-blender` is the
-authoritative containerized integration path. Do not run unrestricted
-`unittest discover -s tests` after installing only the root package.
+The two direct Blender commands are contributor probes.
+Use the documented native Python/Blender environment for them.
+`make test-blender` is the authoritative containerized integration command.
+Do not run unrestricted `unittest discover -s tests` after you install only the root package.
 
 | ID | Status | Required proof |
 |---|---|---|
-| ENG-01 | `PASS` | Valid `BuildRequest v1` and nested `CharacterSpec v1` fixtures pass; extra properties, incompatible presets, and hostile fields fail before Blender starts |
-| ENG-02 | `PASS` | Two materially different requests build from factory startup through the same generator |
-| ENG-03 | `PASS` | Repeated requests retain the same canonical hashes and structural fingerprint without requiring byte-identical `.blend` or PNG files |
-| ENG-04 | `PASS` | Fresh-process `.blend` reload succeeds and enumerates real mesh objects, vertices, faces, materials, transforms, and three-dimensional bounds |
-| ENG-05 | `PASS` | Front, side, and back diagnostics come from the saved scene; PNG structure/variation, real geometry, and absence of external texture dependencies are checked |
-| ENG-06 | `PASS` | GLB and STL re-import into clean scenes and match evaluated `.blend` bounds within the greater of 0.2 mm or 0.5% per axis |
+| ENG-01 | `PASS` | Valid `BuildRequest v1` and nested `CharacterSpec v1` fixtures pass. Properties not in the schema, presets that are not compatible, and hostile fields fail before Blender starts |
+| ENG-02 | `PASS` | Two different requests build from factory startup through the same generator |
+| ENG-03 | `PASS` | Repeated requests keep the same canonical hashes and structural fingerprint. They do not have to give byte-identical `.blend` or PNG files |
+| ENG-04 | `PASS` | New-process `.blend` reload succeeds and lists mesh objects, vertices, faces, materials, transforms, and three-dimensional bounds |
+| ENG-05 | `PASS` | Front, side, and back diagnostics come from the saved scene. Validation covers PNG structure/variation, geometry, and absence of external texture dependencies |
+| ENG-06 | `PASS` | GLB and STL re-import into clean scenes and match evaluated `.blend` bounds in the greater of 0.2 mm or 0.5% for each axis |
 
 Required artifact tree:
 
@@ -207,23 +227,27 @@ manifest.json
 qa.json
 ```
 
-Artifact verification must confirm:
+Make sure that artifact verification gives these results:
 
-- both JSON files validate against versioned schemas;
-- every non-manifest artifact byte count and SHA-256 hash recomputes correctly;
-- evaluated triangles do not exceed 500,000;
-- STL is one connected watertight shell with positive volume and outward normals;
-- non-manifold edges and zero-area faces equal zero;
-- coordinates and transforms are finite;
-- minimum wall thickness is at least 1.2 mm;
-- freestanding features and connections are at least 2.0 mm;
+- both JSON files validate against versioned schemas.
+- every non-manifest artifact byte count and SHA-256 hash recomputes correctly.
+- evaluated triangles do not exceed 500,000.
+- STL is one connected watertight shell with positive volume and outward normals.
+- non-manifold edges and zero-area faces equal zero.
+- coordinates and transforms are finite.
+- minimum wall thickness is at least 1.2 mm.
+- freestanding features and connections are at least 2.0 mm.
 - unmeasurable mandatory geometry becomes `needs_review`, not `succeeded`.
 
+<!-- ste-preserve:start historical G3 measured artifact results -->
 Final G3 evidence is under `/private/tmp/hbcc-g3-final-topology.PMFshx/`. Facet Bot published the exact tree twice with matching stable probe SHA-256 `726060b092c8168e0a57477116a4c715e1b6f21d48c6d65fe7ca2be500652ccc`. Its STL has 316,172 triangles, one face-connected closed positive shell, zero non-manifold edges or vertices, and conservative lower bounds of 2.3001 mm wall and 2.3089 mm feature. A synthetic pair of closed tetrahedra touching at one bow-tie vertex proves production QA rejects vertex-pinched shells. Moss Hopper intentionally exits `11` as `needs_review` and publishes nothing because its wall evidence is ambiguous. Invalid CLI, oversized/invalid/unresolvable input, an existing caller-owned output, and a corrupted private STL also followed their fixed failure contracts without publishing success.
+<!-- ste-preserve:end -->
 
 ## 8. T2 — zero-key single-container quickstart
 
+<!-- ste-preserve:start historical G4 execution environment -->
 G4 passed these tests on August 3, 2026, from a temporary `git checkout-index` export containing 94 tracked files. The release image ran as `linux/amd64` under Docker Desktop emulation; no registry login, `.env`, provider key, Compose stack, host Blender, database, queue, or object store was available to the container path.
+<!-- ste-preserve:end -->
 
 Golden commands:
 
@@ -232,6 +256,7 @@ make demo
 make verify-demo
 ```
 
+<!-- ste-preserve:start historical G4 observed results and summary -->
 | ID | Status | Observed proof |
 |---|---|---|
 | QKS-01 | `PASS` | A clean indexed export built the production image and completed `make demo && make verify-demo` with Docker and GNU Make 3.81 |
@@ -244,8 +269,11 @@ make verify-demo
 | QKS-08 | `PASS` | The fixed launcher budget is 15 minutes, scratch is capped at 2 GiB, and the successful nine-file output totaled 21,515,028 bytes |
 
 The passing summary is `/private/tmp/hbcb-g4-final.ovZDPq/g4-summary.json`. It records production image ID `sha256:49cb24b22ea569bfe9db3a7ad5532d1270c765439a7c293515b9e833fb655b13`, a 166-package SPDX 2.3 SBOM, exact source/Blender binary hashes, container/native structural parity, and fixed application exit coverage. `make test-unit` passed all 62 clean-source unit, contract, launcher, and runtime-policy tests. The full `make check` target is implemented; its final clean release invocation remains part of G9.
+<!-- ste-preserve:end -->
 
-Human Blender inspection is useful optional evidence: open a copy of `model.blend`, hide or move a component, and inspect solid/wireframe views. It never replaces the automated tests.
+For optional human evidence, open a copy of `model.blend`.
+Hide or move a component. Examine the solid and wireframe views.
+Human examination does not replace automatic tests.
 
 ## 9. T3 — asynchronous Compose service
 
@@ -261,9 +289,11 @@ HBCB_G5_POSTGRES_DSN=<local-test-dsn> PYTHONPATH=.:service/src \
   python3.11 tests/service_integration/g5_postgres_gate.py
 ```
 
+<!-- ste-preserve:start historical G5 and G6 observed results -->
 Observed G5 proof: 55 focused service tests passed. PostgreSQL 16.9 applied the foundation migration, exposed all required tables/constraints, and rejected invalid durable states. Storage tests hash uploaded and stored bytes, require version IDs, pin signed downloads, and reject forged metadata. Generated role mappings parse independently.
 
 Observed G6 proof: 154 repository tests were discovered; 153 passed locally and the sole Linux-only nested-process test separately passed under the hardened `linux/amd64` image in 2.201 seconds. The authenticated API covers async submission/replay, uniform errors, cancellation, readiness, and exact signed artifacts. The worker covers fenced leases/heartbeats, retries, timeout, dead-letter, cancellation-wins, lease recovery, stale Redis pending-entry recovery, complete process-tree cleanup, and manifest-last versioned publication. A real PostgreSQL gate applied `0001_g5_foundation` plus `0002_g6_outbox_counter`, published exactly nine artifacts, and recovered from dispatch counts above 100.
+<!-- ste-preserve:end -->
 
 Passing G7 end-to-end service path:
 
@@ -274,6 +304,7 @@ make service-smoke
 make service-down
 ```
 
+<!-- ste-preserve:start historical G7 observed service results -->
 The service gate proved:
 
 - `/healthz`, private `/readyz`, and bearer-token enforcement;
@@ -303,9 +334,11 @@ Observed G7 proof on August 3, 2026:
 - the complete Python regression run discovered 157 tests, passed 156 on macOS, and skipped only the Linux `/proc` case that already passed separately in the release image.
 
 Ignored local evidence is under `build/service-smoke/run.Lw4H0h/`, including direct and service artifact trees plus `g7-service-summary.json`. Credentials, signed URLs, request bodies, and child logs are absent from the summary. `make service-down` preserves the PostgreSQL, Redis, and object-storage volumes.
+<!-- ste-preserve:end -->
 
 ## 10. T4 — VPS, slicer, and physical-print tests
 
+<!-- ste-preserve:start historical G8 topology and recovery results -->
 G8 passed locally. The gate validated the merged VPS topology, Caddy 2.11.4
 configuration, digest-only release locks, root trust and operator locking,
 authenticated internal readiness, one deployment namespace, bounded resources
@@ -320,45 +353,59 @@ unchanged, restarted the source service, exposed no target host port, and
 removed the disposable target. The final IAM gate proved ten PostgreSQL and
 three storage denials. Evidence is recorded in `docs/progress.md`; ignored run
 outputs are under `build/g8-recovery/` and `build/service-smoke/`.
+<!-- ste-preserve:end -->
 
-A live deployment remains conditional on owner-supplied infrastructure and
-explicit authorization. Local success does not claim DNS, ACME issuance,
-firewall, provider IAM/egress, off-host backup, or public HTTPS behavior.
+A live deployment must have owner-supplied infrastructure and explicit authorization.
+Local success does not establish DNS, ACME issuance, firewall, provider IAM/egress,
+off-host backup, or public HTTPS behavior.
 
-Slicer and physical-print trials are separate conditional evidence. They require the owner's exact printer technology, material, nozzle/resin, layer profile, orientation, support strategy, and calibration data. They do not block geometry-only v0.1 and cannot create a print warranty.
+Slicer and physical-print trials give separate conditional evidence.
+The owner must supply the exact printer technology, material, nozzle/resin,
+layer profile, orientation, support strategy, and calibration data.
+These trials do not prevent geometry-only v0.1 completion.
+They cannot give a print warranty.
 
 ## 11. T5 — release candidate
 
-G9 must be run from the final intended Git index:
+Run G9 from the final intended Git index:
 
 ```sh
 make release-static
 HBCB_RELEASE_RUN_ID=<unique-safe-id> make release-check
 ```
 
-The static gate exports the Git index, requires an exact file/mode match,
-rejects tracked secrets, environment files, credentials in URLs, personal
-paths, unsafe symlinks/modes, backups, generated output, and oversized binary
-artifacts, then validates licenses, the CC0 preview manifest, workflows, SBOM
-inputs, and release tools. The full gate uses a second clean indexed export and
-must pass the keyless demo/fresh verifier, ordinary and real-Blender tests,
-asynchronous service, IAM/Redis, VPS/Caddy/recovery, builder/API/worker SPDX
-generation, normalized local image evidence, deterministic source/sample
-packaging, and SHA-256 checksums without a remote operation.
+The static gate exports the Git index. Files and modes must agree exactly.
+It rejects tracked secrets, environment files, credentials in URLs, personal paths,
+unsafe symlinks or modes, backups, generated output, and excessive binary sizes.
+Then it validates licenses, the CC0 preview manifest, workflows, SBOM inputs, and release tools.
 
-Each run uses its mandatory unique ID under `build/release-check/<run-id>/`.
-The historical evidence described below used `g9-final`; do not reuse that ID.
-External
-GitHub-hosted CI, license detection, registry publication/digests, Release
-publication, and a live VPS remain conditional operator checks. GitHub private
-vulnerability reporting was enabled and verified on August 4, 2026. Public OCI
-publication is additionally blocked: the current inventory deliberately covers
-project and Blender source only and sets `public_oci_ready: false` until an
-actual-final-image review completes every applicable native, base-image, and
-copyleft source/delivery obligation and the transaction gains inventory, SBOM,
-signing, publication, and digest-lock support for the derived PostgreSQL image,
-as described in `docs/oci-publication.md`.
+The full gate uses a second clean indexed export.
+It must pass the demo and new-process verifier, ordinary and real-Blender tests,
+asynchronous service, IAM/Redis, and VPS/Caddy/recovery checks.
+It must also pass builder/API/worker SPDX generation, normalized local image evidence,
+deterministic source/sample package creation, and SHA-256 validation.
+These gates use no remote operation.
 
+Give each run a unique ID under `build/release-check/<run-id>/`.
+The historical evidence below used `g9-final`.
+Do not use that ID again.
+External GitHub-hosted CI, license detection, registry publication/digests,
+Release publication, and a live VPS are conditional operator checks.
+
+<!-- ste-preserve:start historical security reporting activation -->
+GitHub private
+vulnerability reporting was enabled and verified on August 4, 2026.
+<!-- ste-preserve:end -->
+
+Public OCI publication is also blocked.
+The current inventory covers only project and Blender source.
+It sets `public_oci_ready: false` until review of the actual final image completes
+all applicable native, base-image, and copyleft source/delivery obligations.
+The publication transaction must also support the derived PostgreSQL image.
+This includes inventory, SBOM, signing, publication, and digest-lock support.
+See `docs/oci-publication.md`.
+
+<!-- ste-preserve:start historical G9 measured results and release bundle -->
 The historical final G9 index passed the complete gate on August 3, 2026. The staged
 rehearsal covered 23 release tests, 64 builder unit/contract/container/security
 tests, 121 service tests, 49 deployment/recovery tests, real Blender G2/G3
@@ -376,30 +423,38 @@ directories with normalized `0644`/`0755` modes. Exact indexed-tree byte count,
 hashes, image identities, gate summaries, artifacts, and checksums are kept in
 the ignored machine-readable `g9-final` evidence rather than copied into this
 indexed file, which would recursively change the candidate it describes.
+<!-- ste-preserve:end -->
 
 ## 12. Security tests
 
 - Scan tracked files and history for secrets and personal paths.
-- Confirm `.env` is ignored and `.env.example` contains placeholders only.
-- Confirm secrets never appear in logs, manifests, images, diagnostics, or delivered artifacts.
-- Use a canary service credential to prove Blender does not inherit it.
-- Confirm no Docker socket, SSH agent, device, home directory, repository root, or arbitrary host path is mounted.
-- Confirm one-shot has no network; the Compose worker has only internal-service access and no public route, while API/MinIO host ports bind only to loopback.
-- Reject Python, shell fragments, paths, URLs, add-ons, environment variables, Blender flags, extra properties, traversal, symlinks, oversized payloads, and decompression abuse.
-- Verify pinned Blender checksum, release image digest, SBOM, dependency/container/license scans, and fork-safe least-privilege CI.
+- Make sure that Git ignores `.env` and that `.env.example` contains only placeholders.
+- Make sure that logs, manifests, images, diagnostics, and delivered artifacts contain no secrets.
+- Use a canary service credential to show that Blender does not inherit it.
+- Make sure that no Docker socket, SSH agent, device, home directory,
+  repository root, or arbitrary host path is mounted.
+- Make sure that the one-shot container has no network access.
+- Make sure that the Compose worker has only internal-service access and no public route.
+- Make sure that API/MinIO host ports bind only to loopback.
+- Reject Python, shell fragments, paths, URLs, add-ons, environment variables,
+  Blender flags, extra properties, traversal, symlinks, excessive payloads, and decompression abuse.
+- Validate the pinned Blender checksum, release image digest, and SBOM.
+- Do dependency, container, and license scans.
+- Make sure that CI is safe for forks and uses minimum permissions.
 
 ## 13. Platform matrix
 
 | Platform | Target | Required coverage |
 |---|---|---|
 | Linux `amd64` | Release-blocking | Builder image, quickstart, service, security, and release checks |
-| macOS Apple Silicon + Docker Desktop | Manual evaluator path | Quickstart and verification; record emulation and timing |
+| macOS Apple Silicon + Docker Desktop | Manual evaluator path | Quickstart and verification. Record emulation and timing |
 | Native macOS Blender 4.5 | Contributor path | Native engine and Blender integration tests |
 | Native Linux `amd64` Blender 4.5 | Reference contributor path | Native engine and integration tests |
 | Linux `arm64` | Best effort | No support claim until checksum-pinned Blender distribution passes |
 | Windows/WSL2 | Owner decision | Experimental until Make, mounts, UID/GID, demo, and verification pass |
 
-A platform is unsupported until a test record is attached.
+A platform has no support claim until its test record is available.
+This matrix covers v0.1 generation. The [read-only review preview](docs/review-preview.md) has a separate platform scope.
 
 ## 14. Failure report template
 
@@ -437,15 +492,15 @@ Schema / generator / exporter / QA / container / API / supervisor / storage / se
 
 ## 15. Release verdict
 
-Local v0.1 is `PASS` only when:
+Local v0.1 has status `PASS` only when all these conditions are true:
 
-- every G0–G9 locally verifiable gate is recorded as passed;
-- a clean indexed source export passes `make demo && make verify-demo`;
-- two requests prove genuinely varied schema-driven geometry;
-- artifact, authenticity, geometry, and print-QA checks pass;
-- `make service-smoke`, `make orphan-minio-check`, `make security-check`, and a uniquely named full `make release-check` pass;
-- the local `linux/amd64` image gates pass without repository secrets; native
-  GitHub-hosted Linux CI remains a conditional publication check;
-- no required test is failed, blocked, unimplemented, or silently skipped;
-- external-only VPS and physical-print checks are explicitly conditional;
+- every G0–G9 locally verifiable gate is recorded as passed.
+- a clean indexed source export passes `make demo && make verify-demo`.
+- two requests give different schema-driven geometry.
+- artifact, authenticity, geometry, and print-QA checks pass.
+- `make service-smoke`, `make orphan-minio-check`, `make security-check`, and a uniquely named full `make release-check` pass.
+- the local `linux/amd64` image gates pass without repository secrets. Native
+  GitHub-hosted Linux CI remains a conditional publication check.
+- no mandatory test has status failed, blocked, unimplemented, or skipped without an explanation.
+- external-only VPS and physical-print checks are explicitly conditional.
 - no secret, local path, generated backup, or large binary is tracked.

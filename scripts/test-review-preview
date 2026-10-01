@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the freshly extracted native executable, never a source substitute."""
+"""Do smoke tests after archive extraction. The tests use the package executable."""
 from __future__ import annotations
 
 import argparse

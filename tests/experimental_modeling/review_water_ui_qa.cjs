@@ -67,7 +67,7 @@ const screenshots = [];
   await page.locator('#revision-title').filter({ hasText: 'Revision r2' }).waitFor({ timeout: 90000 });
   await page.locator('#geometry-stats').filter({ hasText: '2 parts' }).waitFor({ timeout: 90000 });
   await page.locator('#verified-status').filter({ hasText: 'Required checks passed' }).waitFor();
-  assert.equal(await page.locator('#accepted-status').innerText(), 'Awaiting your decision');
+  assert.equal(await page.locator('#accepted-status').innerText(), 'No human decision recorded');
   assert.equal(await page.locator('#accept-submit').isEnabled(), true);
   assert.equal(await page.locator('#part-list button').count(), 2);
   assert.deepEqual(await page.locator('#revision-list .revision-text strong').allTextContents(), ['bad-body', 'r2', 'r1', 'r0']);
@@ -81,7 +81,7 @@ const screenshots = [];
   const passage = await expand(page, water.title);
   assert.ok((await passage.innerText()).includes('Measured'));
   assert.ok((await passage.innerText()).includes('Expected'));
-  assert.ok((await passage.locator('.measurement-summary').innerText()).includes('required at least'));
+  assert.ok((await passage.locator('.measurement-summary').innerText()).includes('Minimum permitted clearance:'));
   const image = await page.locator('#model-canvas').evaluate(canvas => canvas.toDataURL());
   await page.locator('#model-canvas').press('ArrowRight');
   await page.waitForFunction(before => document.getElementById('model-canvas').toDataURL() !== before, image);
@@ -106,7 +106,7 @@ const screenshots = [];
   assert.equal(await page.locator('#requirement-summary .unknown').innerText(), '2 unknown');
   for (const row of unknown) {
     const visible = await expand(page, row.title);
-    assert.ok((await visible.innerText()).includes('Not applicable to this revision; excluded from required checks.'));
+    assert.ok((await visible.innerText()).includes('Not applicable to this revision. The mandatory checks exclude this requirement.'));
   }
   await page.locator('#revision-title').scrollIntoViewIfNeeded();
   await snapshot('water-initial.png');

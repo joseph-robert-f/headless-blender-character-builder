@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 name: Bug report
-description: Report a reproducible, non-sensitive defect in a supported v0.1 path.
+description: Report a repeatable defect in a supported v0.1 workflow. Do not include sensitive data.
 title: "[Bug]: "
 labels:
   - bug
@@ -10,10 +10,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve the project. Do not report vulnerabilities,
-        credentials, private references, personal data, exploit details, or
-        signed artifact URLs here. Follow SECURITY.md for suspected security
-        issues.
+        Do not include vulnerabilities, credentials, private references,
+        personal data, exploit details, or signed artifact URLs here.
+        For a possible security issue, use the procedure in SECURITY.md.
   - type: dropdown
     id: surface
     attributes:
@@ -39,7 +38,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Paste sanitized output from ./scripts/doctor (or --service/--native), then add CPU/RAM and the relevant mode. Doctor output contains no credentials; review it before posting anyway.
+      description: Paste output from ./scripts/doctor (or --service/--native) without sensitive data. Add CPU/RAM and the applicable mode. Examine the output before publication.
       placeholder: |
         ./scripts/doctor output:
         CPU/RAM:
@@ -50,7 +49,7 @@ body:
     id: reproduce
     attributes:
       label: Reproduction steps
-      description: Provide the smallest deterministic sequence and a sanitized bounded request when relevant.
+      description: Give the smallest repeatable procedure. If applicable, include a request within the permitted limits and without sensitive data.
       placeholder: |
         1.
         2.
@@ -67,20 +66,20 @@ body:
     id: actual
     attributes:
       label: Actual behavior
-      description: Include exit code/status and sanitized error text. Do not paste secrets or signed URLs.
+      description: Include the exit code, status, and error text without sensitive data. Do not paste secrets or signed URLs.
     validations:
       required: true
   - type: textarea
     id: evidence
     attributes:
       label: Sanitized evidence
-      description: Relevant manifest/QA fields, hashes, or log excerpts with tokens, endpoints, names, and private content removed.
+      description: Include applicable manifest fields, QA fields, hashes, or log parts. Remove tokens, endpoints, names, and private content.
   - type: checkboxes
     id: confirmations
     attributes:
       label: Confirmations
       options:
-        - label: I reproduced this from a supported path with the smallest practical request.
+        - label: I reproduced this problem in a supported workflow with the smallest practical request.
           required: true
         - label: I removed credentials, private data, signed URLs, and material I cannot redistribute.
           required: true

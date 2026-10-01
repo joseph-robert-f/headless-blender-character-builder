@@ -296,12 +296,12 @@ class ReleasePolicyTests(unittest.TestCase):
         self.assertIn(tag_push, process)
         self.assertIn('export HBCB_PUBLISH_DOCKER=${DOCKER:-docker}', process)
         self.assertIn('command -v "$HBCB_PUBLISH_DOCKER"', process)
-        publication_start = process.index("```sh\n(\nset -eu", process.index("Exact registry"))
+        publication_start = process.index("```sh\n(\nset -eu", process.index("### Private push and draft transaction"))
         self.assertLess(publication_start, process.index("command -v gh", publication_start))
         self.assertLess(process.index(login), process.index(first_image_push))
         self.assertLess(process.index(first_image_push), process.index(tag_push))
         self.assertIn("public_oci_ready: false", process)
-        self.assertIn("Public OCI publication remains blocked", process)
+        self.assertIn("Public visibility stays blocked", process)
         readiness = 'scripts/release-publication-preflight \\'
         self.assertIn(readiness, process)
         self.assertLess(process.index(readiness), process.index(login))
@@ -328,12 +328,16 @@ class ReleasePolicyTests(unittest.TestCase):
         self.assertLess(process.index(finalizer), process.index(final_digest_check))
         self.assertLess(process.index(final_digest_check), process.index(tag_push))
         self.assertIn("registry-qualified GHCR tag", process)
-        self.assertIn("raw manifest whose config digest matches", process)
+        self.assertIn(
+            "raw manifest. Its config digest\n"
+            "must agree with the checksum-bound local image ID.",
+            process,
+        )
         self.assertIn("RepoTags", process)
         self.assertIn("RepoDigests", process)
         self.assertIn('gh release delete "v${RC_VERSION}" --yes', process)
         self.assertIn('git push origin --delete "v${RC_VERSION}"', process)
-        self.assertIn("exact version ID", process)
+        self.assertIn("Delete only that version ID.", process)
         for role, variable in (
             ("builder", "BUILDER_IMAGE_ID"),
             ("api", "API_IMAGE_ID"),
@@ -344,7 +348,7 @@ class ReleasePolicyTests(unittest.TestCase):
                 process,
             )
             self.assertIn(f'"$HBCB_PUBLISH_DOCKER" tag "${variable}"', process)
-        self.assertIn("fail-fast but non-atomic operator transaction", process)
+        self.assertIn("Remote publication stops at a failure, but the transaction is not atomic.", process)
 
     def test_publication_runbook_is_fail_closed_and_resumable(self) -> None:
         process = (ROOT / "docs" / "oci-publication.md").read_text(
@@ -379,7 +383,7 @@ class ReleasePolicyTests(unittest.TestCase):
         )
         self.assertIn("downloaded draft asset set differs from the local bundle", process)
         self.assertIn("downloaded review tree contains missing or extra paths", process)
-        self.assertIn("fresh disposable VM with an empty Docker daemon", process)
+        self.assertIn("new disposable VM. Its Docker daemon must be empty, without HBCB images.", process)
         self.assertIn("HBCB_CLEAN_REGISTRY_VERIFY: PASS", process)
         self.assertIn("verify_private_remote_role()", process)
         self.assertIn("verify_public_remote_role()", process)
@@ -423,7 +427,7 @@ class ReleasePolicyTests(unittest.TestCase):
         self.assertIn("PUBLISHED_RELEASE_DIR=\"${ORIGINAL_RELEASE_DIR}.published\"", process)
         self.assertIn(".failed-<random>", process)
         self.assertIn("--json assets,isDraft,tagName,url", process)
-        recovery = process.index("Use this bounded recovery inventory")
+        recovery = process.index("Use this scope-limited, read-only recovery inventory")
         self.assertNotIn("imagetools inspect --raw \"$reference\" |", process[recovery:])
         self.assertIn('> "$manifest"', process[recovery:])
         self.assertIn('recovery_docker_config="$recovery_inventory/docker-config"', process[recovery:])

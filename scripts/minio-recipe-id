@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print the canonical SHA-256 identity of every MinIO build-recipe input."""
+"""Print the canonical SHA-256 identity of each input to the MinIO build recipe."""
 
 from __future__ import annotations
 
@@ -33,11 +33,11 @@ def _payload(root: Path, relative: str) -> bytes:
     try:
         metadata = path.lstat()
     except OSError:
-        raise RecipeFailure("a required MinIO recipe input is unavailable") from None
+        raise RecipeFailure("a required MinIO recipe input is not available") from None
     if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
-        raise RecipeFailure("a required MinIO recipe input is unsafe")
+        raise RecipeFailure("a required MinIO recipe input is not safe")
     if not 1 <= metadata.st_size <= MAX_FILE_BYTES:
-        raise RecipeFailure("a required MinIO recipe input is outside the size policy")
+        raise RecipeFailure("the size of a necessary MinIO recipe input does not obey the size policy")
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(path, flags)
@@ -52,7 +52,7 @@ def _payload(root: Path, relative: str) -> bytes:
         or opened.st_size != metadata.st_size
         or len(payload) != metadata.st_size
     ):
-        raise RecipeFailure("a required MinIO recipe input changed while being read")
+        raise RecipeFailure("a necessary MinIO recipe input changed during the read")
     return payload
 
 
@@ -60,9 +60,9 @@ def recipe_id(root: Path) -> str:
     try:
         selected_root = root.resolve(strict=True)
     except OSError:
-        raise RecipeFailure("the repository root is unavailable") from None
+        raise RecipeFailure("the repository root is not available") from None
     if root.is_symlink() or not selected_root.is_dir():
-        raise RecipeFailure("the repository root is unsafe")
+        raise RecipeFailure("the repository root is not safe")
 
     digest = hashlib.sha256(FORMAT_MARKER)
     total = 0

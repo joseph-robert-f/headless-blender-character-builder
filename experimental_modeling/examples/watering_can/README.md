@@ -1,25 +1,26 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Watering-can relationship regression
 
-One independently authored watering can and two local source rebuilds test a narrow
-set of attachment, hollow-passage and protected-region requirements. This is not a
-general text-to-3D benchmark or print-readiness certification.
+This fixture uses one independently authored watering can and two local source rebuilds.
+It does tests for specific attachment, hollow-passage, and protected-region requirements.
+It is not a general text-to-3D benchmark or print-readiness certification.
 
 ## Source and revisions
 
-`source/` is the original modular Blender program, copied unchanged from the
-independent experiment. It imports no other modeling fixture. The `vessel` semantic
-mesh Boolean-unions the hollow open-top body with the handle. The separate hollow
-`spout` overlaps the vessel outlet. Scene coordinates follow the meter contract.
+`source/` contains the modular Blender program from the independent experiment,
+without changes. It imports no other model fixture.
+The `vessel` semantic mesh uses a Boolean union of the hollow open-top body and handle.
+The hollow `spout` is a different object that overlaps the vessel outlet.
+Scene coordinates use the meter contract.
 
-- `params/r0.json`: original open watering can; handle radius .13
+- `params/r0.json`: Initial open watering can. Handle radius .13
 - `params/r1.json`: distal spout rises by `.30*s²`, with its first three ring stations
   and entire vessel preserved
 - `params/r2.json`: handle radius .13→.18, with entire spout and body away from the
   handle attachment preserved
 
-`requirements.json` is controller-owned and outside the author source bundle.
-The five hard requirements come from independently reviewed measurements:
+The controller owns `requirements.json`. This file is not in the author source bundle.
+The five hard requirements use independently reviewed measurements:
 
 1. Upper handle-to-body mesh-edge path, restricted to Z≥1.05
 2. Lower handle-to-body mesh-edge path, restricted to Z≤.65
@@ -28,16 +29,18 @@ The five hard requirements come from independently reviewed measurements:
    vertices and wholly contained oriented triangles/material/normal evidence
 5. Eighty specified inner-body first-hit ray distances preserved to 2e-6
 
-Both paths connect a grip vertex at X≤-1.35 to a body vertex at X≥.5. Each spout
-station uses 16 outer vertices in consecutive groups; these selectors depend on
-this source topology. Revision-only requirements are explicitly non-applicable
-when there is no parent, never represented as measured passes.
+The two paths connect a grip vertex at X≤-1.35 to a body vertex at X≥.5.
+Each spout station uses 16 outer vertices in consecutive groups.
+These selectors depend on this source topology.
+If there is no parent, revision-only requirements are non-applicable.
+They are not measured passes.
 
 ## Three saved-artifact negative cases
 
-`mutate_saved.py` is the unchanged independent mutation fixture. It reads the saved
-final model and writes three separate negative artifacts:
+`mutate_saved.py` is the independent mutation fixture without changes.
+It reads the saved last model and writes three different negative artifacts:
 
+<!-- ste-preserve:start historical original watering-can mutations and verifier outcomes -->
 - `detach_upper`: Boolean slot through only the upper handle neck. The vessel is
   still one connected component through its lower attachment, so a single global
   connected-component check is insufficient. Expected failures: `handle_upper` and strict protected-region topology. The
@@ -54,9 +57,11 @@ body mutation because it only gathered preservation samples: the subsequent
 comparison stage rejected it. This is why a requirement report exposes
 `requirements_satisfied`, not aggregate pipeline `machine_verified`.
 
+<!-- ste-preserve:end -->
+
 ## Reproduce actual Blender tests
 
-From the repository root, after reviewing source and mutation code:
+First examine the source and mutation code. Then use these commands from the repository root:
 
 ```sh
 python tests/experimental_modeling/run_water_relations.py \
@@ -65,42 +70,56 @@ RUN_TRUSTED_BLENDER_TESTS=1 python -m unittest discover \
   -s tests/experimental_modeling -p test_relations_blender.py -v
 ```
 
-Use a fresh empty output directory. The runner regenerates all three positive
-states and three mutants, observes actual saved geometry in fresh Blender
-processes, evaluates pinned requirements, and retains detailed per-case reports,
-logs and timings. Unknown applicable results fail the regression rather than
-counting as detected defects. No generated binary or JSON evidence is committed.
+Use a new empty output directory.
+The runner generates the three positive states and three mutants again.
+New Blender processes examine their saved geometry.
+The runner evaluates the pinned requirements and keeps reports, logs,
+and durations for each case.
 
-Native execution is explicitly reviewed development, **NOT SANDBOXED**. The runner
-also accepts `--sandbox-image sha256:...` using the existing Docker backend with
-separate author and observer stages; it never falls back to native. Local reported
-proof is native unless separately accompanied by Docker execution evidence.
+An unknown applicable result makes the regression fail.
+It does not count as a detected defect.
+Do not commit generated binaries or JSON evidence.
 
-The runner exercises source authoring and independent observation plus relationship
-predicates. It does not claim full controller promotion, GLB roundtrip, or review-app
-approval from a relation-only result. The aggregate controller/report has separate
-integration tests and must combine all required stages.
+Native execution is reviewed development, **NOT SANDBOXED**.
+The runner also accepts `--sandbox-image sha256:...` for the existing Docker backend.
+This backend uses different author and observer stages.
+It does not change automatically to native execution.
+A local native result does not show Docker isolation.
+Docker results must have their own execution evidence.
+
+The runner does tests for source authoring, independent observation, and relationship predicates.
+A relation-only result does not show full controller promotion, GLB roundtrip, or review-app approval.
+The aggregate controller and report have independent integration tests.
+The aggregate result must include all mandatory stages.
 
 ## Coverage and limits
 
+<!-- ste-preserve:start historical earlier independent measurements -->
 The earlier independent saved-geometry test measured minimum sampled fluid
 clearance .13231, exact unchanged protected coordinates/ray hits, and handle radii
 .129999995/.180000007. It additionally checked open mouth, hand gap and disposable
 assembled Boolean connectivity. Those extra predicates are NOT silently claimed by
 this five-requirement JSON file.
 
-Connectivity is a mesh-edge path within a region, not strength or watertightness.
-Centerline crossings are checked continuously against triangles, but radial
-clearance remains sampled. Protected-region checks exclude boundary-crossing faces;
-80 rays do not establish exhaustive surface equality. A required index that no
-longer exists is an unknown measurement, not a permissive pass. These statements
-are specific coverage limits, not permission to waive hard requirements.
+<!-- ste-preserve:end -->
 
-The visual seam between vessel and spout remains because they are separate
-semantic objects. No flow simulation, manufacturing suitability, broad geometric
-repair capability, adversarial security or statistical generality is established.
+Connectivity is a mesh-edge path in a region.
+It does not show strength or watertightness.
+The validator continuously compares centerline crossings with triangles.
+Radial clearance uses samples.
 
+Protected-region checks exclude faces that cross the region boundary.
+Eighty rays do not show equality of the complete surface.
+If a necessary index is not available, the measurement is unknown and cannot pass.
+These coverage limits do not give permission to ignore hard requirements.
+
+A visible seam stays between the vessel and spout because they are different semantic objects.
+This fixture does not give flow simulation or show manufacturing suitability.
+It does not show general geometry repair, adversarial security, or statistical generality.
+
+<!-- ste-preserve:start historical degenerate-triangle correction evidence -->
 Actual generic-validator regression also exposed initially unsupported degenerate
 triangles in the positive fixture. The distance routine was fixed using segment/point
 distances for collapsed triangles; model geometry, thresholds and selectors stayed
 unchanged. Final native clearance is .1323107213 over 275 samples/25 segments.
+<!-- ste-preserve:end -->

@@ -287,7 +287,7 @@ class BuilderCliExitCodeTests(unittest.TestCase):
             self.assertEqual(result, int(ExitCode.FILESYSTEM))
             self.assertEqual(
                 stderr.getvalue(),
-                "BUILDER: FAIL[4]: output must not already exist\n",
+                "BUILDER: FAIL[4]: Use a new output path.\n",
             )
             self.assertTrue(output.is_symlink())
             self.assertFalse(missing_target.exists())

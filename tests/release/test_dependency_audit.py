@@ -529,7 +529,7 @@ class DependencyAuditTests(unittest.TestCase):
             document["python_groups"][0]["id"] = "Unsafe_ID"
             path.write_text(json.dumps(document), encoding="utf-8")
             self.assert_input_error(
-                audit_tool.run_audit(root, online=False), "policy identifier is unsafe"
+                audit_tool.run_audit(root, online=False), "policy identifier is not safe"
             )
 
         with self.subTest(surface="duplicate within namespace"), tempfile.TemporaryDirectory() as temporary:

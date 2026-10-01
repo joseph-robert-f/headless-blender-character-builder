@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "build-request-v1.schema.json",
   "title": "BuildRequest v1",
-  "description": "The complete bounded input accepted by both the one-shot builder and POST /v1/builds.",
+  "description": "The full input for the one-shot builder and POST /v1/builds, with fixed limits.",
   "type": "object",
   "additionalProperties": false,
   "required": [
