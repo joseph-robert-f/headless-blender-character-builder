@@ -1,0 +1,1 @@
+Repair the rejected stem revision. Keep the slimmer 8 mm stem. Restore the base to the accepted 160 mm width and 120 mm depth. Keep its geometry, position, and teal material unchanged from the accepted model. Keep the height at 290 mm and preserve the shade and light.

@@ -45,3 +45,38 @@ Use the result from the exact tested commit.
 The separate handwritten bridge fixture tests repeatable rejection, repair, and request-state behavior.
 Do not describe that fixture as the original source-authoring event.
 This lamp example records one external authoring event, not a general text-to-model capability result.
+
+## Recorded refinements
+
+An external assistant prepared the following proposals from operator requests:
+
+1. Increase the lamp height from 260 mm to 290 mm.
+   Preserve the complete base and move the unchanged shade and light upward by 30 mm.
+2. Change the stem radius from 5 mm to 4 mm in the source.
+   The deliberate negative proposal also increases the base width to 170 mm.
+3. Repair the rejected proposal with the original 160 mm base width.
+   Keep the narrower stem and the 290 mm height.
+
+The `revisions/` directories preserve the exact proposal files, prompts, and selected policies.
+The height proposal uses the original source without changes.
+The narrower-stem source changes only its radius declaration.
+Its `geometry.py` hash is `e908a625793974e00b9776f31242ab4b72e73bd611f1a0937b055c1f42b1b277`.
+The negative and repair proposals use those same source bytes.
+
+`revisions/height/recorded-request.json` preserves the historical request metadata.
+It refers to the first accepted CI result and its context hashes.
+The generated observation file is not committed to this source repository.
+Thus, that metadata record is not a complete handoff for execution.
+
+Each CI replay first makes a new initial result.
+Its result hash can differ because the runtime and job records are new.
+The script then saves the exact recorded prompt against that actual result and prepares a fresh handoff.
+It does the same for the narrower-stem request and the repair.
+It never changes a parent hash silently or executes the historical request against a different parent.
+
+The replay must reject the 170 mm base and keep the last-good pointer unchanged.
+It must then accept the repair against the same accepted baseline.
+It compares complete base fingerprints and records the measured height and stem width.
+All stages use the normal request bridge and isolated controller.
+The separate lamp artifact contains the complete result history and inspector renders.
+Read the exact-commit CI results before reporting that this sequence passed.

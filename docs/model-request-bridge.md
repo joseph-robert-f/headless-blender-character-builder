@@ -191,3 +191,9 @@ Report that demonstration as external-agent-assisted authoring, not built-in nat
 The [external lamp example](../experimental_modeling/examples/external_lamp/README.md) preserves one actual assistant-authored proposal and its exported brief.
 Its CI replay uses the same isolated request bridge.
 Read the exact-commit execution evidence before reporting a verified result.
+The lamp replay also tests the recorded height change, source-level stem edit, rejected base change, and repair.
+Its evidence is in a separate CI artifact.
+
+An evidence archive can omit empty project directories.
+Run the project launcher `init` command on the extracted project to restore its fixed directories.
+This operation preserves existing source and evidence.

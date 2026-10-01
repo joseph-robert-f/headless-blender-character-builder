@@ -105,7 +105,19 @@
           "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
           "with": {
             "name": "modeling-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
-            "path": "${{ runner.temp }}/modeling-benchmark\n${{ runner.temp }}/modeling-desk-benchmark\n${{ runner.temp }}/modeling-review-ui\n${{ runner.temp }}/modeling-water-relations\n${{ runner.temp }}/modeling-review-project\n${{ runner.temp }}/modeling-request-bridge\n${{ runner.temp }}/modeling-external-lamp",
+            "path": "${{ runner.temp }}/modeling-benchmark\n${{ runner.temp }}/modeling-desk-benchmark\n${{ runner.temp }}/modeling-review-ui\n${{ runner.temp }}/modeling-water-relations\n${{ runner.temp }}/modeling-review-project\n${{ runner.temp }}/modeling-request-bridge",
+            "if-no-files-found": "ignore",
+            "retention-days": 7,
+            "include-hidden-files": true
+          }
+        },
+        {
+          "name": "Retain external author lamp evidence",
+          "if": "${{ always() }}",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "name": "external-lamp-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "${{ runner.temp }}/modeling-external-lamp",
             "if-no-files-found": "ignore",
             "retention-days": 7,
             "include-hidden-files": true

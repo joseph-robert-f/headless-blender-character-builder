@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "profile": "scene",
+  "parts": [
+    "base",
+    "stem",
+    "shade",
+    "light"
+  ],
+  "changed_parts": [
+    "stem",
+    "shade",
+    "light"
+  ],
+  "constraints": [
+    {
+      "kind": "manifold",
+      "part": "base",
+      "data": {}
+    },
+    {
+      "kind": "manifold",
+      "part": "stem",
+      "data": {}
+    },
+    {
+      "kind": "manifold",
+      "part": "shade",
+      "data": {}
+    },
+    {
+      "kind": "manifold",
+      "part": "light",
+      "data": {}
+    },
+    {
+      "kind": "extent",
+      "part": "base",
+      "data": {
+        "axis": 0,
+        "min": 0.15999,
+        "max": 0.16001
+      }
+    },
+    {
+      "kind": "extent",
+      "part": "base",
+      "data": {
+        "axis": 1,
+        "min": 0.11999,
+        "max": 0.12000999999999999
+      }
+    },
+    {
+      "kind": "extent",
+      "part": "base",
+      "data": {
+        "axis": 2,
+        "min": 0.01799,
+        "max": 0.018009999999999998
+      }
+    },
+    {
+      "kind": "anchor",
+      "part": "shade",
+      "data": {
+        "point": [
+          0.012,
+          -0.03,
+          0.29
+        ],
+        "tolerance": 1e-05
+      }
+    },
+    {
+      "kind": "extent",
+      "part": "shade",
+      "data": {
+        "axis": 2,
+        "min": 0.04499,
+        "max": 0.04501
+      }
+    },
+    {
+      "kind": "translated",
+      "part": "shade",
+      "data": {
+        "delta": [
+          0,
+          0,
+          0.03
+        ],
+        "tolerance": 1e-06
+      }
+    },
+    {
+      "kind": "translated",
+      "part": "light",
+      "data": {
+        "delta": [
+          0,
+          0,
+          0.03
+        ],
+        "tolerance": 1e-06
+      }
+    }
+  ]
+}

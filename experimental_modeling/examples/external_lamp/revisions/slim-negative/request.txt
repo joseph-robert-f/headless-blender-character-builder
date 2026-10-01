@@ -1,0 +1,1 @@
+Make the brass stem 8 mm thick instead of 10 mm. Keep the model height at 290 mm. Keep the complete base, shade, and light geometry, positions, and materials unchanged. The base must remain 160 mm wide and 120 mm deep. This remains a visual scene model.
