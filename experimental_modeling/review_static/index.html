@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Model review · Experimental modeling</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="topbar"><a class="brand" href="/" aria-label="Model review home"><span class="brand-mark" aria-hidden="true">◈</span>Model review<span class="experimental">EXPERIMENTAL</span></a><span class="local"><span></span> Local workspace</span></header>
+<div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+<div class="workspace">
+  <aside class="history" aria-label="Revision history"><div class="section-eyebrow">PROJECT</div><h1 id="project-name">Source modeling</h1><p class="subtle">A clear record of what changed.</p><div class="history-heading"><h2>Revisions</h2><span id="revision-count" class="count">0</span></div><nav id="revision-list" aria-label="Choose a revision"><p class="empty">Loading revisions…</p></nav><div class="scope-note"><span aria-hidden="true">↳</span><div><strong>Review, then decide</strong><p>Machine checks and human acceptance are recorded separately.</p></div></div></aside>
+  <main>
+    <div class="main-heading"><div><div class="section-eyebrow">REVISION REVIEW</div><h2 id="revision-title">Loading workspace</h2><p id="revision-description" class="subtle">Reading local build evidence…</p></div><a id="download-glb" class="button secondary" hidden download>Download GLB <span aria-hidden="true">↗</span></a></div>
+    <section class="milestones" aria-label="Verification and acceptance status"><div><span class="milestone-icon" id="built-icon">○</span><div><strong>Built</strong><span id="built-status">Not yet known</span></div></div><div><span class="milestone-icon" id="verified-icon">○</span><div><strong>Machine verified</strong><span id="verified-status">Not yet checked</span></div></div><div><span class="milestone-icon" id="accepted-icon">○</span><div><strong>Human accepted</strong><span id="accepted-status">Awaiting review</span></div></div></section>
+    <div class="review-grid"><div class="visual-column">
+      <section class="preview-card" aria-label="Interactive geometry preview"><div class="preview-toolbar"><div class="segmented" role="group" aria-label="Preview mode"><button id="current-mode" type="button" aria-pressed="true">Current</button><button id="compare-mode" type="button" aria-pressed="false" disabled>Before / after</button></div><div class="preview-actions"><button id="wireframe" class="icon-button" type="button" aria-pressed="false" title="Toggle mesh edges">Edges</button><button id="reset-view" class="icon-button" type="button" title="Reset camera">Reset view</button></div></div>
+        <div id="canvas-layout" class="canvas-layout"><div id="before-pane" class="canvas-pane" hidden><span class="view-label">BEFORE <b id="parent-label"></b></span><canvas id="before-canvas" tabindex="0" aria-label="Parent model. Drag or use arrow keys to rotate; plus and minus zoom."></canvas></div><div class="canvas-pane"><span class="view-label">CURRENT <b id="current-label"></b></span><canvas id="model-canvas" tabindex="0" aria-label="Current model. Drag or use arrow keys to rotate; plus and minus zoom."></canvas><div id="preview-empty" class="preview-empty" hidden>No inspected geometry available for this revision</div></div></div>
+        <div class="preview-footer"><span id="geometry-stats">Geometry loads from inspection evidence</span><span>Drag to orbit · Scroll to zoom</span></div>
+      </section>
+      <section class="parts-section"><div class="inline-heading"><h3>Model parts</h3><span class="subtle">Select to highlight</span></div><div id="part-list" class="part-list"></div></section>
+      <section id="render-section" class="render-section" hidden><div class="inline-heading"><h3>Rendered evidence</h3><span class="subtle">Saved inspection views</span></div><div id="render-list" class="render-list"></div></section>
+      <section class="request-card"><div class="section-eyebrow">NEXT ITERATION</div><h3>What should change?</h3><p class="subtle">Save a request against this exact revision. Requests are queued for review; saving one doesn’t execute source code.</p><form id="request-form"><label class="sr-only" for="request-prompt">Describe the requested change</label><textarea id="request-prompt" rows="3" maxlength="8000" placeholder="Describe a change and what should stay the same…" required disabled></textarea><div class="form-footer"><span id="request-status" class="subtle" role="status"></span><button id="request-submit" class="button secondary" type="submit" disabled>Save change request <span aria-hidden="true">↗</span></button></div></form></section>
+      <section class="queue-section" aria-label="Saved change requests"><div class="inline-heading"><h3>Saved requests</h3><span id="queue-count" class="count">0</span></div><p class="subtle">The local queue is a record of requested work. Nothing here executes automatically.</p><div id="request-queue"><p class="empty">Loading request history…</p></div></section>
+    </div>
+    <aside class="evidence-column" aria-label="Verification evidence"><section class="requirements-card"><div class="inline-heading"><h3>Requirements</h3><span id="requirement-count" class="count">—</span></div><p class="subtle">Measured checks, with their evidence.</p><div id="requirement-summary" class="requirement-summary"></div><div id="requirements"><p class="empty">No report loaded</p></div></section>
+      <section class="accept-card"><div class="section-eyebrow">HUMAN DECISION</div><h3 id="decision-title">Ready for your review</h3><p id="decision-copy" class="subtle">Inspect the model and its evidence before recording your acceptance.</p><form id="accept-form"><label for="accept-notes">Review notes <span class="subtle">(optional)</span></label><textarea id="accept-notes" rows="3" maxlength="2000" placeholder="What you checked, or anything to keep in mind…" disabled></textarea><button id="accept-submit" class="button primary" type="submit" disabled>Accept this revision</button><p id="accept-status" class="subtle" role="status">Acceptance records a human decision. It does not change the machine-check result.</p></form></section>
+      <details class="provenance"><summary>Build provenance</summary><dl id="provenance-list"></dl></details>
+    </aside></div>
+  </main>
+</div>
+</body>
+</html>

@@ -70,3 +70,6 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# Optional local-review browser test dependencies (not app runtime)
+/tests/review_ui/node_modules/
