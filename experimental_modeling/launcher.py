@@ -69,53 +69,59 @@ def review_project(project: Project, port: int = 0, *, allow_unverified_platform
             atomic_json(state, {"schema_version": 1, "status": "stopped", "stopped_at": now()})
 
 
-def build_project(project: Project, selection: RuntimeSelection, *, revision: str,
-                  parent: str | None = None, intent: str = "", renders: bool = True,
-                  acknowledge_interrupted: bool = False) -> dict:
-    # This explicit build command authorizes probing only the selected trusted runtime.
-    selection = canonical_selection(selection, project)
-    report = doctor(project, selection, probe=True)
-    if not report["build_prerequisites_ready"]:
-        details = "; ".join(c["detail"] for c in report["checks"] if c["status"] in {"blocked", "missing", "unsupported"})
-        raise RuntimeError("Build is not ready: " + details)
+def execute_project_build(project: Project, selection: RuntimeSelection, *, revision: str,
+                          parent: str | None = None, intent: str = "", renders: bool = True,
+                          acknowledge_interrupted: bool = False, inputs=None, request_binding=None) -> dict:
+    """Execute under the caller's existing build lease and interrupt handler."""
     from .contracts import identifier
     from .controller import build
     identifier(revision)
     if parent is not None:
         identifier(parent)
     state = local_path(project.root / ".launcher-build.json")
+    if state.exists():
+        prior = read_object(state)
+        if prior.get("schema_version") != 1 or prior.get("status") not in {"running", "finished", "recovery_required"}:
+            raise ValueError('Incorrect build recovery record. Examine this record before you continue.')
+        if prior["status"] != "finished" and not acknowledge_interrupted:
+            raise RuntimeError("Build recovery is necessary. Examine saved evidence, last_good.json, and Docker resources that this project owns. Make sure that cleanup is complete. Select a new revision ID. Then use --acknowledge-interrupted-build. This command did not remove a process or artifact.")
+    if any((project.folder(role) / revision).exists() for role in ("candidates", "accepted")):
+        raise ValueError("Revision ID is in use. Examine saved evidence and select a new ID.")
+    requirements = project.input("requirements.json")
+    source, params, policy, requirements = inputs or (
+        project.folder("source"), project.input("params.json"), project.input("policy.json"),
+        requirements if requirements.exists() else None)
+    report = doctor(project, selection, probe=True, **({"build_inputs": inputs} if inputs else {}))
+    if not report["build_prerequisites_ready"]:
+        details = "; ".join(c["detail"] for c in report["checks"] if c["status"] in {"blocked", "missing", "unsupported"})
+        raise RuntimeError("Build is not ready: " + details)
+    record = {"schema_version": 1, "status": "running", "revision": revision,
+              "mode": selection.mode, "started_at": now()}
+    if request_binding is not None:
+        record["request_id"] = request_binding["request"]["request_id"]
+    atomic_json(state, record)
+    # BaseException deliberately leaves a conservative interruption marker.
+    result = build(source=source, params=params, policy_path=policy,
+                   store=project.folder("evidence"), revision=revision, parent=parent, intent=intent,
+                   renders=renders, requirements_path=requirements,
+                   blender=str(selection.blender) if selection.blender is not None else "blender",
+                   trusted_reviewed_source=selection.mode == "trusted-native",
+                   sandbox_image=selection.image, docker_executable=selection.docker,
+                   docker_socket=selection.socket or Path("/var/run/docker.sock"),
+                   **({"request_binding": request_binding} if request_binding is not None else {}))
+    state_status = "recovery_required" if "error" in result else "finished"
+    atomic_json(state, record | {"status": state_status, "result_status": result["status"], "finished_at": now()})
+    return result
+
+
+def build_project(project: Project, selection: RuntimeSelection, *, revision: str,
+                  parent: str | None = None, intent: str = "", renders: bool = True,
+                  acknowledge_interrupted: bool = False) -> dict:
+    selection = canonical_selection(selection, project)
     with operation_lock(project, "build"), interruptible():
-        if state.exists():
-            prior = read_object(state)
-            if prior.get("schema_version") != 1 or prior.get("status") not in {"running", "finished", "recovery_required"}:
-                raise ValueError('Incorrect build recovery record. Examine this record before you continue.')
-            if prior["status"] != "finished" and not acknowledge_interrupted:
-                raise RuntimeError("Build recovery is necessary. Examine saved evidence, last_good.json, and Docker resources that this project owns. Make sure that cleanup is complete. Select a new revision ID. Then use --acknowledge-interrupted-build. This command did not remove a process or artifact.")
-        # Never overwrite an existing controller revision or its crash evidence.
-        if any((project.folder(role) / revision).exists() for role in ("candidates", "accepted")):
-            raise ValueError("Revision ID is in use. Examine saved evidence and select a new ID.")
-        record = {"schema_version": 1, "status": "running", "revision": revision,
-                  "mode": selection.mode, "started_at": now()}
-        atomic_json(state, record)
-        try:
-            requirements = project.input("requirements.json")
-            result = build(source=project.folder("source"), params=project.input("params.json"),
-                           policy_path=project.input("policy.json"), store=project.folder("evidence"),
-                           revision=revision, parent=parent, intent=intent, renders=renders,
-                           requirements_path=requirements if requirements.exists() else None,
-                           blender=str(selection.blender) if selection.blender is not None else "blender",
-                           trusted_reviewed_source=selection.mode == "trusted-native",
-                           sandbox_image=selection.image, docker_executable=selection.docker,
-                           docker_socket=selection.socket or Path("/var/run/docker.sock"))
-        except BaseException:
-            # Keep "running" as a conservative recovery marker even if cleanup ran.
-            raise
-        else:
-            # The controller retains backend errors as needs_review results, including
-            # failed Docker cleanup. Such a return is not proof of clean shutdown.
-            state_status = "recovery_required" if "error" in result else "finished"
-            atomic_json(state, record | {"status": state_status, "result_status": result["status"], "finished_at": now()})
-            return result
+        return execute_project_build(project, selection, revision=revision, parent=parent,
+                                     intent=intent, renders=renders,
+                                     acknowledge_interrupted=acknowledge_interrupted)
 
 
 def _runtime_arguments(parser):

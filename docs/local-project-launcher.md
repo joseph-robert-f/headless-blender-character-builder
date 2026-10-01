@@ -71,6 +71,7 @@ It does not change runtime settings, pull an image, or download Blender.
 The report gives different readiness results for review, build prerequisites, build recovery state, and model authoring.
 `authoring_ready` is always false.
 Model-provider integration and an automatic queue consumer are not implemented.
+The separate [request bridge](model-request-bridge.md) supports explicit handoff, inspection, and isolated execution of external source.
 A trusted coding agent or operator must supply source and policy.
 
 JSON contract checks do not certify source safety, history integrity, or geometry.

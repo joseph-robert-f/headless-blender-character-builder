@@ -40,6 +40,8 @@ def verified_revision(store: Path, revision: str):
     if not isinstance(manifest,dict):raise ValueError("missing artifact manifest")
     actual={p.relative_to(directory).as_posix():digest(p) for p in regular_tree(directory) if p!=directory/"result.json"}
     if actual!=manifest:raise ValueError("artifact integrity mismatch")
+    from .request_contract import validate_result_binding
+    validate_result_binding(directory, result)
     result_hash=digest(directory/"result.json")
     pointer=store/"last_good.json"
     if result["status"]=="accepted" and (pointer.exists() or pointer.is_symlink()):
@@ -153,6 +155,16 @@ class ReviewProject:
             if rel in result["artifacts"]:views.append({"label":view.title(),"url":f"/artifacts/{revision}/view-{view}"})
         meta={"id":revision,"parent":result.get("parent"),"result_hash":result_hash,"status":result["status"],"intent":result.get("intent",""),
               "machine_verified":report["machine_verified"],"human_accepted":state["human_accepted"],"execution_mode":result.get("execution_mode","unknown"),"security_boundary":result.get("security_boundary","unknown")}
+        from .request_contract import validate_result_binding
+        binding = validate_result_binding(directory, result)
+        if binding is not None:
+            request = binding["request"]
+            meta["request"] = {"request_id": request["request_id"], "prompt": request["prompt"], "kind": request["kind"],
+                               "legacy_request_id": request["legacy_request"]["request_id"] if request["legacy_request"] else None,
+                               "reference": request["reference"]}
+            meta["execution_outcome"] = ("execution_failed" if "error" in result else
+                "machine_accepted" if result["status"] == "accepted" else
+                "checks_rejected" if result["status"] == "rejected" else "needs_review")
         return {"revision":meta,"report":report,"observation":observation,"parent_observation":previous,"state":state,
                 "artifacts":{"views":views,"glb_url":f"/artifacts/{revision}/glb" if "inspection/model.glb" in result["artifacts"] else None}}
 
@@ -189,16 +201,34 @@ class ReviewProject:
         # advance the same parent. Causal order survives copying/unzipping stores.
         revisions.sort(key=lambda r:(depth(r),r.get("status")=="accepted",r["id"]))
         return {"schema_version":1,"project_name":self.name or self.store.name,"read_only":self.read_only,"read_only_reason":self.read_only_reason,"csrf_token":self.token,"revisions":revisions,"latest_revision":latest,
-                "execution":"Review only. This program does not run source code or call an AI model.","requests":self.requests()}
+                "execution":"Review only. This program does not run source code or call an AI model.","requests":self.requests(revisions)}
 
-    def requests(self):
+    def requests(self, revisions=None):
+        if revisions is None:
+            return self.project()["requests"]
+        from .request_contract import legacy_request, read_json as strict_json
         result=[]
         directory=safe_path(self.metadata/"requests")
         for path in sorted(directory.glob("*.json")):
-            value=read_json(path)
-            if value.get("schema_version")!=1 or value.get("status")!="queued" or value.get("execution")!="not_started":raise ValueError('not permitted queue record')
-            result.append(value)
-        return sorted(result,key=lambda r:r["created_at"])[-50:]
+            value=legacy_request(strict_json(path), path.stem)
+            result.append(dict(value))
+        by_id={value["request_id"]:value for value in result}
+        for revision in revisions:
+            request=revision.get("request")
+            if request is None:
+                continue
+            key=request["legacy_request_id"] or request["request_id"]
+            if key not in by_id:
+                value={"request_id":key,"prompt":request["prompt"],"revision_id":request["reference"]["revision"] if request["reference"] else None,
+                       "created_at":None,"status":"execution_recorded","execution":"recorded","results":[]}
+                result.append(value);by_id[key]=value
+            value=by_id[key]
+            value["status"]="execution_recorded";value["execution"]="recorded"
+            value.setdefault("results",[]).append({"revision_id":revision["id"],"result_hash":revision["result_hash"],
+                "outcome":revision["execution_outcome"],"machine_verified":revision["machine_verified"],
+                "human_accepted":revision["human_accepted"]})
+        return sorted(result, key=lambda item: (item["revision_id"] is not None, item.get("created_at") or "",
+            item.get("results", [{}])[0].get("revision_id", ""), item["request_id"]))[-50:]
 
     def accept(self, revision, payload):
         if self.read_only:raise PermissionError(self.read_only_reason)

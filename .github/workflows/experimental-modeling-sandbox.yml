@@ -58,6 +58,14 @@
           "run": "python3 tests/experimental_modeling/run_review_project.py --store \"$RUNNER_TEMP/modeling-review-project\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
         },
         {
+          "name": "Explicit request bridge through real isolated stages",
+          "run": "python3 tests/experimental_modeling/run_request_bridge.py --output \"$RUNNER_TEMP/modeling-request-bridge\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\" --docker \"$(command -v docker)\" --docker-socket /run/docker.sock"
+        },
+        {
+          "name": "Recorded external assistant lamp through the isolated request bridge",
+          "run": "python3 tests/experimental_modeling/run_external_lamp.py --output \"$RUNNER_TEMP/modeling-external-lamp\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\" --docker \"$(command -v docker)\" --docker-socket /run/docker.sock"
+        },
+        {
           "name": "Install pinned browser QA tools",
           "run": "npm ci --prefix tests/review_ui --ignore-scripts --omit=optional\ntests/review_ui/node_modules/.bin/playwright install --with-deps chromium"
         },
@@ -82,12 +90,22 @@
           "run": "node tests/experimental_modeling/review_water_ui_qa.cjs"
         },
         {
+          "name": "Request result links and separate acceptance in the browser",
+          "env": {
+            "NODE_PATH": "${{ github.workspace }}/tests/review_ui/node_modules",
+            "PYTHON": "python3",
+            "MODELING_REQUEST_QA_STORE": "${{ runner.temp }}/modeling-request-bridge/project/evidence",
+            "MODELING_REVIEW_QA_OUTPUT": "${{ runner.temp }}/modeling-review-ui"
+          },
+          "run": "node tests/experimental_modeling/review_request_ui_qa.cjs"
+        },
+        {
           "name": "Retain bounded experimental evidence",
           "if": "${{ always() }}",
           "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
           "with": {
             "name": "modeling-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
-            "path": "${{ runner.temp }}/modeling-benchmark\n${{ runner.temp }}/modeling-desk-benchmark\n${{ runner.temp }}/modeling-review-ui\n${{ runner.temp }}/modeling-water-relations\n${{ runner.temp }}/modeling-review-project",
+            "path": "${{ runner.temp }}/modeling-benchmark\n${{ runner.temp }}/modeling-desk-benchmark\n${{ runner.temp }}/modeling-review-ui\n${{ runner.temp }}/modeling-water-relations\n${{ runner.temp }}/modeling-review-project\n${{ runner.temp }}/modeling-request-bridge\n${{ runner.temp }}/modeling-external-lamp",
             "if-no-files-found": "ignore",
             "retention-days": 7,
             "include-hidden-files": true

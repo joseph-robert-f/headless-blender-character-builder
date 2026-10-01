@@ -119,7 +119,7 @@ def _check(key, status, detail):
     return {"id": key, "status": status, "detail": detail}
 
 
-def doctor(project: Project, selection: RuntimeSelection, *, probe: bool = False) -> dict:
+def doctor(project: Project, selection: RuntimeSelection, *, probe: bool = False, build_inputs=None) -> dict:
     checks = []
     system, machine = platform.system(), platform.machine().lower()
     supported = system == "Linux" and machine in {"x86_64", "amd64"}
@@ -138,22 +138,22 @@ def doctor(project: Project, selection: RuntimeSelection, *, probe: bool = False
     try:
         from .contracts import Policy, read_json
         from .requirements import RequirementSet
-        if not folders_ready or not local_path(project.folder("source") / "builder.py").is_file():
+        source, params, policy_path, requirements = build_inputs or (project.folder("source"), project.input("params.json"), project.input("policy.json"), project.input("requirements.json"))
+        if not folders_ready or not local_path(source / "builder.py").is_file():
             raise ValueError("Examine source/builder.py. Add this file and complete project setup.")
-        if not isinstance(read_json(project.input("params.json")), dict):
+        if not isinstance(read_json(params), dict):
             raise ValueError("constraints/params.json must contain a JSON object")
-        policy = Policy.parse(read_json(project.input("policy.json")))
+        policy = Policy.parse(read_json(policy_path))
         if policy.profile != "scene":
             raise ValueError("Use the scene policy. Print acceptance is not available.")
-        requirements = project.input("requirements.json")
-        if requirements.exists():
+        if requirements is not None and requirements.exists():
             RequirementSet.parse(read_json(requirements))
         inputs_ready = True
         checks.append(_check("build_inputs", "ready", "The input JSON is correct for these contracts. The build does checks of source trust, history, locked requirements, and geometry."))
     except (ValueError, OSError, TypeError, KeyError) as exc:
         checks.append(_check("build_inputs", "missing", "Examine source/builder.py and constraints/{params,policy,requirements}.json: " + str(exc)))
     checks.append(_check("model_connection", "not_implemented",
-                         "The program has no AI provider connection or queue consumer. A coding agent must supply source. Queued prompts do not run."))
+                         "The program does not call an AI provider. Use the explicit request bridge with source from an external coding agent. Saved prompts do not run automatically."))
     runtime_ready = False
     if not supported:
         checks.append(_check("runtime", "not_probed", "The launcher does not run an executable on a platform without validation."))
