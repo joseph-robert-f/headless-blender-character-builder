@@ -90,3 +90,15 @@ secrets out of the Blender worker and generated artifacts.
 
 Project names and upstream names identify compatibility or provenance only.
 They do not imply sponsorship or endorsement.
+
+## Experimental local-review browser tests
+
+The local review application uses only project-authored HTML/CSS/JavaScript and
+Python's standard library; it makes no CDN requests and ships no client framework.
+Opt-in browser QA uses `playwright` and `playwright-core` **1.62.1**, licensed
+Apache-2.0, from Microsoft's Playwright project. Exact registry URLs and integrity
+hashes are locked in `tests/review_ui/package-lock.json`. The lock also records
+optional Darwin-only `fsevents` 2.3.2 (MIT); Linux CI omits optional dependencies.
+These packages and the Playwright-selected Chromium test browser are test tools,
+not bundled app/runtime or builder-image dependencies. Upstream license files
+remain in the installed packages and browser distribution.

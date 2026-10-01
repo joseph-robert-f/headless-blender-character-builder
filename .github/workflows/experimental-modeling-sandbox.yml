@@ -6,7 +6,8 @@
       "paths": [
         "experimental_modeling/**",
         "tests/experimental_modeling/**",
-        ".github/workflows/experimental-modeling-sandbox.yml"
+        ".github/workflows/experimental-modeling-sandbox.yml",
+        "tests/review_ui/**"
       ]
     }
   },
@@ -49,12 +50,44 @@
           "run": "python3 tests/experimental_modeling/run_desk_creature.py --store \"$RUNNER_TEMP/modeling-desk-benchmark\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
         },
         {
+          "name": "Reusable relation positive and negative Blender fixtures",
+          "run": "python3 tests/experimental_modeling/run_water_relations.py --store \"$RUNNER_TEMP/modeling-water-relations\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
+        },
+        {
+          "name": "Locked-rule controller and aggregate preservation integration",
+          "run": "python3 tests/experimental_modeling/run_review_project.py --store \"$RUNNER_TEMP/modeling-review-project\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
+        },
+        {
+          "name": "Install pinned browser QA tools",
+          "run": "npm ci --prefix tests/review_ui --ignore-scripts --omit=optional\ntests/review_ui/node_modules/.bin/playwright install --with-deps chromium"
+        },
+        {
+          "name": "Local review browser integration and screenshots",
+          "env": {
+            "NODE_PATH": "${{ github.workspace }}/tests/review_ui/node_modules",
+            "PYTHON": "python3",
+            "MODELING_REVIEW_QA_STORE": "${{ runner.temp }}/modeling-benchmark/primary",
+            "MODELING_REVIEW_QA_OUTPUT": "${{ runner.temp }}/modeling-review-ui"
+          },
+          "run": "node tests/experimental_modeling/review_ui_qa.cjs"
+        },
+        {
+          "name": "Locked requirements browser evidence and acceptance gating",
+          "env": {
+            "NODE_PATH": "${{ github.workspace }}/tests/review_ui/node_modules",
+            "PYTHON": "python3",
+            "MODELING_REVIEW_QA_STORE": "${{ runner.temp }}/modeling-review-project/project",
+            "MODELING_REVIEW_QA_OUTPUT": "${{ runner.temp }}/modeling-review-ui"
+          },
+          "run": "node tests/experimental_modeling/review_water_ui_qa.cjs"
+        },
+        {
           "name": "Retain bounded experimental evidence",
           "if": "${{ always() }}",
           "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
           "with": {
             "name": "modeling-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
-            "path": "${{ runner.temp }}/modeling-benchmark\n${{ runner.temp }}/modeling-desk-benchmark",
+            "path": "${{ runner.temp }}/modeling-benchmark\n${{ runner.temp }}/modeling-desk-benchmark\n${{ runner.temp }}/modeling-review-ui\n${{ runner.temp }}/modeling-water-relations\n${{ runner.temp }}/modeling-review-project",
             "if-no-files-found": "ignore",
             "retention-days": 7,
             "include-hidden-files": true

@@ -209,3 +209,16 @@ reduce accidental failures but cannot protect the host/controller from malicious
 native Python or a Blender parser exploit. Untrusted mode fails closed without an
 audited isolated backend. Print acceptance also fails closed pending generic
 print-profile gates. See [the experimental design and limitations](experimental-source-modeling.md).
+
+### Local experimental review program
+
+The local review process accepts one operator-selected trusted project store and
+binds only `127.0.0.1`. Exact Host/Origin, CSRF, bounded JSON, fixed artifact routes,
+CSP and path/hash validation constrain its browser interface. It never executes
+source or consumes prompts automatically, grants no remote access, and uses no
+CDN. Human approval and queued intent live separately from immutable machine
+results; neither can alter requirements or promote a failed candidate. Requirement
+locks and accepted parent hashes are checked independently of candidate-authored
+flags, including missing-baseline and deleted-lock cases. This is a local-owner
+trust boundary, not multi-user authentication or protection against a filesystem
+owner rewriting every trust root. See [local review details](local-model-review.md).

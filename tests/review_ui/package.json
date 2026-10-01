@@ -1,0 +1,8 @@
+{
+  "name": "hbcb-local-review-browser-tests",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Test-only browser automation; the local review app has no client dependencies",
+  "license": "GPL-3.0-or-later",
+  "devDependencies": {"playwright": "1.62.1"}
+}

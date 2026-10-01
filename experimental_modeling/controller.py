@@ -13,8 +13,10 @@ import subprocess
 import time
 from contextlib import contextmanager
 
-from .contracts import Policy, identifier, read_json
+from .contracts import MAX_JSON, Policy, identifier, read_json
 from .acceptance import check
+from .requirements import RequirementSet, canonical_hash, evaluate
+from .verification import make_report
 
 MAX_BUNDLE = 16 * 1024 * 1024
 MAX_ATTEMPT = 512 * 1024 * 1024
@@ -65,7 +67,7 @@ def bounded_evidence(root: Path) -> tuple[dict[str, str], list[str]]:
         for name in sorted(names):
             path = Path(directory) / name
             rel = str(path.relative_to(root))
-            if path.is_symlink() or not path.is_file() or len(manifest) >= MAX_FILES - 1 or size + path.stat().st_size > MAX_ATTEMPT:
+            if path.is_symlink() or not path.is_file() or len(manifest) >= MAX_FILES - 2 or size + path.stat().st_size > MAX_ATTEMPT - 2 * MAX_JSON:
                 path.unlink()
                 if len(discarded) < 100: discarded.append(rel)
                 continue
@@ -188,7 +190,7 @@ def store_lock(store: Path):
 
 def build(*, source: Path, params: Path, policy_path: Path, store: Path, revision: str,
           parent: str | None = None, blender: str = "blender", trusted_reviewed_source: bool = False,
-          renders: bool = True, intent: str = "", sandbox_image: str | None = None) -> dict:
+          renders: bool = True, intent: str = "", sandbox_image: str | None = None, requirements_path: Path | None = None) -> dict:
     # Fail before reading/importing/executing author code. No implicit native fallback.
     if trusted_reviewed_source and sandbox_image:
         raise ValueError("choose native reviewed mode OR sandbox image, not both")
@@ -202,6 +204,7 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
     if not source.is_dir(): raise ValueError("source must be a directory")
     if store == source or store.is_relative_to(source) or source.is_relative_to(store):
         raise ValueError("source and store must not overlap")
+    provided_requirements = RequirementSet.parse(read_json(safe_path(requirements_path))) if requirements_path is not None else None
     raw_policy, raw_params = read_json(policy_path), read_json(params)
     policy = Policy.parse(raw_policy)
     if policy.profile == "print":
@@ -219,6 +222,26 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
         binary = str(Path(binary).resolve())
     store.mkdir(parents=True, exist_ok=True)
     with store_lock(store):
+        requirements_lock = store / "requirements.json"
+        prior_rule_hashes=set()
+        history=list((store/"accepted").glob("*/result.json"))+list((store/"attempts").glob("*/result.json"))
+        if len(history)>512:raise ValueError("project history exceeds bounded requirements audit")
+        for result_path in history:
+            recorded=read_json(safe_path(result_path)).get("requirements_lock_hash")
+            if recorded is not None:prior_rule_hashes.add(recorded)
+        if prior_rule_hashes and not requirements_lock.exists():
+            raise ValueError("established project requirements are missing; restore the exact recorded rules before building")
+        if requirements_lock.exists() or requirements_lock.is_symlink():
+            requirements = RequirementSet.parse(read_json(requirements_lock))
+            if prior_rule_hashes and prior_rule_hashes != {canonical_hash(requirements.raw)}:
+                raise ValueError("established project requirements were changed")
+            if provided_requirements is not None and canonical_hash(provided_requirements.raw) != canonical_hash(requirements.raw):
+                raise ValueError("project requirements are locked; build cannot replace or weaken them")
+        else:
+            requirements = provided_requirements or RequirementSet.parse({"schema_version":1,"requirements":[]})
+            if provided_requirements is not None:
+                write_json(requirements_lock, requirements.raw)
+                sync_directory(store)
         for name in ("attempts", "accepted"):
             path = store / name
             safe_path(path)
@@ -232,22 +255,29 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
             current = read_json(pointer)
             if parent != current["revision"]: raise ValueError("parent must equal last good revision")
             previous_dir = safe_path(store / "accepted" / identifier(parent))
-            verify_accepted(previous_dir, current["result_hash"])
+            previous_result=verify_accepted(previous_dir, current["result_hash"])
+            if previous_result.get("requirements_lock_hash") is not None and previous_result["requirements_lock_hash"]!=canonical_hash(requirements.raw):
+                raise ValueError("parent requirements lock differs from active rules")
             previous = read_json(previous_dir / "inspection" / "observation.json")
         elif parent is not None:
             raise ValueError("parent requires a last-good revision")
         attempt = store / "attempts" / revision
         attempt.mkdir()
         result = {"schema_version": 1, "revision": revision, "parent": parent,
+                  "parent_result_hash": current["result_hash"] if previous is not None else None,
                   "intent": intent, "status": "needs_review", "execution_mode": "docker-isolated" if backend else "trusted-reviewed-development",
                   "security_boundary": backend.security_boundary if backend else "NOT_SANDBOXED", "jobs": {}, "failures": []}
+        observation = None
         try:
-            result["source_files"] = snapshot(source, attempt / "source")
             write_json(attempt / "params.json", raw_params)
             write_json(attempt / "policy.json", raw_policy)
+            write_json(attempt / "requirements.json", requirements.raw)
+            result["requirements_hash"] = canonical_hash(requirements.raw)
+            result["requirements_lock_hash"] = result["requirements_hash"] if requirements_lock.exists() else None
             result["params_hash"] = digest(attempt / "params.json")
             result["policy_hash"] = digest(attempt / "policy.json")
             result["runtime_hash"] = sandbox_image if backend else digest(Path(binary))
+            result["source_files"] = snapshot(source, attempt / "source")
             result["controller_files"] = {p.name: digest(p) for p in Path(__file__).parent.glob("*.py") if backend or p.name != "sandbox.py"}
             authored = attempt / "authored"
             authored.mkdir()
@@ -280,6 +310,9 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
             regular_tree(inspection)
             observation = read_json(inspection / "observation.json")
             result["failures"] = check(policy, observation, previous)
+            relation_report = evaluate(requirements, observation, previous, is_revision=parent is not None)
+            result["failures"].extend({"check":"requirement", "requirement_id":row["id"], "status":row["status"], "measured":row["measured"], "evidence":row["evidence"]}
+                                      for row in relation_report["requirements"] if row["hard"] and row["applicable"] and row["status"]!="pass")
             roundtrip = attempt / "roundtrip"
             roundtrip.mkdir()
             result["jobs"]["roundtrip"] = execute("roundtrip", ["--python", inspector, "--", "--mode", "roundtrip",
@@ -298,9 +331,13 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
                 if digest(attempt / filename) != result[key]: raise ValueError("frozen input changed during run")
             for filename, expected in result["controller_files"].items():
                 if digest(Path(__file__).with_name(filename)) != expected: raise ValueError("controller changed during run")
+            if (result["requirements_lock_hash"] is not None and canonical_hash(read_json(requirements_lock)) != result["requirements_hash"]) or canonical_hash(read_json(attempt / "requirements.json")) != result["requirements_hash"]:
+                raise ValueError("locked requirements changed during execution")
             if previous is not None:
                 verify_accepted(previous_dir, current["result_hash"])
-            result["status"] = "rejected" if result["failures"] else "accepted"
+            result["provenance_verified"] = True
+            if any(failure.get("status","fail") == "fail" for failure in result["failures"]):result["status"]="rejected"
+            else:result["status"]="needs_review" if result["failures"] else "accepted"
         except Exception as exc:
             result["status"] = "needs_review"
             result["error"] = str(exc)[:2000]
@@ -308,6 +345,14 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
         if discarded:
             result["status"] = "needs_review"
             result["discarded_unsafe_or_overbudget_entries"] = discarded
+            result["provenance_verified"] = False
+        retained_observation = attempt / "inspection" / "observation.json"
+        try:
+            observation = read_json(retained_observation) if retained_observation.is_file() else None
+        except (ValueError,OSError) as exc:
+            observation=None;result["status"]="needs_review";result["observation_error"]=str(exc)[:300]
+        write_json(attempt / "verification.json", make_report(result, policy, observation, previous, requirements))
+        result["artifacts"]["verification.json"] = digest(attempt / "verification.json")
         write_json(attempt / "result.json", result)
         if result["status"] == "accepted":
             promote(attempt, store, revision)
