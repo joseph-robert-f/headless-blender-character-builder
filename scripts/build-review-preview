@@ -73,7 +73,7 @@ def collect_notices(bundle):
     for name in dependencies():
         dist = importlib.metadata.distribution(name)
         for item in dist.files or []:
-            if ".dist-info/" in str(item) and any(part.lower().startswith(("license", "copying", "notice")) for part in item.parts):
+            if ".dist-info/" in item.as_posix() and any(part.lower().startswith(("license", "copying", "notice")) for part in item.parts):
                 source = Path(dist.locate_file(item))
                 if source.is_file():
                     if item.is_absolute() or ".." in item.parts:
