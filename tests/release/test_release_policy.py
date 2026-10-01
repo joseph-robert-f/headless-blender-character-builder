@@ -35,7 +35,7 @@ class ReleasePolicyTests(unittest.TestCase):
     def test_workflows_are_json_form_yaml_with_minimal_permissions(self) -> None:
         self.assertEqual(
             {path.name for path in WORKFLOWS},
-            {"ci.yml", "dependency-audit.yml", "release-candidate.yml", "experimental-modeling-sandbox.yml", "experimental-project-platforms.yml"},
+            {"ci.yml", "dependency-audit.yml", "release-candidate.yml", "experimental-modeling-sandbox.yml", "experimental-project-platforms.yml", "review-preview-packages.yml"},
         )
         for path in WORKFLOWS:
             with self.subTest(path=path.name):
@@ -75,6 +75,26 @@ class ReleasePolicyTests(unittest.TestCase):
             for step in checkout_steps:
                 self.assertEqual(step.get("uses"), CHECKOUT_ACTION)
                 self.assertEqual(step.get("with", {}).get("persist-credentials"), False)
+
+    def test_preview_has_native_frozen_smoke_gates_and_no_release_permissions(self):
+        document = json.loads((WORKFLOW_ROOT / "review-preview-packages.yml").read_text())
+        job = document["jobs"]["package"]
+        self.assertEqual(job["strategy"]["matrix"]["target"], [
+            {"name": "windows-x64", "runner": "windows-2022", "architecture": "x64"},
+            {"name": "macos-arm64", "runner": "macos-15", "architecture": "arm64"}])
+        steps = job["steps"]
+        setup = next(step for step in steps if str(step.get("uses", "")).startswith("actions/setup-python@"))
+        self.assertEqual(setup["with"]["python-version"], "3.13.16")
+        commands = "\n".join(str(step.get("run", "")) for step in steps)
+        self.assertIn("--require-hashes --only-binary=:all:", commands)
+        self.assertIn("scripts/build-review-preview", commands)
+        self.assertIn("scripts/test-review-preview", commands)
+        uploads = [step for step in steps if str(step.get("uses", "")).startswith("actions/upload-artifact@")]
+        self.assertEqual(len(uploads), 2)
+        self.assertNotIn("if", uploads[0])  # Passing-build artifacts only.
+        self.assertEqual(uploads[1]["if"], "${{ always() }}")
+        self.assertNotIn("*.zip", uploads[1]["with"]["path"])
+        self.assertNotIn("*.tar.gz", uploads[1]["with"]["path"])
 
     def test_action_reference_policy_rejects_mutable_or_ambiguous_uses(self) -> None:
         self.assertTrue(FULL_ACTION_SHA.fullmatch(CHECKOUT_ACTION))

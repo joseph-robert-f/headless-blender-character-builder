@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+"""Exercise the freshly extracted native executable, never a source substitute."""
+from __future__ import annotations
+
+import argparse
+from contextlib import ExitStack
+import json
+import os
+from pathlib import Path
+import platform
+import queue
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import tarfile
+import tempfile
+import threading
+import time
+import traceback
+import zipfile
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests/experimental_modeling"))
+from experimental_modeling.preview_manifest import inventory, sha256, verify
+from experimental_modeling.project import initialize
+from test_portable_review import fixture, request, snapshot
+
+
+def check(value, message):
+    if not value:
+        raise AssertionError(message)
+
+
+def extract(archive, destination):
+    destination.mkdir()
+    if archive.suffix == ".zip":
+        with zipfile.ZipFile(archive) as source:
+            check(all(name.startswith("hbcb-review-preview/") and ".." not in Path(name).parts
+                      and "\\" not in name for name in source.namelist()), "Unsafe ZIP path")
+            check(sum(row.file_size for row in source.infolist()) < 1024 ** 3, "Oversized ZIP")
+            source.extractall(destination)
+    else:
+        with tarfile.open(archive, "r:gz") as source:
+            check(all(row.name == "hbcb-review-preview" or row.name.startswith("hbcb-review-preview/")
+                      for row in source.getmembers()), "Unexpected tar root")
+            check(sum(row.size for row in source.getmembers()) < 1024 ** 3, "Oversized tar")
+            source.extractall(destination, filter="data")
+    return destination / "hbcb-review-preview"
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--package", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--expected-target", required=True,
+                        choices=["windows-x64", "macos-arm64", "linux-validation"])
+    args = parser.parse_args()
+    archive = args.package.resolve(strict=True)
+    result = {"schema_version": 1, "successful": False, "archive": archive.name,
+              "archive_sha256": sha256(archive), "target": args.expected_target,
+              "harness_python": platform.python_version(), "system": platform.system(),
+              "machine": platform.machine(), "checks": [],
+              "scope": "Extracted binary, synthetic evidence, interpreter-free PATH; not a pristine OS or generation test"}
+    processes = []
+
+    def passed(name):
+        result["checks"].append({"name": name, "status": "pass"})
+        print("PASS " + name, flush=True)
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="review-preview-smoke-") as temporary, ExitStack() as cleanup:
+            base = Path(temporary).resolve()
+            bundle = extract(archive, base / "Clean extraction with spaces 雪")
+            verify(bundle)
+            passed("clean_archive_extraction_and_inventory")
+            executable = bundle / ("hbcb-review-preview.exe" if os.name == "nt" else "hbcb-review-preview")
+            cwd = base / "Empty unrelated working directory"
+            cwd.mkdir()
+            env = {key: value for key, value in os.environ.items()
+                   if key.upper() in {"SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "LANG", "LC_ALL"}}
+            env.update({"PATH": "", "PYTHONHOME": str(base / "no-system-python"),
+                        "PYTHONPATH": str(base / "no-source-imports"), "PYTHONUTF8": "1"})
+            check(shutil.which("python", path=env["PATH"]) is None, "Python unexpectedly on test PATH")
+            check(shutil.which("node", path=env["PATH"]) is None, "Node unexpectedly on test PATH")
+
+            def run(*arguments):
+                return subprocess.run([str(executable), *map(str, arguments)], cwd=cwd, env=env,
+                                      stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                      encoding="utf-8", errors="replace", timeout=30, check=False)
+
+            checked = run("--verify")
+            check(checked.returncode == 0, checked.stdout)
+            checked = run("--provenance")
+            check(checked.returncode == 0, checked.stdout)
+            provenance = json.loads(checked.stdout)
+            check(provenance["target"] == args.expected_target, "Wrong artifact target")
+            check(provenance["system"] == platform.system(), "Artifact OS mismatch")
+            check(provenance["machine"].lower() == platform.machine().lower(), "Artifact CPU mismatch")
+            result.update({key: provenance[key] for key in ("commit", "source_tree", "python", "native_components", "external_microsoft_runtime")})
+            passed("frozen_runtime_and_provenance_without_python_or_node_on_path")
+            project = initialize(base / "Project with spaces 雨", "Preview 雨")
+            revision = fixture(project.folder("evidence"))
+            (project.folder("source") / "builder.py").write_text(
+                'raise AssertionError("PREVIEW MUST NEVER EXECUTE PROJECT SOURCE")\n', encoding="utf-8")
+            before = snapshot(project.root)
+            before_bundle = inventory(bundle)
+
+            def start(port=0):
+                process = subprocess.Popen([str(executable), "--project", str(project.root), "--port", str(port)],
+                                           cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                           stderr=subprocess.STDOUT, encoding="utf-8", errors="replace", bufsize=1)
+                processes.append(process)
+                lines = queue.Queue()
+                def read():
+                    for _ in range(64):
+                        line = process.stdout.readline(4096)
+                        if not line:
+                            break
+                        lines.put(line)
+                reader = threading.Thread(target=read, daemon=True)
+                reader.start()
+                def dispose():
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait(timeout=10)
+                    reader.join(timeout=5)
+                    if not process.stdin.closed:
+                        process.stdin.close()
+                    if not process.stdout.closed:
+                        process.stdout.close()
+                # In particular on Windows, stop owned executable processes
+                # before TemporaryDirectory tries to remove their open files.
+                cleanup.callback(dispose)
+                deadline = time.monotonic() + 30
+                output = []
+                while time.monotonic() < deadline:
+                    try:
+                        line = lines.get(timeout=.1)
+                    except queue.Empty:
+                        if process.poll() is not None:
+                            break
+                        continue
+                    output.append(line)
+                    match = re.fullmatch(r"Local project review: (http://127\.0\.0\.1:[0-9]+)\n", line)
+                    if match:
+                        return process, match.group(1), reader
+                raise AssertionError("Frozen startup failed: " + "".join(output))
+
+            def stop(process, reader, force=False):
+                if force:
+                    process.kill()
+                else:
+                    process.stdin.write("q\n")
+                    process.stdin.flush()
+                code = process.wait(timeout=20)
+                if not force:
+                    check(code == 0, "Controlled shutdown failed")
+                reader.join(timeout=5)
+                process.stdin.close()
+                process.stdout.close()
+
+            for attempt in range(3):
+                process, origin, reader = start()
+                port = int(origin.rsplit(":", 1)[1])
+                status, headers, project_data = request(origin, "/api/project")
+                check(status == 200 and project_data["read_only"] is True, "Backend must force read-only")
+                check("REVIEW PREVIEW" in project_data["read_only_reason"], "Missing preview UI notice")
+                check(project_data["project_name"] == "Preview 雨", "Unicode project name lost")
+                status, _, data = request(origin, "/api/revisions/r0")
+                check(status == 200 and data["revision"]["machine_verified"], "Bound fixture evidence unavailable")
+                for path, content_type in [("/", "text/html"), ("/static/app.js", "text/javascript"),
+                                           ("/static/style.css", "text/css"), ("/artifacts/r0/view-front", "image/png")]:
+                    status, headers, content = request(origin, path)
+                    check(status == 200 and headers["Content-Type"].startswith(content_type) and content, "Missing packaged static/evidence asset")
+                    check("default-src 'none'" in headers["Content-Security-Policy"], "Lost CSP")
+                csrf = project_data["csrf_token"]
+                acceptance = {"csrf_token": csrf, "expected_result_hash": data["revision"]["result_hash"], "notes": "must not write"}
+                status, _, _ = request(origin, "/api/revisions/r0/accept", "POST", acceptance)
+                check(status == 403, "Read-only acceptance was not blocked by backend")
+                change = {"csrf_token": csrf, "revision_id": "r0", "expected_result_hash": data["revision"]["result_hash"], "prompt": "must not write"}
+                status, _, _ = request(origin, "/api/requests", "POST", change)
+                check(status == 403, "Read-only request was not blocked by backend")
+                check(request(origin, "/api/project", headers={"Host": "example.invalid"})[0] == 403, "Host boundary lost")
+                check(request(origin, "/api/project", headers={"Origin": "https://example.invalid"})[0] == 403, "Origin boundary lost")
+                # q/Enter exercises true cleanup on Windows, not TerminateProcess.
+                stop(process, reader, force=attempt == 1)
+                check(snapshot(project.root) == before, "Review modified project files or directories")
+                with socket.socket() as probe:
+                    probe.settimeout(1)
+                    check(probe.connect_ex(("127.0.0.1", port)) != 0, "Review socket survived shutdown")
+            # No socket reuse policy is weakened to ignore TIME_WAIT from HTTP
+            # traffic. An unused explicit port can be rebound after clean stop.
+            with socket.socket() as reserved:
+                reserved.bind(("127.0.0.1", 0))
+                fixed_port = reserved.getsockname()[1]
+            for _ in range(2):
+                process, _, reader = start(fixed_port)
+                stop(process, reader)
+            passed("three_runs_backend_write_denials_bound_evidence_static_assets_and_origin_checks")
+            passed("graceful_q_shutdown_forced_stop_recovery_and_same_port_reuse")
+            passed("project_content_and_directory_preservation")
+
+            with socket.socket() as occupied:
+                occupied.bind(("127.0.0.1", 0))
+                occupied.listen()
+                failed = run("--project", project.root, "--port", occupied.getsockname()[1])
+                check(failed.returncode == 2, "Occupied port must fail without takeover")
+            check(run("--project", base / "missing").returncode == 2, "Missing project must fail closed")
+            check(not (base / "missing").exists(), "Preview created a missing project")
+            check(run("--project", project.root, "--port", "65536").returncode == 2, "Invalid port accepted")
+            passed("invalid_project_and_port_errors_without_mutation_or_takeover")
+
+            policy = revision / "policy.json"
+            original = policy.read_bytes()
+            policy.write_bytes(original + b" ")
+            process, origin, reader = start()
+            check(request(origin, "/api/revisions/r0")[0] == 409, "Tampered evidence accepted")
+            stop(process, reader)
+            policy.write_bytes(original)
+            passed("project_evidence_tampering_rejected")
+
+            static = bundle / "_internal/experimental_modeling/review_static/app.js"
+            original = static.read_bytes()
+            static.write_bytes(original + b"\n// damaged\n")
+            check(run("--project", project.root).returncode == 2, "Corrupt bundle started review")
+            static.write_bytes(original)
+            extra = bundle / "unexpected.txt"
+            extra.write_text("unexpected", encoding="utf-8")
+            check(run("--verify").returncode == 2, "Unexpected package member accepted")
+            extra.unlink()
+            check(run("--verify").returncode == 0, "Restored package failed verification")
+            check(inventory(bundle) == before_bundle, "Running package modified its own distribution")
+            check(snapshot(project.root) == before, "Final project snapshot changed")
+            passed("bundle_tampering_extra_file_detection_and_read_only_distribution")
+            result["successful"] = True
+    except Exception:
+        result["error"] = traceback.format_exc()[-12000:]
+        print(result["error"], file=sys.stderr)
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    return 0 if result["successful"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

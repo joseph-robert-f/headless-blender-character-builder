@@ -2,6 +2,35 @@
 
 # v0.1 threat model
 
+## Separate unsigned REVIEW PREVIEW boundary
+
+The experimental [standalone review preview](review-preview.md) freezes the
+existing review backend and static assets with Python. It exposes only an
+existing-project command and offline package verification/provenance. It always
+constructs the backend in read-only mode, independent of UI controls and OS;
+acceptance/request POSTs fail even with valid CSRF credentials. It does not invoke
+the build controller, import project source, write project leases/state, register
+an installer, download runtimes, connect providers, or expose a remote listener.
+The existing loopback/Host/Origin/CSRF, artifact-hash, and safe-path controls apply.
+Concurrent readers are allowed; concurrent project modification is unsupported.
+
+Package startup checks a bounded exact file/link manifest. Internal PyInstaller
+macOS links must resolve within the extracted folder; project symlinks, junctions,
+and reparse points remain forbidden. Fresh extraction, backend write-denial,
+tamper, shutdown, crash/reopen, and unchanged-project tests run against the actual
+native executable with no Python/Node on PATH. The test harness itself runs on
+Python-equipped hosted runners; this is not clean-consumer-installation evidence.
+
+Unsigned archive hashes detect accidental corruption, not a malicious publisher,
+replaced verifier, compromised host, or authenticity failure. CI artifacts are
+time-limited developer evidence, never public releases. No security warning is
+bypassed. Microsoft runtime components are not redistributed without an identified
+basis; any existing-runtime prerequisite is explicit. Apple system libraries stay
+external. Exact project source, upstream notices, native component hashes and
+runtime/build provenance accompany each package. Unknown native components fail
+packaging, and native build/smoke evidence must not be presented as cross-platform
+generation, installer trust, or full product support.
+
 ## Purpose and scope
 
 This document defines the security assumptions and release boundary for

@@ -1,5 +1,10 @@
 # Headless Blender Character Builder
 
+For the separate unsigned, read-only developer package, see
+[HBCB REVIEW PREVIEW](docs/review-preview.md). It opens existing project evidence
+without installing Python or Node; it does not generate models or add native
+Windows/Mac generation support.
+
 You describe a small character in a short text file; the system builds it
 with Blender and returns a preview image, files for 3D tools, and a
 3D-printable model. Build an original geometric character from bounded JSON,

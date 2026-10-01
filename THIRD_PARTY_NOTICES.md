@@ -102,3 +102,23 @@ optional Darwin-only `fsevents` 2.3.2 (MIT); Linux CI omits optional dependencie
 These packages and the Playwright-selected Chromium test browser are test tools,
 not bundled app/runtime or builder-image dependencies. Upstream license files
 remain in the installed packages and browser distribution.
+
+## Unsigned standalone REVIEW PREVIEW
+
+The separately packaged [read-only developer preview](docs/review-preview.md)
+uses official standard-GIL CPython 3.13.16 and PyInstaller 6.22.3. Build-only
+wheels (including all platform-specific dependencies) are hash-locked in
+`packaging/review-preview-requirements.lock`. Complete reviewed CPython,
+incorporated-software, PyInstaller bootloader/runtime-hook, and zlib notices are
+under `packaging/notices/`, with exact upstream URLs and hashes in
+`packaging/runtime-notices.json`. Installed Python and build-tool notices are
+also retained in each package. The exact project source is delivered alongside
+the executable inside the package, under GPL-3.0-or-later.
+
+The native component inventory, hashes, runtime modifications, exclusions,
+runner/runtime provenance, and OS-provided prerequisites are recorded for each
+artifact. Unused TLS/ctypes/compression modules are excluded. Windows Microsoft
+runtime DLLs are not redistributed; an existing runtime may be required. Apple
+system libraries/frameworks remain external. Unknown native components stop the
+build for review. No Blender binary, Node runtime, model asset, account SDK,
+signing credential, installer, or automatic runtime download is bundled.

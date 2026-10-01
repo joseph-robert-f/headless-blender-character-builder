@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""Build a native, unsigned, read-only developer preview. Never publishes it."""
+from __future__ import annotations
+
+import argparse
+import ast
+import importlib.metadata
+import json
+import os
+from pathlib import Path
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import sysconfig
+import tarfile
+import zipfile
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from experimental_modeling.preview_manifest import MANIFEST, inventory, sha256, verify
+
+NAME = "hbcb-review-preview"
+PYTHON_VERSION = "3.13.16"
+EXCLUDES = ["experimental_modeling.sandbox", "experimental_modeling.inspect_scene", "bpy",
+            "tkinter", "_tkinter", "idlelib", "test", "unittest", "ensurepip", "pip",
+            "setuptools", "sqlite3", "_sqlite3", "curses", "_curses", "readline",
+            "ssl", "_ssl", "_hashlib", "_bz2", "_lzma", "ctypes", "_ctypes",
+            "decimal", "_decimal"]
+
+
+def git(*args):
+    return subprocess.check_output(["git", *args], cwd=ROOT, timeout=30).decode().strip()
+
+
+def write_json(path, value):
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def dependencies():
+    expected = {"pyinstaller": "6.22.3", "pyinstaller-hooks-contrib": "2026.8",
+                "altgraph": "0.17.5", "packaging": "26.3", "setuptools": "84.0.0"}
+    if sys.platform == "win32":
+        expected.update({"pefile": "2024.8.26", "pywin32-ctypes": "0.2.3"})
+    if sys.platform == "darwin":
+        expected["macholib"] = "1.16.4"
+    for name, version in expected.items():
+        if importlib.metadata.version(name) != version:
+            raise ValueError(f"Build dependency differs from the reviewed lock: {name}")
+    return expected
+
+
+def collect_notices(bundle):
+    destination = bundle / "licenses"
+    destination.mkdir()
+    shutil.copy2(ROOT / "LICENSE", destination / "HBCB-GPL-3.0.txt")
+    catalog = json.loads((ROOT / "packaging/runtime-notices.json").read_text())
+    for row in catalog["notices"]:
+        source = ROOT / "packaging/notices" / row["file"]
+        if sha256(source) != row["sha256"]:
+            raise ValueError("Reviewed upstream notice hash changed")
+        shutil.copy2(source, destination / row["file"])
+    # Preserve the installed runtime's own license in addition to source notices.
+    candidates = [Path(sys.base_prefix) / name for name in ("LICENSE.txt", "LICENSE", "Resources/LICENSE.txt")]
+    candidates += [Path(sysconfig.get_path("stdlib")) / "LICENSE.txt"]
+    found = next((path for path in candidates if path.is_file()), None)
+    if found:
+        shutil.copy2(found, destination / "Installed-Python-LICENSE.txt")
+    elif sys.platform in {"win32", "darwin"}:
+        raise ValueError("Installed official Python runtime license was not found")
+    # Preserve exact build-tool notices as a separately named provenance set.
+    for name in dependencies():
+        dist = importlib.metadata.distribution(name)
+        for item in dist.files or []:
+            if ".dist-info/" in str(item) and any(part.lower().startswith(("license", "copying", "notice")) for part in item.parts):
+                source = Path(dist.locate_file(item))
+                if source.is_file():
+                    target = destination / "build-tools" / name / item.name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, target)
+    shutil.copy2(ROOT / "packaging/runtime-notices.json", destination / "sources.json")
+    return catalog
+
+
+def native_inventory(bundle, work, target):
+    # Record original analysis inputs before removing Microsoft runtime files.
+    analysis = ast.literal_eval((work / NAME / "Analysis-00.toc").read_text(encoding="utf-8"))
+    inputs = {}
+    for value in analysis:
+        if isinstance(value, list):
+            for entry in value:
+                if isinstance(entry, tuple) and len(entry) == 3 and entry[2] in {"BINARY", "EXTENSION"}:
+                    inputs[Path(entry[0]).name.lower()] = entry[1]
+    excluded = []
+    for path in sorted(bundle.rglob("*")):
+        if path.is_file() and not path.is_symlink() and re.fullmatch(r"(?:vcruntime|msvcp|concrt|ucrtbase)[a-z0-9_]*\.dll", path.name, re.I):
+            excluded.append({"name": path.name, "sha256": sha256(path), "bundled": False,
+                             "reason": "Use the existing Microsoft runtime; no redistribution rights assumed"})
+            path.unlink()
+    rows = []
+    for path in sorted(bundle.rglob("*")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        name = path.name.lower()
+        if not (name.endswith((".dll", ".pyd", ".dylib", ".so")) or ".so." in name or name in {"python", "python3"}):
+            continue
+        source = inputs.get(name)
+        if any(x in name for x in ("libssl", "libcrypto", "libffi", "libbz2", "liblzma")):
+            raise ValueError(f"Unused external native library entered the preview: {name}")
+        if name.startswith("libz."):
+            component, notices = "zlib", ["licenses/zlib-LICENSE.txt"]
+        elif name.endswith(".pyd") or ".cpython-" in name or name.startswith(("libpython", "python3")) or name == "python":
+            component, notices = "CPython", ["licenses/CPython-LICENSE.txt", "licenses/CPython-incorporated-software.rst"]
+        elif target == "linux-validation":
+            component, notices = "Local Linux validation dependency (not a distributed target)", []
+        else:
+            raise ValueError(f"Unmapped native component; inspect its provenance and license before distribution: {name}")
+        rows.append({"file": path.relative_to(bundle).as_posix(), "sha256": sha256(path),
+                     "component": component, "license_files": notices,
+                     "analysis_source": source, "bundled": True})
+    return rows, excluded
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, required=True, help="New or empty build output directory")
+    parser.add_argument("--target", choices=["windows-x64", "macos-arm64", "linux-validation"], required=True)
+    args = parser.parse_args()
+    systems = {"windows-x64": ("Windows", {"amd64", "x86_64"}),
+               "macos-arm64": ("Darwin", {"arm64", "aarch64"}),
+               "linux-validation": ("Linux", {"x86_64", "amd64"})}
+    system, machines = systems[args.target]
+    if platform.system() != system or platform.machine().lower() not in machines:
+        raise ValueError("Build must run natively on the stated OS and CPU; no cross-compilation evidence")
+    if args.target != "linux-validation" and platform.python_version() != PYTHON_VERSION:
+        raise ValueError(f"Use the pinned official CPython {PYTHON_VERSION} standard-GIL runtime")
+    if sysconfig.get_config_var("Py_GIL_DISABLED"):
+        raise ValueError("Free-threaded Python is not a reviewed preview input")
+    if git("diff", "--name-only"):
+        raise ValueError("Stage the reviewed source first; working tree must match the Git index")
+    tree = git("write-tree")
+    commit = git("rev-parse", "HEAD")
+    clean = tree == git("rev-parse", "HEAD^{tree}")
+    if os.environ.get("CI") and not clean:
+        raise ValueError("CI packages must match the exact checked-out commit")
+    out = args.output.resolve()
+    if out.exists() and any(out.iterdir()):
+        raise ValueError("Output must be new or empty; no existing package is overwritten")
+    out.mkdir(parents=True, exist_ok=True)
+    deps = dependencies()
+    work = out / "work"
+    command = [sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", "--onedir", "--console",
+               "--noupx", "--name", NAME, "--distpath", str(out / "dist"), "--workpath", str(work),
+               "--specpath", str(work), "--paths", str(ROOT), "--add-data",
+               f"{ROOT / 'experimental_modeling/review_static'}:experimental_modeling/review_static"]
+    for module in EXCLUDES:
+        command += ["--exclude-module", module]
+    if sys.platform == "darwin":
+        command += ["--target-arch", "arm64"]
+    command.append(str(ROOT / "packaging/review_preview_entry.py"))
+    subprocess.run(command, cwd=ROOT, check=True, timeout=600)
+    bundle = out / "dist" / NAME
+    collect_notices(bundle)
+    native, excluded = native_inventory(bundle, work, args.target)
+    (bundle / "source").mkdir()
+    with (bundle / "source" / "hbcb-corresponding-source.tar.gz").open("wb") as stream:
+        subprocess.run(["git", "archive", "--format=tar.gz", "--prefix=hbcb-source/", tree],
+                       cwd=ROOT, stdout=stream, check=True, timeout=60)
+    shutil.copy2(ROOT / "docs/review-preview.md", bundle / "README.md")
+    shutil.copy2(ROOT / "packaging/review-preview-requirements.lock", bundle / "source" / "build-requirements.lock")
+    provenance = {"schema_version": 1, "product": "HBCB REVIEW PREVIEW", "scope": "existing-project read-only review",
+                  "target": args.target, "commit": commit, "source_tree": tree, "commit_matches_source": clean,
+                  "python": platform.python_version(), "python_build": sys.version, "standard_gil": True,
+                  "python_executable_sha256": sha256(Path(sys.executable)),
+                  "system": platform.system(), "machine": platform.machine(), "os_release": platform.release(),
+                  "build_dependencies": deps, "dependency_lock_sha256": sha256(ROOT / "packaging/review-preview-requirements.lock"),
+                  "runner_image": os.environ.get("ImageOS"), "runner_image_version": os.environ.get("ImageVersion"),
+                  "workflow_run": os.environ.get("GITHUB_RUN_ID"), "workflow_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+                  "setup_python_action": "e797f83bcb11b83ae66e0230d6156d7c80228e7c",
+                  "python_distribution": ("Local validation runtime, not for distribution" if args.target == "linux-validation" else "Official python.org runtime via pinned actions/setup-python; installed runtime bytes recorded separately"),
+                  "signing": "No publisher signature or notarization; macOS ad-hoc loader signature only",
+                  "changes": "Frozen Python module closure, relocated runtime and static reviewer; unused modules excluded; macOS arm64 thinning; Microsoft runtime not redistributed",
+                  "excluded_modules": EXCLUDES, "native_components": native, "external_microsoft_runtime": excluded,
+                  "system_libraries": "Provided by the target OS, not redistributed",
+                  "runtime_network": "127.0.0.1 review server only; no downloads or provider calls"}
+    write_json(bundle / "provenance.json", provenance)
+    write_json(bundle / MANIFEST, {"schema_version": 1, "files": inventory(bundle)})
+    verify(bundle)
+    suffix = "zip" if args.target == "windows-x64" else "tar.gz"
+    archive = out / f"{NAME}-{tree[:12]}-{args.target}.{suffix}"
+    if suffix == "zip":
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as stream:
+            for path in sorted(bundle.rglob("*")):
+                if path.is_symlink():
+                    raise ValueError("Windows ZIP unexpectedly contains a symlink")
+                stream.write(path, path.relative_to(bundle.parent))
+    else:
+        with tarfile.open(archive, "w:gz", format=tarfile.PAX_FORMAT) as stream:
+            stream.add(bundle, arcname=NAME)
+    (out / "SHA256SUMS").write_text(f"{sha256(archive)}  {archive.name}\n", encoding="ascii")
+    shutil.copy2(bundle / "provenance.json", out / "provenance.json")
+    write_json(out / "build-result.json", {"archive": archive.name, "sha256": sha256(archive), "target": args.target,
+                                          "source_tree": tree, "commit": commit, "native_smoke_test": "not_yet_run"})
+    print(archive)
+
+
+if __name__ == "__main__":
+    main()

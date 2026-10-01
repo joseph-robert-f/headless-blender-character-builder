@@ -132,7 +132,8 @@
         ".github/workflows/dependency-audit.yml",
         ".github/workflows/release-candidate.yml",
         ".github/workflows/experimental-modeling-sandbox.yml",
-        ".github/workflows/experimental-project-platforms.yml"
+        ".github/workflows/experimental-project-platforms.yml",
+        ".github/workflows/review-preview-packages.yml"
       ],
       "id": "github-actions",
       "name": "GitHub Actions and hosted runners",
@@ -158,6 +159,19 @@
       "id": "python-build-backend",
       "name": "Python build backend",
       "reason": "The setuptools build-system floor is intentionally ranged and is not installed in production images; review it separately from hash-locked runtime wheels."
+    },
+    {
+      "id": "review-preview",
+      "name": "Unsigned native review preview runtime and packaging",
+      "reason": "Review exact Python/PyInstaller inputs, platform wheel hashes, native component inventory and notices, Microsoft prerequisites, corresponding project source, and extracted native executable smoke evidence together. No public release or support promotion.",
+      "files": [
+        "packaging/review-preview-requirements.lock",
+        "packaging/runtime-notices.json",
+        "scripts/build-review-preview",
+        "scripts/test-review-preview",
+        "docs/review-preview.md",
+        "THIRD_PARTY_NOTICES.md"
+      ]
     }
   ],
   "python_groups": [

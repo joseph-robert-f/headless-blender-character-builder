@@ -37,6 +37,7 @@ EXPECTED_MANUAL_REVIEW_IDS = {
     "minio-fixture",
     "osv-scanner",
     "python-build-backend",
+    "review-preview",
 }
 EXPECTED_MANUAL_REVIEW_FILES = {
     "blender": {
@@ -63,6 +64,7 @@ EXPECTED_MANUAL_REVIEW_FILES = {
         ".github/workflows/release-candidate.yml",
         ".github/workflows/experimental-modeling-sandbox.yml",
         ".github/workflows/experimental-project-platforms.yml",
+        ".github/workflows/review-preview-packages.yml",
     },
     "minio-fixture": {
         "THIRD_PARTY_NOTICES.md",
@@ -82,6 +84,14 @@ EXPECTED_MANUAL_REVIEW_FILES = {
         "pyproject.toml",
         "service/pyproject.toml",
     },
+    "review-preview": {
+        "packaging/review-preview-requirements.lock",
+        "packaging/runtime-notices.json",
+        "scripts/build-review-preview",
+        "scripts/test-review-preview",
+        "docs/review-preview.md",
+        "THIRD_PARTY_NOTICES.md",
+    },
 }
 EXPECTED_MANUAL_REVIEW_NAMES = {
     "blender": "Blender binary and corresponding source",
@@ -90,6 +100,7 @@ EXPECTED_MANUAL_REVIEW_NAMES = {
     "minio-fixture": "MinIO, mc, and Go source-build fixture",
     "osv-scanner": "OSV-Scanner release and vulnerability service",
     "python-build-backend": "Python build backend",
+    "review-preview": "Unsigned native review preview runtime and packaging",
 }
 EXPECTED_DOCKERFILE_FRONTEND_FILES = {
     "docker/caddy.Dockerfile",
