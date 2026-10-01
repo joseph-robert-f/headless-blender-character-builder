@@ -574,3 +574,30 @@ verification, visibility commit, and recovery inventory moved verbatim to
 `docs/oci-publication.md`, remain blocked behind `public_oci_ready`, and the
 release-policy tests now pin that document. No gate was run for this change;
 it is documentation and test re-pinning only.
+
+## 2026-10-01 — experimental source-modeling lane (draft, not v0.1 support)
+
+Implemented an opt-in source/parameter rebuild controller, typed semantic-part
+and measurement policy, independent evaluated-mesh inspector, fixed views,
+GLB/reopen comparison, protected-part hashes, retained rejected attempts and
+atomic last-good promotion. Stable builder/service code is untouched. The
+handwritten six-legged robot benchmark validates mast translation, 20% front-leg
+path growth with fixed endpoints, tray widening with fixed mounts and walls,
+forbidden body-edit rejection, narrow repair and clean rebuild equality.
+
+Native evidence on Linux with Blender 4.3.2: all 24 author/inspect/GLB/reopen jobs
+in the six-build robot sequence passed; only the deliberate bad attempt was
+rejected. Measured front-leg length ratio was 1.200000015. Initial/final four-view
+renders were inspected. Evidence is produced by
+`python3 tests/experimental_modeling/run_benchmark.py --store /tmp/robot-benchmark --trusted-reviewed-source`.
+Source/runtime/policy/controller/artifact hashes are in each generated result.
+Do not interpret this fixture as autonomous natural-language generality.
+
+Focused existing host suites passed: root unit 44, contract 13, security 8,
+container 17. `make release-static` passed on the intermediate reviewed staged
+snapshot; repeat on the final commit's index. Docker-backed release/full Blender
+4.5.12 gates remain unrun locally because Docker is absent. Native trusted mode
+is explicitly NOT a sandbox. A separate Docker backend and opt-in live CI gate
+are experimental until actual container execution is evidenced. Print acceptance
+fails closed pending generic manufacturing gates. Details and reproducible
+commands: [experimental source modeling](experimental-source-modeling.md).

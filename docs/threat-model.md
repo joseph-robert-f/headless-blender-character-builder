@@ -194,3 +194,18 @@ Review this threat model whenever a trust boundary changes and at each release.
 A pull request that changes input shape, process execution, network access,
 credentials, persistence, file parsing, IAM, artifact publication, or CI trust
 must update the relevant threats and tests in the same change.
+
+## Opt-in source-modeling experiment (outside v0.1)
+
+`experimental_modeling/` is an isolated research lane, not imported by the stable
+builder or service and not distributed as a supported package. It introduces
+reviewed Blender Python source bundles, separate trusted geometry observations,
+scoped revision policies and immutable attempt evidence. It does not change the
+v1 input contract or authorize source execution through the API.
+
+The explicit native `--trusted-reviewed-source` mode is **not sandboxed** and must
+never receive unreviewed generated code. Resource limits and independent jobs
+reduce accidental failures but cannot protect the host/controller from malicious
+native Python or a Blender parser exploit. Untrusted mode fails closed without an
+audited isolated backend. Print acceptance also fails closed pending generic
+print-profile gates. See [the experimental design and limitations](experimental-source-modeling.md).

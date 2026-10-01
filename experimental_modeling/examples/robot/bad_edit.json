@@ -1,0 +1,11 @@
+{
+  "mast_offset": [
+    0.25,
+    -0.1,
+    0
+  ],
+  "front_leg_factor": 1.2,
+  "tray_width": 1.9,
+  "tray_wall": 0.1,
+  "bad_body_shift": 0.08
+}
