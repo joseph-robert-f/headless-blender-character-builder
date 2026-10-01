@@ -10,6 +10,13 @@ def check(policy: Policy, observation: dict, previous: dict | None) -> list[dict
     parts = observation.get("parts", {})
     if set(parts) != set(policy.parts):
         return [{"check": "semantic_parts", "expected": list(policy.parts), "actual": list(parts)}]
+    if previous is not None:
+        removed = set(previous["parts"]) - set(parts)
+        if removed:
+            return [{"check": "removed_parts_unsupported", "parts": sorted(removed)}]
+        unscoped = (set(parts) - set(previous["parts"])) - set(policy.changed_parts)
+        if unscoped:
+            return [{"check": "new_parts_outside_scope", "parts": sorted(unscoped)}]
     for name, part in parts.items():
         vertices = part["world_vertices"]
         if not vertices or len(vertices) > 1000000:

@@ -1,8 +1,9 @@
 # Experimental modeling container backend
 
-**Status: implemented and statically tested; Docker runtime NOT VERIFIED in the
-implementation environment.** This is an experimental boundary, not an audited
-security guarantee. The native reviewed-source mode remains explicitly unsafe
+**Status: implemented; live Docker boundary probes and both complete model
+benchmarks passed on commit `cb452850a05238ddde155666cad7fe11476b10be` in
+[CI run 36864042600](https://github.com/joseph-robert-f/headless-blender-character-builder/actions/runs/36864042600).** This is an experimental boundary, not an audited
+security guarantee. Recheck CI on the current PR head after changes. The native reviewed-source mode remains explicitly unsafe
 for arbitrary generated Python. No Docker failure falls back to native execution.
 
 The backend requires local Linux Docker, default seccomp, cgroup memory/PID/CPU

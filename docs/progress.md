@@ -601,3 +601,11 @@ is explicitly NOT a sandbox. A separate Docker backend and opt-in live CI gate
 are experimental until actual container execution is evidenced. Print acceptance
 fails closed pending generic manufacturing gates. Details and reproducible
 commands: [experimental source modeling](experimental-source-modeling.md).
+
+Follow-up: live Linux Docker validation passed at commit
+`cb452850a05238ddde155666cad7fe11476b10be` in
+[run 36864042600](https://github.com/joseph-robert-f/headless-blender-character-builder/actions/runs/36864042600), including boundary probes, timeout/descendant cleanup,
+output quota, failed diagnostic retention, all robot revisions and the independent
+desk-creature sequence. The 10.8-MB CI evidence archive contains observations,
+source hashes, renders and exports. Subsequent durability changes must rerun the
+exact-head gate; a passing earlier run does not certify later commits.

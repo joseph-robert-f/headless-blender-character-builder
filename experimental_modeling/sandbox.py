@@ -1,4 +1,4 @@
-"""Experimental Docker isolation backend, NOT runtime-verified in this checkout.
+"""Experimental Docker isolation backend; see documented exact-commit CI evidence.
 
 The Docker daemon and immutable image are trusted. No native fallback exists.
 Each stage uses a fresh container; policy and acceptance stay in the parent.
@@ -111,7 +111,7 @@ class DockerSandbox:
     ={inspector,input,reference}. Output directory must exist and be empty.
     This API is for the trusted controller, never generated source.
     """
-    security_boundary = "EXPERIMENTAL_DOCKER_NOT_RUNTIME_VERIFIED"
+    security_boundary = "EXPERIMENTAL_DOCKER"
     blender = "/opt/blender/blender"
     container_env = {"PATH": "/opt/blender:/usr/bin:/bin", "HOME": "/output", "TMPDIR": "/output",
                      "PYTHONDONTWRITEBYTECODE": "1", "LIBGL_ALWAYS_SOFTWARE": "1",

@@ -65,13 +65,41 @@ def bounded_evidence(root: Path) -> tuple[dict[str, str], list[str]]:
         for name in sorted(names):
             path = Path(directory) / name
             rel = str(path.relative_to(root))
-            if path.is_symlink() or not path.is_file() or len(manifest) >= MAX_FILES or size + path.stat().st_size > MAX_ATTEMPT:
+            if path.is_symlink() or not path.is_file() or len(manifest) >= MAX_FILES - 1 or size + path.stat().st_size > MAX_ATTEMPT:
                 path.unlink()
                 if len(discarded) < 100: discarded.append(rel)
                 continue
             size += path.stat().st_size
             manifest[rel] = digest(path)
     return manifest, discarded
+
+
+def sync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_DIRECTORY | os.O_NOFOLLOW)
+    try: os.fsync(descriptor)
+    finally: os.close(descriptor)
+
+
+def sync_tree(root: Path) -> None:
+    """Durability barrier before the current pointer can reference artifacts."""
+    for path in regular_tree(root):
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try: os.fsync(descriptor)
+        finally: os.close(descriptor)
+    for directory, _, _ in os.walk(root, topdown=False, followlinks=False):
+        sync_directory(Path(directory))
+
+
+def promote(attempt: Path, store: Path, revision: str) -> None:
+    sync_tree(attempt)
+    destination = store / "accepted" / revision
+    os.rename(attempt, destination)
+    sync_directory(store / "attempts")
+    sync_directory(store / "accepted")
+    temp = store / f".last-good-{revision}.json"
+    write_json(temp, {"revision": revision, "result_hash": digest(destination / "result.json")})
+    os.replace(temp, store / "last_good.json")
+    sync_directory(store)
 
 
 def verify_accepted(directory: Path, expected_hash: str) -> dict:
@@ -282,12 +310,5 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
             result["discarded_unsafe_or_overbudget_entries"] = discarded
         write_json(attempt / "result.json", result)
         if result["status"] == "accepted":
-            destination = store / "accepted" / revision
-            os.rename(attempt, destination)
-            temp = store / f".last-good-{revision}.json"
-            write_json(temp, {"revision": revision, "result_hash": digest(destination / "result.json")})
-            os.replace(temp, pointer)
-            directory_fd = os.open(store, os.O_DIRECTORY)
-            try: os.fsync(directory_fd)
-            finally: os.close(directory_fd)
+            promote(attempt, store, revision)
         return result

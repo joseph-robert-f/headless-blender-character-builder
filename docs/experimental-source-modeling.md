@@ -21,9 +21,10 @@ controller must review its policy; generated code must never set its own success
 
 The default command refuses untrusted execution before reading or importing
 source unless `--sandbox-image` names a verified local Docker image.
-The separate [Docker backend](EXPERIMENTAL_MODELING_SANDBOX.md) is implemented,
-but its container runtime is NOT VERIFIED in the current native environment;
-its dedicated CI gate must pass before making containment claims.
+The separate [Docker backend](EXPERIMENTAL_MODELING_SANDBOX.md) has passed live
+CI boundary probes and both complete modeling benchmarks. Its limitations and
+exact tested commit are documented; this is not a security audit or a guarantee
+against hostile production workloads. The current PR head must pass CI again.
 `--trusted-reviewed-source` explicitly opts into native **trusted local
 development**. Review all Python imports and assets first. This runs arbitrary
 Python with the user's OS authority. A fresh subprocess, stripped environment,
@@ -61,6 +62,10 @@ Blender is also a native file parser: `--disable-autoexec` does not make hostile
   transform hash and material hash. A changed-part list only grants change scope;
   constraints still decide whether the requested edit was achieved
 
+Adding a new semantic part requires declaring it in both `parts` and
+`changed_parts`. Deleting semantic parts is not represented by this policy version
+and fails closed; removal needs a future explicit, reviewed contract.
+
 Units are controller-owned meters (numeric Blender unit = 1 m). Source unit scale
 other than 1 is rejected. Scene geometry is included regardless of source camera,
 light, hiding or render flags. Supported materials are constant Principled base
@@ -82,7 +87,14 @@ materials and four fixed orthographic views (front/right/top/isometric).
 6. Separate fresh Blender jobs reopen canonical `.blend` and import GLB, checking
    every part's world triangle geometry, material, transform and corner normals
 7. Recheck frozen provenance and prior accepted integrity. Only all-pass attempts
-   move into `accepted/REVISION`; atomically replace `last_good.json` last
+   fsync the bounded artifact tree, move into `accepted/REVISION`, fsync both
+   rename parents, then atomically replace `last_good.json` last and fsync store
+
+A process crash between accepted-directory rename and pointer replacement may
+leave an unreferenced accepted revision; only `last_good.json` selects current.
+No automatic orphan deletion occurs. An I/O/durability failure aborts publication;
+inspect the pointer before retrying. Fsync ordering tests are not physical
+power-loss tests.
 
 GLB is allowed 1e-4 absolute numeric tolerance for coordinates/material/transform
 and 0.01 radians for corner normals (Blender export/import quantization); measured

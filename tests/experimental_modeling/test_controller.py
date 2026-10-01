@@ -132,3 +132,28 @@ class CentroidTests(unittest.TestCase):
         self.assertFalse(check(policy,OBS,None))
         changed=copy.deepcopy(OBS); changed['parts']['body']['world_vertices'][1][1]=.1
         self.assertEqual(check(policy,changed,None)[0]['check'],'centroid')
+
+
+class PromotionDurabilityTests(unittest.TestCase):
+    def test_durable_artifacts_precede_pointer_and_failure_keeps_old_pointer(self):
+        from experimental_modeling.controller import promote
+        with tempfile.TemporaryDirectory() as tmp:
+            store=Path(tmp); (store/'attempts').mkdir(); (store/'accepted').mkdir()
+            attempt=store/'attempts/r1'; attempt.mkdir(); (attempt/'result.json').write_text('{}')
+            pointer=store/'last_good.json'; pointer.write_text('old')
+            with patch('experimental_modeling.controller.sync_tree',side_effect=OSError('storage failure')):
+                with self.assertRaises(OSError): promote(attempt,store,'r1')
+            self.assertEqual(pointer.read_text(),'old'); self.assertTrue(attempt.exists())
+            events=[]
+            def tree(path): events.append('tree')
+            def directory(path):
+                events.append(path.name)
+                if path.name in ('attempts','accepted'): self.assertEqual(pointer.read_text(),'old')
+            with patch('experimental_modeling.controller.sync_tree',side_effect=tree), patch('experimental_modeling.controller.sync_directory',side_effect=directory):
+                promote(attempt,store,'r1')
+            self.assertEqual(events[:3],['tree','attempts','accepted'])
+            self.assertEqual(read_json(pointer)['revision'],'r1')
+
+    def test_semantic_removal_is_not_silently_accepted(self):
+        previous=copy.deepcopy(OBS); previous['parts']['extra']=copy.deepcopy(previous['parts']['body'])
+        self.assertEqual(check(Policy.parse(POLICY),OBS,previous)[0]['check'],'removed_parts_unsupported')
