@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import socketserver
 import threading
 from urllib.parse import unquote, urlsplit
 
@@ -256,6 +257,13 @@ class LocalReviewServer(ThreadingHTTPServer):
         self.project=project
         super().__init__(("127.0.0.1",port),ReviewHandler)
         self.origin=f"http://127.0.0.1:{self.server_port}"
+
+    def server_bind(self):
+        # HTTPServer normally calls getfqdn here. This numeric-loopback-only
+        # app has no DNS requirement; platform reverse resolution can stall
+        # startup before the readiness address is printed.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 class ReviewHandler(BaseHTTPRequestHandler):

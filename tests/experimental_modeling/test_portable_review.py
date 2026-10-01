@@ -345,6 +345,17 @@ except BlockingIOError:
 
 
 class PortableReviewTests(PortableCase):
+    def test_loopback_server_startup_never_resolves_dns(self):
+        review = ReviewProject(self.store, read_only=True)
+        with patch("socket.getfqdn", side_effect=AssertionError("Unexpected forward/FQDN lookup")), \
+                patch("socket.gethostbyaddr", side_effect=AssertionError("Unexpected reverse DNS lookup")):
+            with LocalReviewServer(review) as server:
+                self.assertEqual(server.server_address[0], "127.0.0.1")
+                self.assertEqual(server.server_name, "127.0.0.1")
+                self.assertGreater(server.server_port, 0)
+                self.assertEqual(server.server_port, server.server_address[1])
+                self.assertEqual(server.origin, f"http://127.0.0.1:{server.server_port}")
+
     def test_read_only_constructor_and_mutations_never_write_store(self):
         before = snapshot(self.store)
         review = ReviewProject(self.store, read_only=True)
