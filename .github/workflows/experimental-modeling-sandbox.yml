@@ -43,6 +43,21 @@
         {
           "name": "Full robot revisions through separate sandbox stages",
           "run": "python3 tests/experimental_modeling/run_benchmark.py --store \"$RUNNER_TEMP/modeling-benchmark\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
+        },
+        {
+          "name": "Independent desk-creature revisions through sandbox stages",
+          "run": "python3 tests/experimental_modeling/run_desk_creature.py --store \"$RUNNER_TEMP/modeling-desk-benchmark\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
+        },
+        {
+          "name": "Retain bounded experimental evidence",
+          "if": "${{ always() }}",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "name": "modeling-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "${{ runner.temp }}/modeling-benchmark\n${{ runner.temp }}/modeling-desk-benchmark",
+            "if-no-files-found": "ignore",
+            "retention-days": 7
+          }
         }
       ]
     }

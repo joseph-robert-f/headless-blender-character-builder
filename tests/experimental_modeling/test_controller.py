@@ -3,6 +3,7 @@ import copy
 import json
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -86,7 +87,7 @@ class EvidenceTests(unittest.TestCase):
                 (cwd/'unsafe').symlink_to(params)
                 return {}
             with patch('experimental_modeling.controller.run_job', side_effect=bad_job):
-                result=build(source=source,params=params,policy_path=policy,store=root/'store',revision='r0',trusted_reviewed_source=True)
+                result=build(source=source,params=params,policy_path=policy,store=root/'store',revision='r0',trusted_reviewed_source=True,blender=sys.executable)
             self.assertEqual(result['status'],'needs_review')
             self.assertTrue((root/'store/attempts/r0/result.json').is_file())
             self.assertFalse((root/'store/last_good.json').exists())
