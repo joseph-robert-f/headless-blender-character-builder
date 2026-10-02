@@ -22,29 +22,12 @@
     "cancel-in-progress": true
   },
   "jobs": {
-    "install": {
-      "name": "Install checks / ${{ matrix.target.name }}",
-      "runs-on": "${{ matrix.target.runner }}",
+    "install-windows-x64": {
+      "name": "Install checks / windows-x64",
+      "runs-on": "windows-2022",
       "timeout-minutes": 20,
-      "strategy": {
-        "fail-fast": false,
-        "matrix": {
-          "target": [
-            {
-              "name": "windows-x64",
-              "runner": "windows-2022",
-              "preparation_python": "python"
-            },
-            {
-              "name": "macos-arm64",
-              "runner": "macos-15",
-              "preparation_python": "python3"
-            }
-          ]
-        }
-      },
       "env": {
-        "INSTALL_TARGET": "${{ matrix.target.name }}",
+        "INSTALL_TARGET": "windows-x64",
         "PYTHONDONTWRITEBYTECODE": "1"
       },
       "steps": [
@@ -57,7 +40,7 @@
         },
         {
           "name": "Require exact corrected artifact inputs",
-          "shell": "${{ matrix.target.preparation_python }} {0}",
+          "shell": "python {0}",
           "run": "import json, os, re\nfrom pathlib import Path\nvalue = json.loads(Path(\"packaging/install-test-inputs.json\").read_text())\nassert value[\"status\"] == \"ready\", \"Corrected package artifacts are not yet pinned\"\nassert value[\"repository\"] == os.environ[\"GITHUB_REPOSITORY\"]\nassert re.fullmatch(r\"[0-9a-f]{40}\", value[\"package_commit\"])\nassert re.fullmatch(r\"[0-9a-f]{40}\", value[\"package_source_tree\"])\ntarget = os.environ[\"INSTALL_TARGET\"]\nrow = value[\"targets\"][target]\nassert type(row[\"artifact_id\"]) is int and row[\"artifact_id\"] > 0\nassert re.fullmatch(r\"[0-9a-f]{64}\", row[\"archive_sha256\"])\nassert type(value[\"package_run_id\"]) is int and value[\"package_run_id\"] > 0\nwith open(os.environ[\"GITHUB_ENV\"], \"a\") as out:\n    for key, val in {\n        \"PACKAGE_COMMIT\": value[\"package_commit\"], \"PACKAGE_TREE\": value[\"package_source_tree\"],\n        \"PACKAGE_RUN_ID\": value[\"package_run_id\"], \"PACKAGE_ARTIFACT_ID\": row[\"artifact_id\"],\n        \"PACKAGE_SHA256\": row[\"archive_sha256\"], \"LAMP_RUN_ID\": value[\"lamp_run_id\"],\n        \"LAMP_ARTIFACT_ID\": value[\"lamp_artifact_id\"]\n    }.items():\n        out.write(f\"{key}={val}\\n\")\nimport platform, sys\nPath(\"build/install-input\").mkdir(parents=True, exist_ok=True)\nPath(\"build/install-input/preparation-runtime.json\").write_text(json.dumps({\"python\": sys.version, \"executable\": sys.executable, \"os\": platform.platform(), \"machine\": platform.machine(), \"scope\": \"Host input preparation only; this Python is not copied into the clean container\"}, indent=2) + \"\\n\")\n"
         },
         {
@@ -73,7 +56,7 @@
         },
         {
           "name": "Check package hash and source identity",
-          "shell": "${{ matrix.target.preparation_python }} {0}",
+          "shell": "python {0}",
           "run": "import hashlib, json, os\nfrom pathlib import Path\nfolder = Path(\"build/install-input/package\")\narchives = list(folder.glob(\"hbcb-review-preview-*.zip\")) + list(folder.glob(\"hbcb-review-preview-*.tar.gz\"))\narchives = [p for p in archives if \"corresponding-source\" not in p.name]\nassert len(archives) == 1, \"Expected one preview package\"\narchive = archives[0]\nassert hashlib.sha256(archive.read_bytes()).hexdigest() == os.environ[\"PACKAGE_SHA256\"], \"Package hash differs\"\nprovenance = json.loads((folder / \"provenance.json\").read_text())\nassert provenance[\"commit\"] == os.environ[\"PACKAGE_COMMIT\"]\nassert provenance[\"source_tree\"] == os.environ[\"PACKAGE_TREE\"]\nassert provenance[\"target\"] == os.environ[\"INSTALL_TARGET\"]\nsmoke = json.loads((folder / \"smoke-results.json\").read_text())\nassert smoke[\"successful\"] is True\nassert smoke[\"archive_sha256\"] == os.environ[\"PACKAGE_SHA256\"]\nwith open(os.environ[\"GITHUB_ENV\"], \"a\") as out:\n    out.write(f\"PACKAGE_PATH={archive.resolve()}\\n\")\n"
         },
         {
@@ -89,7 +72,7 @@
         },
         {
           "name": "Recreate and check the delivered portable project",
-          "run": "${{ matrix.target.preparation_python }} scripts/prepare-review-install-project --source build/install-input/lamp-original --output build/install-input/lamp.zip"
+          "run": "python scripts/prepare-review-install-project --source build/install-input/lamp-original --output build/install-input/lamp.zip"
         },
         {
           "name": "Run Windows README and real-project checks",
@@ -120,7 +103,7 @@
           "if": "${{ always() }}",
           "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
           "with": {
-            "name": "review-install-${{ matrix.target.name }}-${{ github.run_id }}-${{ github.run_attempt }}",
+            "name": "review-install-windows-x64-${{ github.run_id }}-${{ github.run_attempt }}",
             "path": "build/install-results/windows-native/*.json\nbuild/install-results/servercore/servercore-results.json\nbuild/install-results/servercore/container-results/*.json\nbuild/install-results/macos-native/result.json\nbuild/install-results/macos-native/*.txt\nbuild/install-results/macos-native/*.tsv\nbuild/install-results/macos-native/logs/**\nbuild/install-results/macos-native/http/**\nbuild/install-input/lamp.json\npackaging/install-test-inputs.json\nbuild/install-input/preparation-runtime.json",
             "retention-days": 14,
             "if-no-files-found": "error"
@@ -129,7 +112,107 @@
         {
           "name": "Set the check result",
           "if": "${{ always() }}",
-          "shell": "${{ matrix.target.preparation_python }} {0}",
+          "shell": "python {0}",
+          "env": {
+            "NATIVE_WINDOWS": "${{ steps.windows_native.outcome }}",
+            "MINIMAL_WINDOWS": "${{ steps.windows_minimal.outcome }}",
+            "NATIVE_MACOS": "${{ steps.macos_native.outcome }}"
+          },
+          "run": "import os\nkeys = [\"NATIVE_WINDOWS\", \"MINIMAL_WINDOWS\"] if os.environ[\"INSTALL_TARGET\"] == \"windows-x64\" else [\"NATIVE_MACOS\"]\nassert all(os.environ[k] == \"success\" for k in keys), \"An install check failed or was blocked. Read the retained evidence.\"\n"
+        }
+      ]
+    },
+    "install-macos-arm64": {
+      "name": "Install checks / macos-arm64",
+      "runs-on": "macos-15",
+      "timeout-minutes": 20,
+      "env": {
+        "INSTALL_TARGET": "macos-arm64",
+        "PYTHONDONTWRITEBYTECODE": "1"
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+          "with": {
+            "persist-credentials": false,
+            "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
+          }
+        },
+        {
+          "name": "Require exact corrected artifact inputs",
+          "shell": "python3 {0}",
+          "run": "import json, os, re\nfrom pathlib import Path\nvalue = json.loads(Path(\"packaging/install-test-inputs.json\").read_text())\nassert value[\"status\"] == \"ready\", \"Corrected package artifacts are not yet pinned\"\nassert value[\"repository\"] == os.environ[\"GITHUB_REPOSITORY\"]\nassert re.fullmatch(r\"[0-9a-f]{40}\", value[\"package_commit\"])\nassert re.fullmatch(r\"[0-9a-f]{40}\", value[\"package_source_tree\"])\ntarget = os.environ[\"INSTALL_TARGET\"]\nrow = value[\"targets\"][target]\nassert type(row[\"artifact_id\"]) is int and row[\"artifact_id\"] > 0\nassert re.fullmatch(r\"[0-9a-f]{64}\", row[\"archive_sha256\"])\nassert type(value[\"package_run_id\"]) is int and value[\"package_run_id\"] > 0\nwith open(os.environ[\"GITHUB_ENV\"], \"a\") as out:\n    for key, val in {\n        \"PACKAGE_COMMIT\": value[\"package_commit\"], \"PACKAGE_TREE\": value[\"package_source_tree\"],\n        \"PACKAGE_RUN_ID\": value[\"package_run_id\"], \"PACKAGE_ARTIFACT_ID\": row[\"artifact_id\"],\n        \"PACKAGE_SHA256\": row[\"archive_sha256\"], \"LAMP_RUN_ID\": value[\"lamp_run_id\"],\n        \"LAMP_ARTIFACT_ID\": value[\"lamp_artifact_id\"]\n    }.items():\n        out.write(f\"{key}={val}\\n\")\nimport platform, sys\nPath(\"build/install-input\").mkdir(parents=True, exist_ok=True)\nPath(\"build/install-input/preparation-runtime.json\").write_text(json.dumps({\"python\": sys.version, \"executable\": sys.executable, \"os\": platform.platform(), \"machine\": platform.machine(), \"scope\": \"Host input preparation only; this Python is not copied into the clean container\"}, indent=2) + \"\\n\")\n"
+        },
+        {
+          "name": "Download the exact corrected preview artifact",
+          "uses": "actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0",
+          "with": {
+            "artifact-ids": "${{ env.PACKAGE_ARTIFACT_ID }}",
+            "run-id": "${{ env.PACKAGE_RUN_ID }}",
+            "github-token": "${{ github.token }}",
+            "merge-multiple": true,
+            "path": "build/install-input/package"
+          }
+        },
+        {
+          "name": "Check package hash and source identity",
+          "shell": "python3 {0}",
+          "run": "import hashlib, json, os\nfrom pathlib import Path\nfolder = Path(\"build/install-input/package\")\narchives = list(folder.glob(\"hbcb-review-preview-*.zip\")) + list(folder.glob(\"hbcb-review-preview-*.tar.gz\"))\narchives = [p for p in archives if \"corresponding-source\" not in p.name]\nassert len(archives) == 1, \"Expected one preview package\"\narchive = archives[0]\nassert hashlib.sha256(archive.read_bytes()).hexdigest() == os.environ[\"PACKAGE_SHA256\"], \"Package hash differs\"\nprovenance = json.loads((folder / \"provenance.json\").read_text())\nassert provenance[\"commit\"] == os.environ[\"PACKAGE_COMMIT\"]\nassert provenance[\"source_tree\"] == os.environ[\"PACKAGE_TREE\"]\nassert provenance[\"target\"] == os.environ[\"INSTALL_TARGET\"]\nsmoke = json.loads((folder / \"smoke-results.json\").read_text())\nassert smoke[\"successful\"] is True\nassert smoke[\"archive_sha256\"] == os.environ[\"PACKAGE_SHA256\"]\nwith open(os.environ[\"GITHUB_ENV\"], \"a\") as out:\n    out.write(f\"PACKAGE_PATH={archive.resolve()}\\n\")\n"
+        },
+        {
+          "name": "Download the original lamp project evidence",
+          "uses": "actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0",
+          "with": {
+            "artifact-ids": "${{ env.LAMP_ARTIFACT_ID }}",
+            "run-id": "${{ env.LAMP_RUN_ID }}",
+            "github-token": "${{ github.token }}",
+            "merge-multiple": true,
+            "path": "build/install-input/lamp-original"
+          }
+        },
+        {
+          "name": "Recreate and check the delivered portable project",
+          "run": "python3 scripts/prepare-review-install-project --source build/install-input/lamp-original --output build/install-input/lamp.zip"
+        },
+        {
+          "name": "Run Windows README and real-project checks",
+          "if": "${{ runner.os == 'Windows' }}",
+          "id": "windows_native",
+          "continue-on-error": true,
+          "shell": "pwsh",
+          "run": "& ./scripts/test-review-preview-install-windows.ps1 -Package $env:PACKAGE_PATH -ProjectArchive build/install-input/lamp.zip -Output build/install-results/windows-native -ExpectedCommit $env:PACKAGE_COMMIT"
+        },
+        {
+          "name": "Test the existing minimal Server Core image",
+          "if": "${{ runner.os == 'Windows' }}",
+          "id": "windows_minimal",
+          "continue-on-error": true,
+          "shell": "pwsh",
+          "run": "& ./scripts/test-review-preview-servercore.ps1 -Package $env:PACKAGE_PATH -ProjectArchive build/install-input/lamp.zip -Output build/install-results/servercore -ExpectedCommit $env:PACKAGE_COMMIT -RunContainer"
+        },
+        {
+          "name": "Run macOS README and real-project checks",
+          "if": "${{ runner.os == 'macOS' }}",
+          "id": "macos_native",
+          "continue-on-error": true,
+          "shell": "bash",
+          "run": "/bin/bash scripts/test-review-preview-install-macos --package \"$PACKAGE_PATH\" --project build/install-input/lamp.zip --output build/install-results/macos-native --expected-commit \"$PACKAGE_COMMIT\""
+        },
+        {
+          "name": "Retain install evidence",
+          "if": "${{ always() }}",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "name": "review-install-macos-arm64-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "build/install-results/windows-native/*.json\nbuild/install-results/servercore/servercore-results.json\nbuild/install-results/servercore/container-results/*.json\nbuild/install-results/macos-native/result.json\nbuild/install-results/macos-native/*.txt\nbuild/install-results/macos-native/*.tsv\nbuild/install-results/macos-native/logs/**\nbuild/install-results/macos-native/http/**\nbuild/install-input/lamp.json\npackaging/install-test-inputs.json\nbuild/install-input/preparation-runtime.json",
+            "retention-days": 14,
+            "if-no-files-found": "error"
+          }
+        },
+        {
+          "name": "Set the check result",
+          "if": "${{ always() }}",
+          "shell": "python3 {0}",
           "env": {
             "NATIVE_WINDOWS": "${{ steps.windows_native.outcome }}",
             "MINIMAL_WINDOWS": "${{ steps.windows_minimal.outcome }}",
