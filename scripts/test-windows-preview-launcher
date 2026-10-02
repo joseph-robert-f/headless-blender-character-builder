@@ -86,6 +86,7 @@ void WINAPI fixture_entry(void) {
         if (!write_all(GetStdHandle(STD_ERROR_HANDLE), "fixture stderr\n", 15)) ExitProcess(91);
         ExitProcess(0);
     }
+    if (lstrcmpW(args[1], L"--range-failure") == 0) __report_rangecheckfailure();
     if (lstrcmpW(args[1], L"--exit") == 0 && count == 3) ExitProcess((DWORD)number(args[2]));
     if (lstrcmpW(args[1], L"--sentinel") == 0 && count == 3) {
         ExitProcess(SetEvent((HANDLE)number(args[2])) ? 93 : 0);
@@ -359,6 +360,9 @@ def main(argv=None):
                     process = run("--exit", code)
                     check(process.returncode == code, f"Child exit {code} changed to {process.returncode}")
                 passed("child_exit_status_preserved_including_full_dword")
+                process = run("--range-failure")
+                check(process.returncode == 0xC0000409, "The range-check failure handler must fail fast")
+                passed("range_check_failure_preserves_hardware_fast_fail")
 
                 api = windows_api()
                 event = api.CreateEventW(None, True, False, None)

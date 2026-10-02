@@ -69,6 +69,15 @@ class NativeSourceBoundaryTests(unittest.TestCase):
         self.assertNotIn("CREATE_BREAKAWAY_FROM_JOB", self.source)
         self.assertNotIn("SetConsoleCtrlHandler(NULL", self.source)
 
+    def test_range_failure_uses_noreturn_hardware_intrinsic_without_crt(self):
+        header = (ROOT / "packaging/windows_load_config.h").read_text(encoding="utf-8")
+        self.assertIn("__declspec(noreturn) void __cdecl __report_rangecheckfailure(void)", header)
+        self.assertIn("__fastfail(FAST_FAIL_RANGE_CHECK_FAILURE);", header)
+        self.assertNotIn("ExitProcess(", header)
+        self.assertNotIn("return;", header)
+        harness = (ROOT / "scripts/test-windows-preview-launcher").read_text(encoding="utf-8")
+        self.assertIn("process.returncode == 0xC0000409", harness)
+
     def test_public_source_has_only_windows_header_and_no_crt_entrypoint(self):
         includes = [line.strip() for line in self.source.splitlines() if line.lstrip().startswith("#include")]
         self.assertEqual(includes, ["#include <windows.h>"])

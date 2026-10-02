@@ -200,7 +200,10 @@ The launcher has no delay imports.
 Its project-owned PE load configuration restricts static dependency loading to System32.
 The build checks this field in the linked executable.
 
-Compiler buffer checks remain enabled. Unexpected runtime helper references fail the link.
+Compiler buffer checks remain enabled.
+A project-owned range-check failure handler uses the compiler hardware fast-fail instruction.
+It does not return or link C runtime code. A native test checks its termination status.
+Unexpected runtime helper references fail the link.
 
 The frozen payload retains its separate PyInstaller, CPython, and incorporated-component notices.
 

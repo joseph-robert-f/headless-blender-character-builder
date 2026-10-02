@@ -13,8 +13,16 @@
 #define _WIN32_WINNT 0x0A00
 #endif
 #include <windows.h>
+#include <intrin.h>
 #ifndef _WIN64
 #error This load configuration requires native x64 compilation.
 #endif
 const IMAGE_LOAD_CONFIG_DIRECTORY64 _load_config_used = {sizeof(IMAGE_LOAD_CONFIG_DIRECTORY64)};
+/* MSVC emits this failure path for /GS range instrumentation. Preserve the
+ * non-returning hardware fast-fail behavior without importing a CRT handler.
+ * __fastfail is a compiler intrinsic, not a linked implementation.
+ */
+__declspec(noreturn) void __cdecl __report_rangecheckfailure(void) {
+    __fastfail(FAST_FAIL_RANGE_CHECK_FAILURE);
+}
 #endif
