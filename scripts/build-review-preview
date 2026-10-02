@@ -23,6 +23,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from experimental_modeling.preview_manifest import MANIFEST, inventory, sha256, verify
 
+WINDOWS_HELPER_SPEC = importlib.util.spec_from_file_location(
+    "windows_preview_launcher_build", ROOT / "packaging/windows_preview_launcher.py")
+windows_launcher = importlib.util.module_from_spec(WINDOWS_HELPER_SPEC)
+WINDOWS_HELPER_SPEC.loader.exec_module(windows_launcher)
+
 NAME = "hbcb-review-preview"
 PYTHON_VERSION = "3.13.16"
 PYINSTALLER_VERSION = "6.22.3"
@@ -250,7 +255,7 @@ def native_inventory(bundle, work, target):
         if path.is_symlink() or not path.is_file():
             continue
         name = path.name.lower()
-        if not (name.endswith((".dll", ".pyd", ".dylib", ".so")) or ".so." in name or name in {"python", "python3"}):
+        if not (name.endswith((".exe", ".dll", ".pyd", ".dylib", ".so")) or ".so." in name or name in {"python", "python3"}):
             continue
         source = inputs.get(name)
         if any(x in name for x in ("libssl", "libcrypto", "libffi", "libbz2", "liblzma")):
@@ -260,7 +265,20 @@ def native_inventory(bundle, work, target):
         if name.startswith(("libmpdec", "mpdec")) and target != "linux-validation":
             unmapped.append({"name": name, "sha256": sha256(path), "analysis_source": source})
             continue
-        if name.startswith("libz."):
+        if name.endswith(".exe"):
+            if target != "windows-x64" or path.parent != bundle or name not in {
+                    windows_launcher.PUBLIC_NAME, windows_launcher.PAYLOAD_NAME}:
+                unmapped.append({"name": name, "sha256": sha256(path), "analysis_source": source})
+                continue
+            if name == windows_launcher.PUBLIC_NAME:
+                component, notices = "HBCB Windows OS-only launcher", ["licenses/HBCB-GPL-3.0.txt"]
+                source = "packaging/windows_preview_launcher.c (matching corresponding source)"
+            else:
+                component = "PyInstaller frozen payload and Windows bootloader with zlib"
+                notices = ["licenses/HBCB-GPL-3.0.txt", "licenses/PyInstaller-COPYING.txt",
+                           "licenses/PyInstaller-zlib-LICENSE.txt"]
+                source = "Pinned PyInstaller bootloader plus matching project source; build provenance records inputs"
+        elif name.startswith("libz."):
             component, notices = "zlib", ["licenses/zlib-LICENSE.txt"]
         elif name.startswith("_decimal."):
             if target in LIBMPDEC_VERSIONS:
@@ -312,6 +330,14 @@ def main():
     tree = git("write-tree")
     commit = git("rev-parse", "HEAD")
     clean = tree == git("rev-parse", "HEAD^{tree}")
+    if args.target == "windows-x64":
+        # Newly added build inputs must be in corresponding source, not merely
+        # present as untracked files in a maintainer working directory.
+        for relative in ("scripts/build-review-preview", "packaging/windows_preview_launcher.py",
+                         "packaging/windows_preview_launcher.c", "packaging/windows_load_config.h"):
+            indexed = subprocess.check_output(["git", "show", f"{tree}:{relative}"], cwd=ROOT, timeout=30)
+            if indexed != (ROOT / relative).read_bytes():
+                raise ValueError(f"Build input differs from the selected source tree: {relative}")
     if os.environ.get("CI") and not clean:
         raise ValueError("CI packages must match the exact checked-out commit")
     out = args.output.resolve()
@@ -336,7 +362,12 @@ def main():
     framework_sealing = seal_macos_framework(bundle, args.target)
     if framework_sealing is not None:
         write_json(out / "macos-framework-sealing.json", framework_sealing)
+    launcher_build = None
+    if args.target == "windows-x64":
+        launcher_build = windows_launcher.build_launcher(bundle, work)
+        write_json(out / "windows-launcher-build.json", launcher_build)
     native, excluded = native_inventory(bundle, work, args.target)
+    native_pe = windows_launcher.native_pe_inventory(bundle) if args.target == "windows-x64" else None
     decimal = bind_decimal_component(decimal, native, args.target)
     (bundle / "source").mkdir()
     with (bundle / "source" / "hbcb-corresponding-source.tar.gz").open("wb") as stream:
@@ -372,6 +403,9 @@ def main():
                   "runtime_network": "127.0.0.1 review server only; no downloads or provider calls"}
     if framework_sealing is not None:
         provenance["macos_framework_sealing"] = framework_sealing
+    if launcher_build is not None:
+        provenance["windows_launcher"] = launcher_build
+        provenance["windows_native_pe"] = native_pe
     write_json(bundle / "provenance.json", provenance)
     write_json(bundle / MANIFEST, {"schema_version": 1, "files": inventory(bundle)})
     verify(bundle)

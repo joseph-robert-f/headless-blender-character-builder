@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Test exit78 in an existing official Server Core image; never pull or install."""
+from __future__ import annotations
+import argparse
+import hashlib
+import json
+import os
+import re
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import uuid
+import zipfile
+
+ROOT = Path(__file__).resolve().parents[1]
+IMAGE = "mcr.microsoft.com/windows/servercore:ltsc2022"
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def validate_archive(path):
+    with zipfile.ZipFile(path) as archive:
+        seen, total = set(), 0
+        if len(archive.infolist()) > 4096:
+            raise ValueError("Archive has too many entries")
+        for entry in archive.infolist():
+            # ZipInfo normalizes backslashes on Windows and truncates NULs.
+            # Validate the original archive spelling before .NET extraction.
+            name = entry.orig_filename
+            components = name.rstrip("/").split("/")
+            if (name != entry.filename or not name.startswith("hbcb-review-preview/") or "\\" in name or ":" in name
+                    or any(not part or part in {".", ".."} or part.endswith((".", " "))
+                           or re.match(r"(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)", part)
+                           for part in components)
+                    or name.rstrip("/").lower() in seen or entry.flag_bits & 1
+                    or (entry.external_attr >> 16) & 0o170000 == 0o120000):
+                raise ValueError("Unsafe or duplicate ZIP path")
+            total += entry.file_size
+            seen.add(name.rstrip("/").lower())
+        if total >= 1024**3:
+            raise ValueError("Archive exceeds the test size limit")
+        provenance = json.loads(archive.read("hbcb-review-preview/provenance.json"))
+        launcher = archive.read("hbcb-review-preview/hbcb-review-preview.exe")
+    if provenance["target"] != "windows-x64" or provenance["commit_matches_source"] is not True:
+        raise ValueError("Use an exact-commit Windows package")
+    return provenance, hashlib.sha256(launcher).hexdigest()
+
+
+def cleanup_owned(output):
+    marker = output / "owned-container.json"
+    if not marker.exists():
+        return "no_owned_container_marker"
+    owner = json.loads(marker.read_text(encoding="utf-8"))
+    token, name = owner["token"], owner["name"]
+    if not re.fullmatch("[0-9a-f]{32}", token) or name != "hbcb-prerequisite-" + token:
+        raise ValueError("Invalid owned container marker")
+    docker = shutil.which("docker")
+    if not docker:
+        raise ValueError("Cannot verify owned-container cleanup without Docker")
+    def query(*args):
+        result = subprocess.run([docker, *args], capture_output=True, text=True, timeout=60)
+        if result.returncode:
+            raise RuntimeError("Owned-container cleanup command failed: " + result.stderr[-4000:])
+        return result.stdout
+    def matching():
+        return [json.loads(line) for line in query("ps", "--all", "--no-trunc", "--filter",
+                    "label=hbcb.launcher-test=" + token, "--format", "{{json .}}").splitlines() if line.strip()]
+    owned = matching()
+    if any(row["Names"] != name for row in owned):
+        raise ValueError("Refusing cleanup of an unexpected container name")
+    if owned:
+        query("rm", "--force", name)
+    if matching():
+        raise ValueError("Owned container still exists after cleanup")
+    return "owned_container_absent"
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--package", type=Path)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--cleanup-only", action="store_true")
+    args = parser.parse_args()
+    args.output = args.output.resolve()
+    if args.cleanup_only:
+        try:
+            print(cleanup_owned(args.output))
+            return 0
+        except Exception as error:
+            print(str(error), file=sys.stderr)
+            return 1
+    if args.package is None:
+        parser.error("--package is required for a test run")
+    args.package = args.package.resolve()
+    if args.output.exists():
+        parser.error("Use a new output directory")
+    args.output.mkdir(parents=True)
+    report = {"schema_version": 1, "successful": False, "image": IMAGE,
+              "scope": "Missing-runtime diagnostic only; not application startup or consumer Windows installation",
+              "supplemental_terms": "https://learn.microsoft.com/en-us/virtualization/windowscontainers/images-eula"}
+    token = uuid.uuid4().hex
+    name = "hbcb-prerequisite-" + token
+    docker = None
+    create_attempted = False
+    archive_hash = digest(args.package)
+    report["archive_sha256"] = archive_hash
+    def run(*command, timeout=30):
+        result = subprocess.run([docker, *command], capture_output=True, text=True, timeout=timeout)
+        if result.returncode:
+            report.setdefault("failed_commands", []).append({"operation": command[0], "exit_code": result.returncode,
+                "stdout": result.stdout[-8000:], "stderr": result.stderr[-4000:]})
+            raise RuntimeError(f"Docker {command[0]} failed: {result.stderr[-4000:]} {result.stdout[-8000:]}")
+        return result.stdout
+    try:
+        if sys.platform != "win32":
+            raise ValueError("Server Core process-container evidence requires a native Windows host")
+        provenance, launcher_hash = validate_archive(args.package)
+        for key, revision in (("commit", "HEAD"), ("source_tree", "HEAD^{tree}")):
+            expected = subprocess.check_output(["git", "rev-parse", revision], cwd=ROOT, text=True, timeout=30).strip()
+            if provenance[key] != expected:
+                raise ValueError("Package must match the exact checked-out commit and tree")
+        report["commit"], report["source_tree"] = provenance["commit"], provenance["source_tree"]
+        report["launcher_sha256"] = launcher_hash
+        docker = shutil.which("docker")
+        if not docker:
+            raise ValueError("Existing Docker is unavailable; no service or OS feature was changed")
+        info = json.loads(run("info", "--format", "{{json .}}"))
+        report["docker_info"] = info
+        if info["OSType"] != "windows":
+            raise ValueError("Existing Docker must use Windows containers")
+        image = json.loads(run("image", "inspect", IMAGE))[0]
+        report["image_inspect"] = image
+        if (image["Os"] != "windows" or image["Architecture"] != "amd64"
+                or not any(value.startswith("mcr.microsoft.com/windows/servercore@sha256:") for value in image["RepoDigests"])
+                or int(image["OsVersion"].split(".")[2]) != sys.getwindowsversion().build):
+            raise ValueError("The cached official image must match the host build and architecture")
+        # Pin this execution to the already-inspected immutable local image ID.
+        input_dir, results = args.output / "input", args.output / "results"
+        input_dir.mkdir()
+        results.mkdir()
+        shutil.copyfile(args.package, input_dir / "preview.zip")
+        shutil.copyfile(ROOT / "packaging/windows_missing_runtime_probe.ps1", input_dir / "probe.ps1")
+        if digest(input_dir / "preview.zip") != archive_hash:
+            raise ValueError("Copied archive differs from input")
+        (args.output / "owned-container.json").write_text(json.dumps({"name": name, "token": token}), encoding="utf-8")
+        create_attempted = True
+        report["container_id"] = run("create", "--name", name, "--label", "hbcb.launcher-test=" + token,
+            "--isolation=process", "--network=none", "--pull=never",
+            "--mount", f"type=bind,source={input_dir},target=C:\\input,readonly",
+            "--mount", f"type=bind,source={results},target=C:\\results",
+            image["Id"], "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-File", "C:\\input\\probe.ps1",
+            "-Package", "C:\\input\\preview.zip", "-ExpectedHash", archive_hash,
+            "-ExpectedCommit", provenance["commit"], "-ExpectedTree", provenance["source_tree"],
+            "-Output", "C:\\results\\diagnostic.json", timeout=60).strip()
+        report["console"] = run("start", "--attach", name, timeout=120)[-16000:]
+        state = json.loads(run("inspect", name))[0]
+        report["container_state"] = state["State"]
+        report["diagnostic"] = json.loads((results / "diagnostic.json").read_text(encoding="utf-8-sig"))
+        if (state["State"]["Running"] or state["State"]["ExitCode"] != 0 or not report["diagnostic"]["successful"]
+                or report["diagnostic"]["archive_sha256"] != archive_hash
+                or report["diagnostic"]["launcher_sha256"] != launcher_hash):
+            raise ValueError("Missing-runtime probe did not establish the expected diagnostic")
+        report["successful"] = True
+    except Exception as error:
+        report["error"] = str(error)
+    finally:
+        if create_attempted:
+            try:
+                report["cleanup"] = cleanup_owned(args.output)
+            except Exception as error:
+                report["successful"] = False
+                report["cleanup_error"] = str(error)
+        report["archive_unchanged"] = digest(args.package) == archive_hash
+        if not report["archive_unchanged"]:
+            report["successful"] = False
+        (args.output / "servercore-results.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    if not report["successful"]:
+        print(json.dumps({key: value for key, value in report.items() if key.endswith("error")}), file=sys.stderr)
+    return 0 if report["successful"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -10,7 +10,9 @@
         "scripts/test-review-preview",
         "tests/experimental_modeling/**",
         "docs/review-preview.md",
-        ".github/workflows/review-preview-packages.yml"
+        ".github/workflows/review-preview-packages.yml",
+        "scripts/test-windows-preview-launcher",
+        "scripts/test-windows-preview-prerequisite"
       ]
     },
     "push": {
@@ -22,7 +24,9 @@
         "packaging/**",
         "scripts/build-review-preview",
         "scripts/test-review-preview",
-        ".github/workflows/review-preview-packages.yml"
+        ".github/workflows/review-preview-packages.yml",
+        "scripts/test-windows-preview-launcher",
+        "scripts/test-windows-preview-prerequisite"
       ]
     }
   },
@@ -89,13 +93,33 @@
           "run": "python -m unittest discover -s tests/experimental_modeling -p test_macos_framework_sealing.py -v"
         },
         {
+          "name": "Run Windows launcher source contracts",
+          "run": "python -m unittest discover -s tests/experimental_modeling -p test_windows_preview_launcher.py -v"
+        },
+        {
           "name": "Build native unsigned review-only package",
           "run": "python scripts/build-review-preview --target ${{ matrix.target.name }} --output build/review-preview"
+        },
+        {
+          "name": "Test Windows native launcher boundary",
+          "if": "${{ matrix.target.name == 'windows-x64' }}",
+          "run": "python scripts/test-windows-preview-launcher --launcher build/review-preview/dist/hbcb-review-preview/hbcb-review-preview.exe --output build/review-preview/windows-launcher-tests.json"
         },
         {
           "name": "Test a fresh extraction without Python or Node on PATH",
           "shell": "python {0}",
           "run": "import subprocess\nimport sys\nfrom pathlib import Path\noutput = Path(\"build/review-preview\")\narchives = list(output.glob(\"hbcb-review-preview-*.zip\")) + list(output.glob(\"hbcb-review-preview-*.tar.gz\"))\nassert len(archives) == 1, \"Expected exactly one native archive\"\nsubprocess.run([sys.executable, \"scripts/test-review-preview\", \"--package\", str(archives[0]), \"--output\", str(output / \"smoke-results.json\"), \"--expected-target\", \"${{ matrix.target.name }}\"], check=True, timeout=180)\n"
+        },
+        {
+          "name": "Check missing-runtime guidance in existing Server Core image",
+          "if": "${{ matrix.target.name == 'windows-x64' }}",
+          "shell": "python {0}",
+          "run": "import subprocess, sys\nfrom pathlib import Path\narchives = list(Path(\"build/review-preview\").glob(\"hbcb-review-preview-*.zip\"))\nassert len(archives) == 1\nsubprocess.run([sys.executable, \"scripts/test-windows-preview-prerequisite\", \"--package\", str(archives[0]), \"--output\", \"build/review-preview/servercore\"], check=True, timeout=600)\n"
+        },
+        {
+          "name": "Verify owned Server Core container cleanup",
+          "if": "${{ always() && matrix.target.name == 'windows-x64' }}",
+          "run": "python scripts/test-windows-preview-prerequisite --cleanup-only --output build/review-preview/servercore"
         },
         {
           "name": "Retain passing unsigned preview and matching source",
@@ -113,7 +137,7 @@
           "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
           "with": {
             "name": "review-preview-evidence-${{ matrix.target.name }}-${{ github.run_id }}-${{ github.run_attempt }}",
-            "path": "build/review-preview/*.json\nbuild/review-preview/work/hbcb-review-preview/warn-hbcb-review-preview.txt",
+            "path": "build/review-preview/*.json\nbuild/review-preview/work/hbcb-review-preview/warn-hbcb-review-preview.txt\nbuild/review-preview/servercore/servercore-results.json\nbuild/review-preview/servercore/results/*.json\nbuild/review-preview/work/windows-launcher/*-failure.json\nbuild/review-preview/servercore/owned-container.json",
             "retention-days": 14,
             "if-no-files-found": "warn"
           }

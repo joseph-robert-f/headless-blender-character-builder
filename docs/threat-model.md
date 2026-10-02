@@ -18,6 +18,26 @@ Concurrent readers are permitted. Concurrent project changes are not supported.
 
 At startup, the package validates a complete file and link manifest in fixed limits.
 Internal PyInstaller macOS links must resolve in the extracted folder.
+
+The Windows native launcher and frozen Python payload execute before the Python inventory check.
+That check is not pre-execution authentication.
+The Windows launcher selects an absolute colocated payload path without a shell or environment-selected executable.
+It rejects network and device paths, links, and reparse points in the launch path.
+Arguments retain their UTF-16 command-line representation. The launcher bounds the expanded command line.
+
+Only duplicated standard handles pass to the payload. Missing standard streams use `NUL`.
+An atomic Windows job assignment binds the child to a kill-on-close job before it can execute.
+The launcher waits for the child and returns its exit code. Forced launcher exit stops its descendants.
+
+These controls assume no concurrent path replacement by the local OS owner.
+
+Before payload startup, explicit System32 loads test the two documented Visual C++ runtime DLLs.
+A missing or unloadable runtime produces an actionable terminal diagnostic and exit code `78`.
+This is a prerequisite check, not runtime installation or a compatibility-version guarantee.
+The launcher has no network, elevation, account, license-acceptance, or security-setting operation.
+Its build records explicit OS-only link inputs and rejects unexpected PE imports.
+
+The frozen payload and all packaged native files remain in the component and import inventories.
 Project symlinks, junctions, and reparse points are not permitted.
 
 Tests use the actual native executable without Python or Node on PATH.

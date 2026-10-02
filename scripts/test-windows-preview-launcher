@@ -1,0 +1,510 @@
+#!/usr/bin/env python3
+"""Exercise the public native Windows launcher without changing system runtimes.
+
+The default mode needs the same x64 Microsoft build tools as the package build.
+--expect-missing-runtime requires a genuinely unprovisioned Windows environment;
+it never removes or renames installed runtime DLLs and needs no compiler.
+"""
+from __future__ import annotations
+
+import argparse
+import ctypes
+from ctypes import wintypes
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import platform
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import traceback
+
+ROOT = Path(__file__).resolve().parents[1]
+PUBLIC_NAME = "hbcb-review-preview.exe"
+PAYLOAD_NAME = "hbcb-review-preview-runtime.exe"
+RUNTIMES = ("VCRUNTIME140.dll", "VCRUNTIME140_1.dll")
+
+# These test-only programs have no C runtime dependency. The fixture may use
+# shell32's independent argv parser; the shipped launcher imports kernel32 only.
+FIXTURE_SOURCE = r'''
+#define WIN32_LEAN_AND_MEAN
+#define _WIN32_WINNT 0x0A00
+#include <windows.h>
+#include <shellapi.h>
+static STARTUPINFOW child_startup;
+static PROCESS_INFORMATION child_process;
+static BOOL write_all(HANDLE handle, const void *data, DWORD length) {
+    const BYTE *next = (const BYTE *)data;
+    DWORD written;
+    while (length) {
+        if (!WriteFile(handle, next, length, &written, NULL) || !written) return FALSE;
+        next += written;
+        length -= written;
+    }
+    return TRUE;
+}
+static ULONG_PTR number(const WCHAR *value) {
+    ULONG_PTR result = 0;
+    while (*value >= L'0' && *value <= L'9') result = result * 10 + (*value++ - L'0');
+    return result;
+}
+static BOOL WINAPI fixture_control(DWORD event) {
+    if (event == CTRL_BREAK_EVENT) ExitProcess(37);
+    return FALSE;
+}
+void WINAPI fixture_entry(void) {
+    int count = 0;
+    WCHAR **args = CommandLineToArgvW(GetCommandLineW(), &count);
+    DWORD index, size, received, pid;
+    BYTE *buffer;
+    WCHAR *command, *module;
+    HANDLE report;
+    HMODULE loaded;
+    BYTE trigger;
+    if (!args || count < 2) ExitProcess(90);
+    if (lstrcmpW(args[1], L"--argv") == 0) {
+        size = (DWORD)count;
+        if (!write_all(GetStdHandle(STD_OUTPUT_HANDLE), &size, sizeof(size))) ExitProcess(91);
+        for (index = 0; index < (DWORD)count; ++index) {
+            size = (DWORD)lstrlenW(args[index]);
+            if (!write_all(GetStdHandle(STD_OUTPUT_HANDLE), &size, sizeof(size)) ||
+                !write_all(GetStdHandle(STD_OUTPUT_HANDLE), args[index], size * sizeof(WCHAR))) ExitProcess(91);
+        }
+        ExitProcess(0);
+    }
+    if (lstrcmpW(args[1], L"--echo") == 0) {
+        buffer = HeapAlloc(GetProcessHeap(), 0, 4096);
+        if (!buffer) ExitProcess(92);
+        while (ReadFile(GetStdHandle(STD_INPUT_HANDLE), buffer, 4096, &received, NULL) && received) {
+            if (!write_all(GetStdHandle(STD_OUTPUT_HANDLE), buffer, received)) ExitProcess(91);
+        }
+        if (!write_all(GetStdHandle(STD_ERROR_HANDLE), "fixture stderr\n", 15)) ExitProcess(91);
+        ExitProcess(0);
+    }
+    if (lstrcmpW(args[1], L"--range-failure") == 0) __report_rangecheckfailure();
+    if (lstrcmpW(args[1], L"--exit") == 0 && count == 3) ExitProcess((DWORD)number(args[2]));
+    if (lstrcmpW(args[1], L"--sentinel") == 0 && count == 3) {
+        ExitProcess(SetEvent((HANDLE)number(args[2])) ? 93 : 0);
+    }
+    if (lstrcmpW(args[1], L"--load-poison") == 0 && count == 3) {
+        loaded = LoadLibraryExW(args[2], NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (!loaded) ExitProcess(98);
+        FreeLibrary(loaded);
+        ExitProcess(0);
+    }
+    if (lstrcmpW(args[1], L"--sleep") == 0) {
+        Sleep(INFINITE);
+        ExitProcess(94);
+    }
+    if (lstrcmpW(args[1], L"--control") == 0 && count == 3) {
+        if (!SetConsoleCtrlHandler(fixture_control, TRUE)) ExitProcess(99);
+        report = CreateFileW(args[2], GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, NULL);
+        if (report == INVALID_HANDLE_VALUE) ExitProcess(96);
+        pid = GetCurrentProcessId();
+        if (!write_all(report, &pid, sizeof(pid))) ExitProcess(96);
+        CloseHandle(report);
+        Sleep(INFINITE);
+        ExitProcess(94);
+    }
+    if ((lstrcmpW(args[1], L"--tree") == 0 || lstrcmpW(args[1], L"--tree-exit") == 0) && count == 3) {
+        module = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 32768 * sizeof(WCHAR));
+        command = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 32768 * sizeof(WCHAR));
+        if (!module || !command || !GetModuleFileNameW(NULL, module, 32768)) ExitProcess(92);
+        lstrcpyW(command, L"\"");
+        lstrcatW(command, module);
+        lstrcatW(command, L"\" --sleep");
+        child_startup.cb = sizeof(child_startup);
+        if (!CreateProcessW(module, command, NULL, NULL, FALSE, 0, NULL, NULL,
+                            &child_startup, &child_process)) ExitProcess(95);
+        CloseHandle(child_process.hThread);
+        report = CreateFileW(args[2], GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, NULL);
+        if (report == INVALID_HANDLE_VALUE) {
+            TerminateProcess(child_process.hProcess, 96);
+            ExitProcess(96);
+        }
+        pid = GetCurrentProcessId();
+        if (!write_all(report, &pid, sizeof(pid)) ||
+            !write_all(report, &child_process.dwProcessId, sizeof(DWORD))) {
+            TerminateProcess(child_process.hProcess, 96);
+            ExitProcess(96);
+        }
+        CloseHandle(report);
+        if (lstrcmpW(args[1], L"--tree-exit") == 0) {
+            if (!ReadFile(GetStdHandle(STD_INPUT_HANDLE), &trigger, 1, &received, NULL) || received != 1) ExitProcess(99);
+            ExitProcess(23);
+        }
+        Sleep(INFINITE);
+        ExitProcess(94);
+    }
+    ExitProcess(97);
+}
+'''
+
+POISON_SOURCE = r'''
+#define WIN32_LEAN_AND_MEAN
+#define _WIN32_WINNT 0x0A00
+#include <windows.h>
+static WCHAR marker[32768];
+BOOL WINAPI poison_entry(HINSTANCE instance, DWORD reason, LPVOID reserved) {
+    HANDLE output;
+    DWORD size;
+    (void)instance;
+    (void)reserved;
+    if (reason == DLL_PROCESS_ATTACH) {
+        size = GetEnvironmentVariableW(L"HBCB_LAUNCHER_TEST_POISON_MARKER", marker, 32768);
+        if (size && size < 32768) {
+            output = CreateFileW(marker, GENERIC_WRITE, FILE_SHARE_READ, NULL,
+                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (output != INVALID_HANDLE_VALUE) CloseHandle(output);
+        }
+    }
+    return TRUE;
+}
+'''
+
+
+def check(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
+def read_argv(data):
+    """Decode the bounded, length-prefixed UTF-16 fixture protocol."""
+    check(4 <= len(data) <= 128 * 1024, "Invalid argv fixture output size")
+    count, = struct.unpack_from("<I", data)
+    check(count <= 32768, "Invalid argv fixture count")
+    offset, result = 4, []
+    for _ in range(count):
+        check(offset + 4 <= len(data), "Truncated argv fixture length")
+        size, = struct.unpack_from("<I", data, offset)
+        offset += 4
+        check(size <= 32767 and offset + 2 * size <= len(data), "Truncated argv fixture value")
+        result.append(data[offset:offset + 2 * size].decode("utf-16-le"))
+        offset += 2 * size
+    check(offset == len(data), "Trailing argv fixture bytes")
+    return result
+
+
+def load_helper():
+    spec = importlib.util.spec_from_file_location("windows_launcher_test_build", ROOT / "packaging/windows_preview_launcher.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def windows_api():
+    api = ctypes.WinDLL("kernel32", use_last_error=True)
+    api.CreateEventW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR]
+    api.CreateEventW.restype = wintypes.HANDLE
+    api.SetHandleInformation.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD]
+    api.SetHandleInformation.restype = wintypes.BOOL
+    api.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    api.WaitForSingleObject.restype = wintypes.DWORD
+    api.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    api.OpenProcess.restype = wintypes.HANDLE
+    api.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    api.TerminateProcess.restype = wintypes.BOOL
+    api.CloseHandle.argtypes = [wintypes.HANDLE]
+    api.CloseHandle.restype = wintypes.BOOL
+    api.GetConsoleProcessList.argtypes = [ctypes.POINTER(wintypes.DWORD), wintypes.DWORD]
+    api.GetConsoleProcessList.restype = wintypes.DWORD
+    api.GenerateConsoleCtrlEvent.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    api.GenerateConsoleCtrlEvent.restype = wintypes.BOOL
+    api.AllocConsole.argtypes = []
+    api.AllocConsole.restype = wintypes.BOOL
+    api.FreeConsole.argtypes = []
+    api.FreeConsole.restype = wintypes.BOOL
+    api.GetStdHandle.argtypes = [wintypes.DWORD]
+    api.GetStdHandle.restype = wintypes.HANDLE
+    api.SetStdHandle.argtypes = [wintypes.DWORD, wintypes.HANDLE]
+    api.SetStdHandle.restype = wintypes.BOOL
+    api.GetSystemDirectoryW.argtypes = [wintypes.LPWSTR, wintypes.UINT]
+    api.GetSystemDirectoryW.restype = wintypes.UINT
+    return api
+
+
+def poison_environment(base, bundle, fake_dll=None):
+    """Place only disposable test DLLs in locations the launcher must ignore."""
+    cwd = base / "Unrelated poisoned working directory 雪"
+    path = base / "Poisoned PATH"
+    system_root = base / "Fake Windows"
+    locations = [cwd, path, system_root / "System32", bundle, bundle / "_internal"]
+    for directory in locations:
+        directory.mkdir(parents=True, exist_ok=True)
+        for name in RUNTIMES:
+            if fake_dll:
+                shutil.copy2(fake_dll, directory / name)
+            else:
+                (directory / name).write_bytes(b"MZ deliberately invalid runtime fixture\n")
+    marker = base / "poison-dll-was-loaded"
+    env = dict(os.environ)
+    for key in list(env):
+        if key.upper() in {"PATH", "SYSTEMROOT", "WINDIR", "PYTHONHOME", "PYTHONPATH"}:
+            del env[key]
+    env.update({"PATH": str(path), "SystemRoot": str(system_root), "WINDIR": str(system_root),
+                "PYTHONHOME": str(base / "no-python"), "PYTHONPATH": str(base / "no-modules"),
+                "HBCB_LAUNCHER_TEST_POISON_MARKER": str(marker)})
+    return cwd, env, marker
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--launcher", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--expect-missing-runtime", action="store_true")
+    args = parser.parse_args(argv)
+    result = {"schema_version": 1, "successful": False, "system": platform.system(),
+              "machine": platform.machine(), "harness_python": platform.python_version(),
+              "mode": "missing-runtime" if args.expect_missing_runtime else "equipped-host",
+              "checks": [], "scope": "Native launcher boundary; no runtime installation, deletion, or minimum-version claim"}
+
+    def passed(name):
+        result["checks"].append({"name": name, "status": "pass"})
+        print("PASS " + name, flush=True)
+
+    try:
+        check(sys.platform == "win32" and platform.machine().lower() in {"amd64", "x86_64"},
+              "This integration test requires native Windows x64")
+        original = args.launcher.resolve(strict=True)
+        result["launcher_sha256"] = hashlib.sha256(original.read_bytes()).hexdigest()
+        with tempfile.TemporaryDirectory(prefix="hbcb-native-launcher-") as temporary:
+            base = Path(temporary).resolve()
+            bundle = base / "Preview directory with spaces 雪"
+            bundle.mkdir()
+            launcher = bundle / PUBLIC_NAME
+            payload = bundle / PAYLOAD_NAME
+            shutil.copy2(original, launcher)
+            if args.expect_missing_runtime:
+                cwd, env, marker = poison_environment(base, bundle)
+            else:
+                helper = load_helper()
+                result["launcher_pe"] = helper.inspect_launcher(launcher)
+                passed("public_x64_console_os_only_pe_gate")
+                work = base / "fixture-build"
+                work.mkdir()
+                source = work / "fixture.c"
+                source.write_text(FIXTURE_SOURCE, encoding="utf-8")
+                result["fixture_build"] = helper.compile_native(source, payload, work, entry="fixture_entry",
+                                                                libraries=("kernel32.lib", "shell32.lib"))
+                poison_source = work / "poison.c"
+                poison_source.write_text(POISON_SOURCE, encoding="utf-8")
+                fake_dll = work / "poison.dll"
+                result["poison_build"] = helper.compile_native(poison_source, fake_dll, work,
+                                                               entry="poison_entry", libraries=("kernel32.lib",), dll=True)
+                cwd, env, marker = poison_environment(base, bundle, fake_dll)
+                control = subprocess.run([str(payload), "--load-poison", str(fake_dll)], cwd=cwd, env=env,
+                                         input=b"", capture_output=True, timeout=30, check=False)
+                check(control.returncode == 0 and marker.is_file(), "Poison DLL positive control did not run its entry point")
+                marker.unlink()
+                passed("poison_dll_load_marker_positive_control")
+
+            def run(*arguments, **kwargs):
+                return subprocess.run([str(launcher), *map(str, arguments)], cwd=cwd, env=env,
+                                      input=kwargs.pop("input", b""), stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE, timeout=30, check=False, **kwargs)
+
+            if args.expect_missing_runtime:
+                process = run("--verify")
+                check(process.returncode == 78, f"Expected missing-runtime exit 78; got {process.returncode}: {process.stderr!r}")
+                diagnostic = process.stderr.decode("utf-8", errors="replace")
+                check("Visual C++" in diagnostic and "x64" in diagnostic and "https://" in diagnostic,
+                      "Missing actionable x64 Microsoft runtime diagnostic")
+                check(any(name.lower() in diagnostic.lower() for name in RUNTIMES),
+                      "Diagnostic does not name a missing runtime")
+                check(not process.stdout and not marker.exists(), "Unexpected output or poisoned runtime execution")
+                result["diagnostic"] = diagnostic
+                passed("missing_runtime_exit78_before_missing_payload_with_poisoned_search_paths")
+            else:
+                values = ["", "simple", "two words", "雪 café 🚀", 'embedded"quote', "\\", "ends with slash\\",
+                          'backslashes\\\\\"before quote', "\t", "line\nbreak", "--project", "C:\\Example path\\雪\\"]
+                process = run("--argv", *values)
+                check(process.returncode == 0, f"Argument fixture failed: {process.returncode}: {process.stderr!r}")
+                actual = read_argv(process.stdout)
+                check(actual == [str(payload), "--argv", *values], f"Argument forwarding differs: {actual!r}")
+                check(not process.stderr and not marker.exists(), "A poisoned runtime was loaded or wrote diagnostics")
+                passed("unicode_empty_quote_backslash_arguments_and_absolute_colocated_payload")
+                passed("poisoned_path_systemroot_cwd_bundle_and_internal_dlls_ignored")
+
+                # lpApplicationName controls the image; an arbitrary argv[0] must not
+                # control the colocated payload location or change the remaining tail.
+                command = '"unrelated display name.exe" ' + subprocess.list2cmdline(["--argv", *values])
+                process = subprocess.run(command, executable=str(launcher), cwd=cwd, env=env,
+                                         input=b"", capture_output=True, timeout=30, check=False)
+                check(process.returncode == 0 and read_argv(process.stdout) == [str(payload), "--argv", *values],
+                      "Raw command tail changed when argv[0] differed from the image")
+                passed("raw_command_tail_survives_quoted_nonpath_argv0")
+
+                data = bytes(range(256)) * 4096
+                process = run("--echo", input=data)
+                check(process.returncode == 0 and process.stdout == data and process.stderr == b"fixture stderr\n",
+                      "Redirected stdin/stdout/stderr were not forwarded byte-for-byte")
+                passed("redirected_standard_handles_and_large_binary_stdin")
+                process = subprocess.run([str(launcher), "--echo"], cwd=cwd, env=env, input=b"merged\n",
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30, check=False)
+                check(process.returncode == 0 and process.stdout == b"merged\nfixture stderr\n",
+                      "Merged stdout/stderr handle forwarding changed the bytes")
+                startup = subprocess.STARTUPINFO(dwFlags=subprocess.STARTF_USESTDHANDLES,
+                                                 hStdInput=0, hStdOutput=0, hStdError=0)
+                process = subprocess.run([str(launcher), "--exit", "42"], cwd=cwd, env=env,
+                                         startupinfo=startup, close_fds=True, timeout=30, check=False)
+                check(process.returncode == 42, "Absent standard handles did not receive working NUL fallbacks")
+                passed("merged_and_absent_standard_handles")
+                for code in (0, 1, 2, 78, 255, 12345, 0xE0000001):
+                    process = run("--exit", code)
+                    check(process.returncode == code, f"Child exit {code} changed to {process.returncode}")
+                passed("child_exit_status_preserved_including_full_dword")
+                process = run("--range-failure")
+                check(process.returncode == 0xC0000409, "The range-check failure handler must fail fast")
+                passed("range_check_failure_preserves_hardware_fast_fail")
+
+                api = windows_api()
+                event = api.CreateEventW(None, True, False, None)
+                check(event, "Cannot create inheritable sentinel event")
+                try:
+                    check(api.SetHandleInformation(event, 1, 1), "Cannot make sentinel inheritable")
+                    process = run("--sentinel", int(event), close_fds=False)
+                    check(process.returncode == 0 and api.WaitForSingleObject(event, 0) == 258,
+                          "An unrelated inheritable handle escaped into the payload")
+                finally:
+                    api.CloseHandle(event)
+                passed("explicit_handle_list_blocks_unrelated_inheritable_event")
+
+                # This valid CreateProcess command fits, but expanding its short
+                # argv[0] into the absolute colocated payload path does not.
+                command = "x " + "a" * 32755
+                process = subprocess.run(command, executable=str(launcher), cwd=cwd, env=env,
+                                         input=b"", capture_output=True, timeout=30, check=False)
+                check(process.returncode == 64, f"Expanded command over limit must fail64, got {process.returncode}")
+                passed("expanded_command_line_limit_fails_closed")
+
+                for normal_exit in (False, True):
+                    report = base / ("normal-process-tree.bin" if normal_exit else "forced-process-tree.bin")
+                    process = subprocess.Popen([str(launcher), "--tree-exit" if normal_exit else "--tree", str(report)],
+                                               cwd=cwd, env=env, stdin=subprocess.PIPE if normal_exit else subprocess.DEVNULL,
+                                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    handles = []
+                    try:
+                        deadline = time.monotonic() + 15
+                        while time.monotonic() < deadline:
+                            if report.exists() and report.stat().st_size == 8:
+                                break
+                            check(process.poll() is None, "Process-tree fixture exited before reporting its children")
+                            time.sleep(0.05)
+                        check(report.exists() and report.stat().st_size == 8, "Process-tree fixture readiness timed out")
+                        for pid in struct.unpack("<II", report.read_bytes()):
+                            handle = api.OpenProcess(0x00100000 | 0x0001, False, pid)
+                            check(handle, f"Cannot inspect fixture process {pid}")
+                            handles.append(handle)
+                            check(api.WaitForSingleObject(handle, 0) == 258, "Fixture process was not alive before termination")
+                        if normal_exit:
+                            process.stdin.write(b"q")
+                            process.stdin.flush()
+                        else:
+                            process.kill()  # Kill only the public process, never taskkill /T.
+                        process.wait(timeout=10)
+                        if normal_exit:
+                            check(process.returncode == 23, "Normal payload exit status was not preserved")
+                        check(all(api.WaitForSingleObject(handle, 10000) == 0 for handle in handles),
+                              "Launcher exit left a payload or grandchild running")
+                        process.communicate(timeout=10)
+                    finally:
+                        if process.poll() is None:
+                            process.kill()
+                        for handle in handles:
+                            if api.WaitForSingleObject(handle, 0) == 258:
+                                api.TerminateProcess(handle, 99)
+                                api.WaitForSingleObject(handle, 10000)
+                            api.CloseHandle(handle)
+                        process.communicate(timeout=10)
+                    passed("normal_payload_exit_kills_live_grandchild" if normal_exit else
+                           "forced_public_termination_kills_payload_and_grandchild")
+
+                console_processes = (wintypes.DWORD * 32)()
+                has_console = bool(api.GetConsoleProcessList(console_processes, 32))
+                allocated_console = False
+                original_handles = [(stream, api.GetStdHandle(stream)) for stream in (0xFFFFFFF6, 0xFFFFFFF5, 0xFFFFFFF4)]
+                if not has_console:
+                    allocated_console = bool(api.AllocConsole())
+                    console_error = ctypes.get_last_error()
+                    has_console = allocated_console
+                try:
+                    if has_console:
+                        report = base / "console-control.bin"
+                        process = subprocess.Popen([str(launcher), "--control", str(report)], cwd=cwd, env=env,
+                                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                   creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+                        try:
+                            deadline = time.monotonic() + 15
+                            while time.monotonic() < deadline:
+                                if report.exists() and report.stat().st_size == 4:
+                                    break
+                                check(process.poll() is None, "Console fixture exited before handler readiness")
+                                time.sleep(0.05)
+                            check(report.exists() and report.stat().st_size == 4, "Console fixture readiness timed out")
+                            check(api.GenerateConsoleCtrlEvent(1, process.pid), "Cannot send directed CTRL_BREAK to test process group")
+                            process.communicate(timeout=15)
+                            check(process.returncode == 37, "Payload did not handle CTRL_BREAK or its exit status changed")
+                        finally:
+                            if process.poll() is None:
+                                process.kill()
+                            process.communicate(timeout=10)
+                        passed("directed_ctrl_break_reaches_payload_and_preserves_graceful_exit")
+                    else:
+                        result["checks"].append({"name": "directed_ctrl_break_reaches_payload_and_preserves_graceful_exit",
+                                                 "status": "skip", "reason": f"No inherited console and AllocConsole failed: Windows error {console_error}"})
+                        print(f"SKIP CTRL_BREAK: AllocConsole failed with Windows error {console_error}", flush=True)
+                finally:
+                    if allocated_console:
+                        check(api.FreeConsole(), "Cannot release the test harness console")
+                        for stream, handle in original_handles:
+                            check(api.SetStdHandle(stream, handle), "Cannot restore the original test harness stream")
+
+                system_directory = ctypes.create_unicode_buffer(32768)
+                size = api.GetSystemDirectoryW(system_directory, len(system_directory))
+                check(0 < size < len(system_directory), "Cannot locate OS command processor for junction fixture")
+                junction = base / "Preview junction"
+                command_processor = Path(system_directory.value) / "cmd.exe"
+                setup = subprocess.run([str(command_processor), "/d", "/c", "mklink", "/J", str(junction), str(bundle)],
+                                       capture_output=True, timeout=30, check=False)
+                try:
+                    if setup.returncode == 0:
+                        process = subprocess.run([str(junction / PUBLIC_NAME), "--exit", "0"], cwd=cwd, env=env,
+                                                 input=b"", capture_output=True, timeout=30, check=False)
+                        check(process.returncode == 64, "Public executable started through a directory junction")
+                        passed("directory_junction_in_launcher_path_rejected")
+                    else:
+                        result["checks"].append({"name": "directory_junction_in_launcher_path_rejected", "status": "skip",
+                                                 "reason": "Unprivileged junction creation unavailable",
+                                                 "setup_exit_code": setup.returncode,
+                                                 "setup_stderr": setup.stderr.decode(errors="replace")[-2000:]})
+                        print("SKIP junction: unprivileged fixture creation unavailable", flush=True)
+                finally:
+                    if junction.exists():
+                        junction.rmdir()  # Remove only the junction itself, never recurse into its target.
+
+                payload.unlink()
+                process = run("--verify")
+                check(process.returncode == 70 and process.stderr, "Missing payload did not fail with diagnostic and exit70")
+                payload.write_bytes(b"Not a PE image\n")
+                process = run("--verify")
+                check(process.returncode == 70 and process.stderr, "Corrupt payload did not fail with diagnostic and exit70")
+                passed("missing_and_corrupt_colocated_payload_fail_closed")
+            result["successful"] = True
+    except Exception:
+        result["error"] = traceback.format_exc()[-12000:]
+        print(result["error"], file=sys.stderr)
+    finally:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    return 0 if result["successful"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
