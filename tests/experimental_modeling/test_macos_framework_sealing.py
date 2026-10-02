@@ -43,7 +43,7 @@ class MacOSFrameworkSealingTests(unittest.TestCase):
         self.build = build_module()
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.base = Path(temporary.name)
+        self.base = Path(temporary.name).resolve()
         self.bundle = self.base / "dist" / self.build.NAME
         self.framework, self.version = framework_fixture(self.bundle)
         self.sign = Mock(side_effect=self.make_seal)
@@ -117,6 +117,23 @@ class MacOSFrameworkSealingTests(unittest.TestCase):
         self.assertEqual([row["file"] for row in evidence["strict_verification"]],
                          [path.relative_to(self.bundle).as_posix() for path in paths])
         self.assertNotIn(str(self.base), json.dumps(evidence))
+
+    def test_symlinked_temporary_parent_uses_canonical_command_paths(self):
+        # macOS can report /var/folders while the real location is /private/var/folders.
+        alias = self.base / "temporary-parent-alias"
+        alias.symlink_to(self.base, target_is_directory=True)
+        bundle = alias / "dist" / self.build.NAME
+        self.assertNotEqual(bundle, bundle.resolve())
+        with self.macos():
+            evidence = self.build.seal_macos_framework(bundle, "macos-arm64")
+        self.sign.assert_called_once_with(str(self.framework), identity=None, entitlements_file=None, deep=False)
+        self.assertEqual(self.commands.call_args_list[0].args[0],
+                         [sys.executable, "-I", "-c", self.build.MACOS_SEAL_CODE, str(self.framework)])
+        paths = [self.framework, self.version / "Python", self.bundle / self.build.NAME]
+        self.assertEqual([call.args[0][-1] for call in self.run.call_args_list], [str(path) for path in paths])
+        self.assertEqual([row["file"] for row in evidence["strict_verification"]],
+                         [path.relative_to(self.bundle).as_posix() for path in paths])
+        self.kill_group.assert_not_called()
 
     def test_other_targets_are_noops_without_macos_tools_or_inputs(self):
         with patch.object(self.build.importlib.metadata, "version") as metadata, patch.object(
