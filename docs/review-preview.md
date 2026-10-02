@@ -18,10 +18,20 @@ A review test that passes does not show model-generation support on Windows or M
 
 ## Preview targets and prerequisites
 
-- `windows-x64`: Native Windows x64 CI uses Windows Server 2022. A compatible Microsoft Visual C++ x64 runtime is required.
+- `windows-x64`: Native Windows x64 CI uses Windows Server 2022. The launcher requires Windows 10 or later and a compatible Microsoft Visual C++ x64 runtime.
   The `external_microsoft_runtime` field in `provenance.json` identifies DLLs that the package does not redistribute.
   The package also excludes Windows API-set stubs that the OS supplies. The Windows loader resolves these contracts.
-  This preview does not install or download a runtime.
+
+  Before Python starts, the native launcher tries to load `VCRUNTIME140.dll` and `VCRUNTIME140_1.dll` from Windows System32.
+  It uses the Windows system-directory API, independent of `PATH`, `SystemRoot`, and the working directory.
+
+  If either load fails, it names the DLL and Windows error, then stops with exit code `78`.
+  The message links to [Microsoft runtime guidance](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
+  Ask your administrator to install or repair the compatible x64 runtime through that guidance.
+  Then run the preview again.
+  This preview does not install or download a runtime, request elevation, or accept a runtime license for you.
+
+  A successful DLL load does not prove that every application dependency is present.
 
   CI does not show the behavior on a new consumer Windows installation.
 - `macos-arm64`: Native Apple Silicon CI uses macOS 15 and an arm64 executable.
@@ -89,6 +99,9 @@ This preview does not show consumer installation trust.
 Extract the archive into a **new empty directory** in a location that is not in your project.
 Keep the full `hbcb-review-preview` directory together.
 This includes `_internal`, licenses, source, and manifests.
+
+On Windows, keep both `hbcb-review-preview.exe` and `hbcb-review-preview-runtime.exe` in that directory.
+Use the public `hbcb-review-preview.exe` command. The other executable is its frozen Python payload.
 Do not extract into a directory with an older installation.
 Do not copy only the executable.
 
@@ -141,6 +154,8 @@ If a fixed `--port` is in use, select a different port or omit the option.
 The preview does not terminate a different process or change firewall settings.
 
 Each startup verifies the extracted package inventory before it opens a project.
+On Windows, the native launcher and frozen Python payload execute before Python verifies that inventory.
+The launcher does not authenticate the payload before execution.
 If verification does not pass, keep the diagnostic information.
 Then extract a new archive with all files.
 The manifest cannot prevent hostile replacement of the verifier itself.
@@ -174,6 +189,18 @@ It does not redistribute Windows Microsoft runtime DLLs.
 The OS supplies Apple system frameworks.
 Packaging stops if it finds an unknown native dependency.
 
+The Windows native inventory includes both executables and all packaged DLL and PYD files.
+
+The public launcher links one project C object and the Windows SDK `kernel32.lib` import library.
+It has no static or dynamic C runtime dependency.
+The build disables default libraries and records explicit link inputs, tool versions, hashes, and a linker map.
+A PE check requires x64 console format, ASLR, high-entropy addresses, NX, and only `kernel32.dll` imports.
+The launcher has no delay imports.
+
+Compiler buffer checks remain enabled. Unexpected runtime helper references fail the link.
+
+The frozen payload retains its separate PyInstaller, CPython, and incorporated-component notices.
+
 Each native CI runner installs build dependencies and makes the one-folder package.
 It makes an archive, extracts a new copy, and tests the **extracted executable**.
 The report includes these checks:
@@ -198,6 +225,18 @@ python scripts/test-review-preview --package build/review-preview/hbcb-review-pr
 ```
 
 On Windows, use `windows-x64` and the `.zip` package.
+A maintainer build also requires installed official Visual Studio C++ x64 tools and the Windows SDK.
+The build selects the installed native x64 tools. It does not install build tools.
+The Windows launcher boundary test uses those tools to make test-only fixtures:
+
+```powershell
+python scripts/test-windows-preview-launcher --launcher build/review-preview/dist/hbcb-review-preview/hbcb-review-preview.exe --output build/review-preview/windows-launcher-tests.json
+```
+
+The test checks Unicode arguments, standard streams, child exit codes, process cleanup, and unrelated inherited handles.
+It also checks poisoned search locations and missing or damaged payloads.
+A missing-runtime result and an equipped-host application pass are separate evidence.
+A diagnostic pass on Server Core does not show a successful application start or a clean consumer desktop installation.
 Output directories must be new or empty.
 
 Build scripts do not make a release, tag, installer registration, or deployment.
@@ -218,4 +257,4 @@ Do not update a version in only one file.
 - [Tauri sidecars](https://v2.tauri.app/develop/sidecar/).
 
 Native Python packaging is also necessary for Tauri sidecars.
-This preview avoids a second launcher toolchain.
+Windows uses a small native prerequisite launcher in addition to the frozen Python payload.

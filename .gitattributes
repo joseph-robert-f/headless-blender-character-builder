@@ -11,3 +11,6 @@
 *.mp4 binary
 # Preserve exact, checksum-reviewed upstream notices, including upstream spaces.
 /packaging/notices/* -whitespace
+
+# Keep this archived build probe byte-identical to the source tree.
+/packaging/windows_missing_runtime_probe.ps1 text eol=lf
