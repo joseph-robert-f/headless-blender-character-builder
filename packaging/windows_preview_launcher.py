@@ -17,11 +17,13 @@ PAYLOAD_NAME = "hbcb-review-preview-runtime.exe"
 SOURCE = ROOT / "packaging/windows_preview_launcher.c"
 LOAD_CONFIG = ROOT / "packaging/windows_load_config.h"
 PROTECTIONS = 0x20 | 0x40 | 0x100  # high-entropy VA, dynamic base, NX
+# propsys.dll is the Windows Property System dependency used by CPython _wmi:
+# https://learn.microsoft.com/en-us/windows/win32/api/propsys/nf-propsys-psgetpropertysystem
 OS_IMPORTS = {
     "advapi32.dll", "bcrypt.dll", "comctl32.dll", "comdlg32.dll", "crypt32.dll",
     "gdi32.dll", "imm32.dll", "iphlpapi.dll", "kernel32.dll", "msvcrt.dll",
     "netapi32.dll", "ntdll.dll", "ole32.dll", "oleaut32.dll", "powrprof.dll",
-    "psapi.dll", "rpcrt4.dll", "secur32.dll", "setupapi.dll", "shell32.dll",
+    "propsys.dll", "psapi.dll", "rpcrt4.dll", "secur32.dll", "setupapi.dll", "shell32.dll",
     "shlwapi.dll", "ucrtbase.dll", "user32.dll", "userenv.dll", "version.dll",
     "winmm.dll", "ws2_32.dll",
 }
@@ -76,6 +78,7 @@ def native_pe_inventory(bundle):
     if len(supplied) != len(paths):
         raise ValueError("Windows native basenames must be unique")
     rows = []
+    unknown = []
     for path in paths:
         if path.is_symlink() or not path.is_file():
             raise ValueError("Windows native files must be regular package files")
@@ -86,8 +89,10 @@ def native_pe_inventory(bundle):
             name = item["dll"]
             api_set = re.fullmatch(r"(?:api|ext)-ms-win-[a-z0-9-]+\.dll", name)
             if name not in supplied | OS_IMPORTS | VC_IMPORTS and not api_set:
-                raise ValueError(f"Unreviewed Windows native import: {path.name}: {name}")
+                unknown.append(f"{path.name}: {name}")
         rows.append({"file": path.relative_to(bundle).as_posix(), **row})
+    if unknown:
+        raise ValueError("Unreviewed Windows native imports: " + "; ".join(unknown))
     if {path.relative_to(bundle).as_posix() for path in paths if path.suffix.lower() == ".exe"} != {
             PUBLIC_NAME, PAYLOAD_NAME}:
         raise ValueError("The Windows package must contain exactly the launcher and frozen payload EXEs")

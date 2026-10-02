@@ -251,6 +251,37 @@ class LauncherPEGateTests(unittest.TestCase):
                 self.inspect(pe)
 
 
+class WindowsNativeInventoryTests(unittest.TestCase):
+    def setUp(self):
+        self.helper = launcher_helper()
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.bundle = Path(temporary.name)
+        for name in (self.helper.PUBLIC_NAME, self.helper.PAYLOAD_NAME, "_wmi.pyd"):
+            (self.bundle / name).write_bytes(b"synthetic native input")
+
+    def inventory(self, imports):
+        def inspect(path):
+            names = imports if path.name == "_wmi.pyd" else ["kernel32.dll"]
+            return {"machine": 0x8664, "imports": [{"dll": name, "symbols": []} for name in names],
+                    "delay_imports": []}
+        with patch.object(self.helper, "pe_information", side_effect=inspect), patch.object(
+                self.helper, "inspect_launcher"):
+            return self.helper.native_pe_inventory(self.bundle)
+
+    def test_cpython_wmi_can_use_os_property_system_without_bundling_it(self):
+        rows = self.inventory(["propsys.dll", "ole32.dll", "kernel32.dll"])
+        self.assertEqual(len(rows), 3)
+        self.assertFalse((self.bundle / "propsys.dll").exists())
+
+    def test_all_unreviewed_imports_are_reported_without_weakening_gate(self):
+        with self.assertRaises(ValueError) as caught:
+            self.inventory(["unknown-one.dll", "propsys.dll", "unknown-two.dll"])
+        self.assertIn("unknown-one.dll", str(caught.exception))
+        self.assertIn("unknown-two.dll", str(caught.exception))
+        self.assertNotIn("propsys.dll", str(caught.exception))
+
+
 class LauncherBuildInputTests(unittest.TestCase):
     def setUp(self):
         self.helper = launcher_helper()
