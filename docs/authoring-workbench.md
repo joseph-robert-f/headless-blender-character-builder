@@ -49,7 +49,7 @@ Do not use the workbench as a hosted or multi-user service.
 ## Prepare and examine
 
 1. Enter the complete initial brief. A new project can start without model source.
-   Alternatively, select a saved change request from the existing review program.
+   You can also select a saved change request from the existing review program.
 2. Select **Prepare initial handoff** or **Prepare refinement handoff**. This writes the existing request contract and context
    to a new directory. It does not contact an external author.
 3. Examine the handoff before sending it to your selected source author.
@@ -113,7 +113,7 @@ Do not delete them to make the Run button available.
 Use the request bridge's existing terminal recovery procedure after examining
 runtime resources and retained evidence. The browser does not acknowledge
 interrupted builds or clear recovery flags. This first workbench version does
-not reset an uncertain journal; continue a recovered project through the explicit
+not reset an uncertain journal. Continue a recovered project through the explicit
 request CLI. A future recovery interface needs separate ownership checks.
 
 ## Verification

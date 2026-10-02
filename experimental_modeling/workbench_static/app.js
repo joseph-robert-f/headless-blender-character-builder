@@ -2,7 +2,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const state = { data: null, requests: [], inspection: null, loadingInspection: false, inspectionSequence: 0, pending: new Set(), refreshing: null, timer: null, operationSignature: '', online: false };
-  const activeStates = new Set(['queued', 'claimed', 'starting', 'running', 'interrupt_requested', 'interruption_requested', 'stopping']);
+  const activeStates = new Set(['queued', 'claimed', 'starting', 'running', 'finalizing', 'interrupt_requested', 'interruption_requested', 'stopping']);
   const array = value => Array.isArray(value) ? value : [];
   const format = value => value === undefined ? 'Not supplied' : JSON.stringify(value, null, 2);
   const humanize = value => String(value ?? 'Unknown').replace(/[_-]+/g, ' ');

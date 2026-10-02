@@ -157,6 +157,27 @@ class WorkbenchTests(unittest.TestCase):
         process.wait.assert_called_once()
         self.assertTrue(process.stdout.closed)
 
+    def test_owned_exited_child_is_finalizing_until_monitor_finishes(self):
+        snapshot = self.inspect()
+        record = {"id": snapshot["id"], "revision": snapshot["revision"], "inspection_digest": snapshot["inspection_digest"], "state": "running", "detail": "fixture"}
+        self.wb.save("operation", record)
+        self.wb.child_id = snapshot["id"]
+        self.wb.child = Mock()
+        self.wb.child.poll.return_value = 0
+        self.wb.monitor = Mock()
+        self.wb.monitor.is_alive.return_value = True
+        result = self.wb.operation(snapshot["id"])
+        self.assertEqual(result["state"], "finalizing")
+        self.assertFalse(result["can_interrupt"])
+        other = self.inspect()
+        with patch.object(workbench.subprocess, "Popen") as spawn:
+            with self.assertRaisesRegex(ValueError, "active or uncertain"):
+                self.wb.run(other["id"])
+            spawn.assert_not_called()
+        self.wb.monitor.is_alive.return_value = False
+        self.assertEqual(self.wb.operation(snapshot["id"])["state"], "uncertain")
+        self.assertEqual(self.create().operation(snapshot["id"])["state"], "uncertain")
+
     def test_close_does_not_depend_on_journal(self):
         process = Mock()
         process.poll.return_value = None

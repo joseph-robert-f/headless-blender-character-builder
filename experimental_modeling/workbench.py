@@ -169,8 +169,12 @@ class Workbench:
         live = self.child_id == item_id and self.child is not None and self.child.poll() is None
         result["can_interrupt"] = live
         if record["state"] in {"claimed", "running", "interruption_requested"} and not live:
-            result["state"] = "uncertain"
-            result["detail"] = "Execution ownership was lost. No restart or retry occurs. Examine the terminal recovery state and retained journal."
+            if self.child_id == item_id and self.monitor is not None and self.monitor.is_alive():
+                result["state"] = "finalizing"
+                result["detail"] = "The owned child exited. Its supervisor is recording the terminal outcome."
+            else:
+                result["state"] = "uncertain"
+                result["detail"] = "Execution ownership was lost. No restart or retry occurs. Examine the terminal recovery state and retained journal."
         try:
             revision = self.review.revision(record["revision"])
             from .review_server import verified_revision
@@ -271,7 +275,7 @@ class Workbench:
             if self.stopping:
                 raise ValueError("The server is stopping.")
             for old in self.records("operation"):
-                if self.operation(old["id"])["state"] in {"running", "claimed", "interruption_requested", "uncertain"}:
+                if self.operation(old["id"])["state"] in {"running", "claimed", "interruption_requested", "finalizing", "uncertain"}:
                     raise ValueError("An operation is active or uncertain. Examine it before another build.")
             inspection = self.record("inspection", item_id)
             paths = inspection["paths"]

@@ -4,6 +4,7 @@
  * test reconciliation of the real, durable operation. */
 'use strict';
 const { chromium } = require('playwright');
+const { waitForLoadedReport } = require('./review_verifier_ui_qa.cjs');
 const { spawn, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -181,6 +182,7 @@ async function inspect() {
   fs.writeFileSync(path.join(output, 'verified-operation.json'), JSON.stringify(operation, null, 2));
   await page.locator('#refresh').click();
   await page.getByText('Verified', { exact: true }).waitFor();
+  await page.waitForFunction(revision => [...document.querySelectorAll('article.operation')].some(card => card.querySelector('h3')?.textContent === revision && card.querySelector('.status-pill')?.textContent === 'finished'), inspection.revision);
   assert.equal(await page.getByText('Accepted separately', { exact: true }).count(), 0);
   await page.screenshot({ path: path.join(output, 'workbench-result-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -191,6 +193,7 @@ async function inspect() {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.locator('.review-link').click();
   await page.locator('#revision-title').filter({ hasText: `Revision ${inspection.revision}` }).waitFor();
+  await waitForLoadedReport(page, operation.result.report.schema_version);
   assert.equal(await page.locator('#accepted-status').textContent(), 'No human decision recorded');
   assert.equal(await page.locator('#accept-submit').isEnabled(), true);
   await page.screenshot({ path: path.join(output, 'existing-review-comparison.png'), fullPage: true });
