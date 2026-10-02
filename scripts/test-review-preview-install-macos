@@ -1,0 +1,430 @@
+#!/bin/bash
+# Native macOS-only, shell-driven test of two exact, already downloaded artifacts.
+# No package manager, Python, Node, Blender, Docker, VM, or security changes.
+# Run with /bin/bash; this file does not need its executable permission changed.
+set -euo pipefail
+
+usage() {
+    cat <<'USAGE'
+usage: /bin/bash scripts/test-review-preview-install-macos \
+  --package /absolute/path/package-macos-arm64.tar.gz \
+  --project /absolute/path/desk-lamp-demo.zip --output /new/evidence-directory \
+  --expected-commit <full-source-commit>
+
+The inputs must be trusted, exact local artifacts. Output must not exist.
+Uses only macOS system utilities and built-in JXA for JSON validation. It does
+not install prerequisites. The extracted CLI runs with an empty PATH, a new
+HOME, and invalid PYTHONHOME/PYTHONPATH. This is hosted-runner dependency
+isolation evidence, not a pristine macOS, browser, installer, or generation test.
+An adjacent SHA256SUMS is checked when present; absent hashes are reported.
+No security warning is bypassed. Read-only spctl assessment is reported
+separately from launch behavior and does not establish download/quarantine UX.
+All extracts and diagnostics remain in the output directory for examination.
+Exit 0: runtime checks passed; exit 1: check failed; exit 2: invalid invocation;
+exit 3: blocked by an unavailable host prerequisite or denied CLI execution.
+Preflight blocks before output initialization do not create a native result.
+USAGE
+}
+fail() {
+    printf 'FAIL: %s\n' "$*" >&2
+    if [ -n "${checks-}" ]; then printf 'FAIL\t%s\n' "$*" >> "$checks"; fi
+    exit 1
+}
+blocked() {
+    final_status=blocked
+    printf 'BLOCKED: %s\n' "$*" >&2
+    if [ -n "${checks-}" ]; then
+        printf 'BLOCKED\t%s\n' "$*" >> "$checks"
+    else
+        printf '%s\n' 'Preflight blocked; output was not initialized and no native result was written.' >&2
+    fi
+    exit 3
+}
+package= project_archive= output= expected_commit=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --help|-h) usage; exit 0 ;;
+        --package|--project|--output|--expected-commit)
+            [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+            case "$1" in
+                --package) package=$2 ;;
+                --project) project_archive=$2 ;;
+                --output) output=$2 ;;
+                --expected-commit) expected_commit=$2 ;;
+            esac
+            shift 2 ;;
+        *) usage >&2; exit 2 ;;
+    esac
+done
+[ -n "$package" ] && [ -n "$project_archive" ] && [ -n "$output" ] && [[ "$expected_commit" =~ ^[0-9a-f]{40}$ ]] || { usage >&2; exit 2; }
+[ "$(/usr/bin/uname -s)" = Darwin ] && [ "$(/usr/bin/uname -m)" = arm64 ] || {
+    blocked 'This harness requires native macOS arm64. No test ran.'
+}
+# Do not run Homebrew tools or developer runtimes accidentally through PATH.
+original_path=${PATH-}
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin LC_ALL=C
+for tool in /usr/bin/{tar,shasum,curl,osascript,codesign,find,file,sort,cmp,readlink,sw_vers,mkfifo,env,awk,sed,grep,dirname,basename} \
+    /bin/{cat,cp,date,ls,mkdir,sleep} /usr/sbin/spctl; do
+    [ -x "$tool" ] || blocked "Required system utility is unavailable: $tool (nothing will be installed)"
+done
+case "$package" in *.tar.gz) ;; *) fail 'Package must be an exact .tar.gz filename' ;; esac
+case "$project_archive" in *.zip) ;; *) fail 'Project must be an exact .zip filename' ;; esac
+for input in "$package" "$project_archive"; do
+    [ -f "$input" ] && [ ! -L "$input" ] || fail "Expected regular local input: $input"
+done
+package=$(cd "$(dirname "$package")" && printf '%s/%s' "$PWD" "$(basename "$package")")
+project_archive=$(cd "$(dirname "$project_archive")" && printf '%s/%s' "$PWD" "$(basename "$project_archive")")
+[ ! -e "$output" ] && [ ! -L "$output" ] || fail 'Output must be new; existing evidence is never replaced'
+/bin/mkdir -p "$(dirname "$output")"
+/bin/mkdir "$output"
+output=$(cd "$output" && pwd -P)
+/bin/mkdir "$output/logs" "$output/http" "$output/Package extraction 雪" \
+    "$output/Project extraction 雨" "$output/Empty unrelated working directory" "$output/home" "$output/tmp"
+checks=$output/checks.tsv
+: > "$checks"
+active_pid= fifo_open=0 final_status=failed
+mark() { printf 'PASS\t%s\n' "$1" >> "$checks"; printf 'PASS %s\n' "$1"; }
+
+# JSON is parsed by Apple's built-in JavaScript for Automation, never shell eval.
+cat > "$output/check-json.js" <<'JXA'
+ObjC.import('Foundation');
+function read(path) {
+    var value = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, null);
+    if (!value) throw new Error('Cannot read ' + path);
+    return ObjC.unwrap(value);
+}
+function check(ok, message) { if (!ok) throw new Error(message); }
+function parse(path) { return JSON.parse(read(path)); }
+function run(a) {
+    var mode = a[0], value;
+    if (mode === 'members') {
+        var names = read(a[1]).trim().split('\n'), seen = {};
+        names.forEach(function (name) {
+            check(!/[\\\x00-\x1f\x7f]/.test(name), 'Unsafe archive member');
+            var parts = name.replace(/\/$/, '').split('/');
+            check(parts[0] === a[2] && parts.every(function (p) { return p && p !== '.' && p !== '..'; }), 'Unexpected archive layout');
+            check(!seen[name], 'Duplicate archive member'); seen[name] = true;
+        });
+        check(names.length > 1 && names.length < 10000, 'Unexpected member count');
+    } else if (mode === 'verify') {
+        value = parse(a[1]); check(value.verified === true && value.files > 0, 'Package did not verify');
+    } else if (mode === 'provenance') {
+        value = parse(a[1]);
+        check(value.target === 'macos-arm64' && value.system === 'Darwin' && value.machine === 'arm64', 'Wrong package platform');
+        check(/^[a-f0-9]{40}$/.test(value.commit) && /^[a-f0-9]{40}$/.test(value.source_tree), 'Missing exact source identifiers');
+        check(value.commit === a[3], 'Package commit differs from the requested build');
+        check(value.commit_matches_source === true && value.standard_gil === true, 'Unexpected build provenance');
+        check(Array.isArray(value.native_components) && value.native_components.length > 0, 'Missing native component inventory');
+        check(JSON.stringify(value) === JSON.stringify(parse(a[2])), 'CLI and packaged provenance differ');
+    } else if (mode === 'project') {
+        value = parse(a[1]);
+        var expected = {'lamp-r0':'accepted','lamp-r1':'accepted','lamp-slim-bad':'rejected','lamp-slim-repair':'accepted'};
+        check(value.schema_version === 1 && value.read_only === true && /REVIEW PREVIEW/.test(value.read_only_reason), 'Missing read-only preview notice');
+        check(value.project_name === parse(a[2]).name, 'Project name changed');
+        check(value.latest_revision === 'lamp-slim-repair' && value.revisions.length === 4, 'Wrong lamp history');
+        var found = {};
+        value.revisions.forEach(function (r) {
+            check(Object.prototype.hasOwnProperty.call(expected, r.id) && expected[r.id] === r.status && !found[r.id], 'Unexpected or duplicate revision'); found[r.id] = true;
+            check(r.machine_verified === (r.status === 'accepted') && r.human_accepted === false, 'Incorrect verification/acceptance state');
+        });
+        return value.revisions.map(function (r) { return r.id; }).join('\n');
+    } else if (mode === 'revision') {
+        value = parse(a[1]); var id = a[2], verified = id !== 'lamp-slim-bad';
+        check(value.revision.id === id && value.revision.machine_verified === verified && value.report.machine_verified === verified, 'Wrong revision evidence');
+        check(value.artifacts.glb_url === '/artifacts/' + id + '/glb', 'Missing GLB URL');
+        var views = value.artifacts.views.map(function (v) { return v.url; }).sort();
+        check(JSON.stringify(views) === JSON.stringify(['front','iso','right','top'].map(function (v) { return '/artifacts/' + id + '/view-' + v; }).sort()), 'Missing rendered views');
+    } else if (mode === 'payload') {
+        value = parse(a[1]);
+        return JSON.stringify({csrf_token: value.csrf_token, expected_result_hash: parse(a[2]).revision.result_hash,
+            revision_id: 'lamp-slim-repair', notes: 'Install harness must not write', prompt: 'Install harness must not write'});
+    } else if (mode === 'summary') {
+        var root = a[1], rows = read(root + '/checks.tsv').trim();
+        var result = {schema_version:1, status:a[2], successful:a[2] === 'passed', harness:'macOS system shell utilities and built-in JXA',
+            scope:'Native extracted CLI with empty PATH and fresh HOME on the recorded host; not a pristine OS, consumer install, browser, or generation test',
+            security:'No quarantine removal, security-setting changes, warning bypass, software install, or VM. spctl assessment is separate from actual execution.',
+            checks: rows ? rows.split('\n').map(function (r) { var p = r.split('\t'); return {status:p[0].toLowerCase(),name:p[1]}; }) : [],
+            environment:read(root + '/environment.txt'), input_sha256:read(root + '/input-sha256.txt')};
+        return JSON.stringify(result, null, 2);
+    } else throw new Error('Unknown JSON operation');
+    return 'ok';
+}
+JXA
+json() { /usr/bin/osascript -l JavaScript "$output/check-json.js" "$@"; }
+cleanup() {
+    code=$?
+    trap - EXIT INT TERM
+    if [ "$fifo_open" -eq 1 ]; then exec 3>&-; fi
+    if [ -n "$active_pid" ] && kill -0 "$active_pid" 2>/dev/null; then
+        # Only the subprocess owned by this harness; never a foreign listener.
+        kill -TERM "$active_pid" 2>/dev/null || true
+        /bin/sleep 1
+        kill -KILL "$active_pid" 2>/dev/null || true
+        wait "$active_pid" 2>/dev/null || true
+    fi
+    if [ -f "$output/environment.txt" ] && [ -f "$output/input-sha256.txt" ]; then
+        json summary "$output" "$final_status" > "$output/result.json" || code=1
+    fi
+    printf 'Evidence: %s (status: %s)\n' "$output" "$final_status"
+    exit "$code"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+{
+    printf 'utc='; /bin/date -u '+%Y-%m-%dT%H:%M:%SZ'
+    /usr/bin/sw_vers; /usr/bin/uname -a
+    printf 'ImageOS=%s\nImageVersion=%s\nRUNNER_OS=%s\nRUNNER_ARCH=%s\n' "${ImageOS-unset}" "${ImageVersion-unset}" "${RUNNER_OS-unset}" "${RUNNER_ARCH-unset}"
+    printf 'GITHUB_RUN_ID=%s\nGITHUB_RUN_ATTEMPT=%s\nGITHUB_SHA=%s\n' "${GITHUB_RUN_ID-unset}" "${GITHUB_RUN_ATTEMPT-unset}" "${GITHUB_SHA-unset}"
+    printf 'original_PATH=%s\nharness_PATH=%s\n' "$original_path" "$PATH"
+    printf '%s\n' 'Child env: empty PATH, fresh HOME/TMPDIR, invalid PYTHONHOME/PYTHONPATH, PYTHONNOUSERSITE=1, DYLD_PRINT_LIBRARIES=1'
+    printf '%s\n' 'Existing runtime locations are inventoried without executing them; absence from this list is not proof of absence from the OS.'
+    for runtime in python python3 node blender docker; do
+        printf '\n%s on original PATH:\n' "$runtime"
+        (PATH=$original_path; type -a "$runtime") 2>&1 || true
+    done
+    for directory in /Library/Frameworks/Python.framework /Applications /Applications/Xcode.app /Library/Developer/CommandLineTools /opt/homebrew/bin /usr/local/bin "${RUNNER_TOOL_CACHE-/nonexistent-runner-cache}"; do
+        if [ -d "$directory" ]; then
+            printf '\nExisting directory: %s\n' "$directory"; /bin/ls -ld "$directory"
+            /bin/ls "$directory" | /usr/bin/grep -Ei 'python|node|blender|docker|xcode' || true
+        fi
+    done
+    for directory in /Library/Frameworks/Python.framework/Versions \
+        "${RUNNER_TOOL_CACHE-/nonexistent-runner-cache}/Python" "${RUNNER_TOOL_CACHE-/nonexistent-runner-cache}/node" \
+        /opt/homebrew/Cellar/python* /opt/homebrew/Cellar/node*; do
+        if [ -d "$directory" ]; then
+            printf '\nExisting runtime version directories: %s\n' "$directory"
+            /bin/ls -la "$directory"
+        fi
+    done
+    printf '\nDeveloper selection (read-only):\n'; /usr/bin/xcode-select -p 2>&1 || true
+    printf '\nSystem curl:\n'; /usr/bin/curl --version
+} > "$output/environment.txt"
+/usr/bin/shasum -a 256 "$package" "$project_archive" > "$output/input-sha256.txt"
+checksum_file=$(dirname "$package")/SHA256SUMS
+if [ -f "$checksum_file" ]; then
+    actual=$(/usr/bin/shasum -a 256 "$package"); actual=${actual%% *}
+    expected=$(/usr/bin/awk -v name="$(basename "$package")" '$2 == name {print $1}' "$checksum_file")
+    [ "$expected" = "$actual" ] || fail 'Adjacent SHA256SUMS does not identify the exact archive hash'
+    /bin/cp "$checksum_file" "$output/download-SHA256SUMS.txt"
+    mark archive_matches_adjacent_sha256sums
+else
+    printf 'NOT_RUN\tarchive_digest_comparison_no_adjacent_SHA256SUMS\n' >> "$checks"
+fi
+
+/usr/bin/tar -tzf "$package" > "$output/package-members.txt"
+json members "$output/package-members.txt" hbcb-review-preview >/dev/null
+/usr/bin/tar -tf "$project_archive" > "$output/project-members.txt"
+json members "$output/project-members.txt" desk-lamp-demo >/dev/null
+# Follow the package README's new-directory tar extraction procedure. No -P,
+# permission repair, quarantine removal, or extraction into an older install.
+/usr/bin/tar -xzf "$package" -C "$output/Package extraction 雪"
+/usr/bin/tar -xf "$project_archive" -C "$output/Project extraction 雨"
+bundle=$output/Package\ extraction\ 雪/hbcb-review-preview
+project=$output/Project\ extraction\ 雨/desk-lamp-demo
+executable=$bundle/hbcb-review-preview
+[ -x "$executable" ] && [ ! -L "$executable" ] || fail 'Archive did not preserve an executable CLI'
+[ -f "$project/modeling-project.json" ] || fail 'Portable project descriptor is missing'
+[ -z "$(/usr/bin/find "$project" -type l -print -quit)" ] || fail 'Project contains a link'
+/bin/cp "$bundle/README.md" "$output/package-README.md"
+for instruction in './hbcb-review-preview --verify' './hbcb-review-preview --project' 'tar -xzf' 'type `q`'; do
+    /usr/bin/grep -F "$instruction" "$output/package-README.md" >/dev/null || fail "Package README instruction changed: $instruction"
+done
+mark fresh_extraction_and_packaged_instructions
+
+snapshot() (
+    cd "$1"
+    /usr/bin/find . -print0 | while IFS= read -r -d '' member; do
+        case "$member" in *$'\n'*|*$'\r'*|*$'\t'*) exit 1 ;; esac
+        if [ -L "$member" ]; then
+            printf 'link\t%s\t%s\n' "$member" "$(/usr/bin/readlink "$member")"
+        elif [ -f "$member" ]; then
+            sum=$(/usr/bin/shasum -a 256 "$member"); printf 'file\t%s\t%s\n' "$member" "${sum%% *}"
+        elif [ -d "$member" ]; then printf 'dir\t%s\n' "$member"
+        else exit 1
+        fi
+    done | /usr/bin/sort
+)
+snapshot "$project" > "$output/project-before.tsv"
+snapshot "$bundle" > "$output/package-before.tsv"
+
+# Assessment is diagnostic only: an unnotarized CI artifact can be rejected by
+# spctl without the CLI launch reproducing a downloaded-file Gatekeeper dialog.
+# Never change Gatekeeper, xattrs, signatures, or executable permissions here.
+/usr/sbin/spctl --status > "$output/logs/gatekeeper-status.txt" 2>&1 || true
+if /usr/sbin/spctl --assess --type execute --verbose=4 "$executable" > "$output/logs/gatekeeper-assessment.txt" 2>&1; then
+    printf '0\n' > "$output/logs/gatekeeper-assessment-exit.txt"
+else
+    assessment_status=$?
+    printf '%s\n' "$assessment_status" > "$output/logs/gatekeeper-assessment-exit.txt"
+    printf 'OBSERVED\tspctl_assessment_nonzero_%s_not_a_tested_download_warning\n' "$assessment_status" >> "$checks"
+fi
+/usr/bin/codesign --verify --strict --verbose=4 "$executable" > "$output/logs/codesign-verify.txt" 2>&1 || fail 'CLI code signature verification failed'
+/usr/bin/codesign --display --verbose=4 "$executable" > "$output/logs/codesign-display.txt" 2>&1
+mark cli_loader_signature_valid
+
+# otool may be a developer-tool shim. Call it only if a developer selection
+# already exists; never trigger installation on a system without those tools.
+if [ -x /usr/bin/otool ] && /usr/bin/xcode-select -p >/dev/null 2>&1; then
+    : > "$output/logs/macho-inventory.txt"
+    /usr/bin/find "$bundle" -type f -print0 | while IFS= read -r -d '' member; do
+        description=$(/usr/bin/file -b "$member")
+        case "$description" in *Mach-O*)
+            case "$description" in *arm64*) ;; *) fail "Native package member has no arm64 slice: $member" ;; esac
+            printf '\nFILE %s\n%s\n' "$member" "$description" >> "$output/logs/macho-inventory.txt"
+            /usr/bin/otool -L "$member" > "$output/logs/otool-current.txt"
+            /bin/cat "$output/logs/otool-current.txt" >> "$output/logs/macho-inventory.txt"
+            /usr/bin/otool -l "$member" >> "$output/logs/macho-load-commands.txt"
+            /usr/bin/awk 'NR > 1 {print $1}' "$output/logs/otool-current.txt" | while IFS= read -r dependency; do
+                case "$dependency" in /System/Library/*|/usr/lib/*|@loader_path/*|@executable_path/*|@rpath/*) ;;
+                    *) fail "Non-system absolute Mach-O dependency: $dependency" ;;
+                esac
+            done
+            /usr/bin/codesign --verify --strict "$member" >> "$output/logs/codesign-all.txt" 2>&1 || fail "Invalid native signature: $member"
+            ;;
+        esac
+    done
+    mark all_bundled_macho_signatures_and_linked_library_paths
+else
+    printf 'NOT_RUN\tstatic_macho_scan_no_existing_developer_tools\n' >> "$checks"
+fi
+
+launch() {
+    # Every call is backgrounded, so exec replaces that one owned child PID.
+    cd "$launch_directory"
+    exec /usr/bin/env -i PATH= HOME="$output/home" TMPDIR="$output/tmp/" LANG=en_US.UTF-8 \
+        PYTHONHOME="$output/no-installed-python" PYTHONPATH="$output/no-project-imports" \
+        PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 DYLD_PRINT_LIBRARIES=1 "$launch_executable" "$@"
+}
+wait_owned() {
+    limit=$1 elapsed=0
+    while kill -0 "$active_pid" 2>/dev/null; do
+        [ "$elapsed" -lt "$limit" ] || fail 'Owned CLI process exceeded its timeout; see logs'
+        /bin/sleep 1; elapsed=$((elapsed + 1))
+    done
+    if wait "$active_pid"; then cli_status=0; else cli_status=$?; fi
+    active_pid=
+    # Exit 126 reports an execution failure. Preserve the raw diagnostics;
+    # signal exits alone do not establish a security or prerequisite cause.
+    [ "$cli_status" -ne 126 ] || blocked 'CLI could not be executed (exit 126); see stderr for the reported cause'
+}
+run_cli() {
+    expected_status=$1 label=$2; shift 2
+    launch "$@" < /dev/null > "$output/logs/$label.stdout" 2> "$output/logs/$label.stderr" & active_pid=$!
+    wait_owned 30
+    [ "$cli_status" -eq "$expected_status" ] || fail "$label returned $cli_status, expected $expected_status; no security workaround attempted"
+}
+# First execute the literal packaged README command from its program folder.
+launch_directory=$bundle
+launch_executable=./hbcb-review-preview
+printf 'cwd: %s\ncommand: ./hbcb-review-preview --verify\n' "$launch_directory" > "$output/logs/README-command.txt"
+run_cli 0 verify --verify
+json verify "$output/logs/verify.stdout" >/dev/null
+mark packaged_readme_directory_verify_command
+# All subsequent calls add the unrelated-directory isolation test.
+launch_directory=$output/Empty\ unrelated\ working\ directory
+launch_executable=$executable
+run_cli 0 verify-unrelated-cwd --verify
+json verify "$output/logs/verify-unrelated-cwd.stdout" >/dev/null
+run_cli 0 provenance --provenance
+json provenance "$output/logs/provenance.stdout" "$bundle/provenance.json" "$expected_commit" >/dev/null
+mark extracted_cli_integrity_and_exact_provenance
+run_cli 2 no-arguments
+/usr/bin/grep -F 'usage:' "$output/logs/no-arguments.stderr" >/dev/null || fail 'No-argument usage missing'
+run_cli 2 missing-project-argument --project
+/usr/bin/grep -F 'usage:' "$output/logs/missing-project-argument.stderr" >/dev/null || fail 'Missing-project usage missing'
+run_cli 2 nonexistent-project --project "$output/Missing project"
+[ ! -e "$output/Missing project" ] || fail 'CLI created the missing project'
+run_cli 2 unsupported-generation --project "$project" --generate
+/usr/bin/grep -F 'unrecognized arguments: --generate' "$output/logs/unsupported-generation.stderr" >/dev/null || fail 'Unsupported generation flag did not fail as a usage error'
+mark usage_and_missing_project_fail_closed
+
+/usr/bin/mkfifo "$output/console-input"
+# Opening a FIFO read/write keeps stdin live without a helper runtime.
+exec 3<> "$output/console-input"; fifo_open=1
+launch --project "$project" <&3 3>&- > "$output/logs/server.stdout" 2> "$output/logs/server.stderr" & active_pid=$!
+origin= elapsed=0
+while [ "$elapsed" -lt 30 ]; do
+    origin=$(/usr/bin/sed -nE 's/^Local project review: (http:\/\/127\.0\.0\.1:[0-9]+)$/\1/p' "$output/logs/server.stdout")
+    [ -z "$origin" ] || break
+    if ! kill -0 "$active_pid" 2>/dev/null; then
+        wait_owned 1
+        fail "Project startup stopped before readiness (exit $cli_status); see server logs"
+    fi
+    /bin/sleep 1; elapsed=$((elapsed + 1))
+done
+[[ "$origin" =~ ^http://127\.0\.0\.1:[0-9]+$ ]] || fail 'CLI did not report one numeric loopback origin'
+printf '%s\n' "$origin" > "$output/origin.txt"
+mark portable_lamp_project_startup
+http() {
+    endpoint=$1 label=$2 expected_status=$3; shift 3
+    status=$(/usr/bin/curl -q --silent --show-error --noproxy '*' --proto '=http' \
+        --connect-timeout 3 --max-time 15 --dump-header "$output/http/$label.headers" \
+        --output "$output/http/$label.body" --write-out '%{http_code}' "$@" "$origin$endpoint") || fail "HTTP request failed: $endpoint"
+    [ "$status" = "$expected_status" ] || fail "$endpoint returned HTTP $status, expected $expected_status"
+}
+mime() { /usr/bin/grep -iE "^Content-Type: $2([;[:space:]]|$)" "$output/http/$1.headers" >/dev/null || fail "Unexpected content type: $1"; }
+http /api/project project 200
+json project "$output/http/project.body" "$project/modeling-project.json" > "$output/revisions.txt"
+for static in index app style; do
+    case "$static" in index) route=/; file=index.html; content_type=text/html ;; app) route=/static/app.js; file=app.js; content_type=text/javascript ;; style) route=/static/style.css; file=style.css; content_type=text/css ;; esac
+    http "$route" "$static" 200; mime "$static" "$content_type"
+    /usr/bin/cmp "$output/http/$static.body" "$bundle/_internal/experimental_modeling/review_static/$file" || fail 'Served static bytes differ from package'
+    /usr/bin/grep -F "default-src 'none'" "$output/http/$static.headers" >/dev/null || fail 'Content Security Policy missing'
+done
+while IFS= read -r revision; do
+    http "/api/revisions/$revision" "$revision" 200
+    json revision "$output/http/$revision.body" "$revision" >/dev/null
+    group=accepted; [ "$revision" != lamp-slim-bad ] || group=attempts
+    for role in glb view-front view-right view-top view-iso; do
+        if [ "$role" = glb ]; then relative=model.glb; content_type=model/gltf-binary
+        else relative=views/${role#view-}.png; content_type=image/png
+        fi
+        http "/artifacts/$revision/$role" "$revision-$role" 200; mime "$revision-$role" "$content_type"
+        /usr/bin/cmp "$output/http/$revision-$role.body" "$project/evidence/$group/$revision/inspection/$relative" || fail 'Served model/render bytes differ from project'
+    done
+done < "$output/revisions.txt"
+mark lamp_history_static_render_and_model_reads
+json payload "$output/http/project.body" "$output/http/lamp-slim-repair.body" > "$output/denied-write.json"
+for endpoint in /api/requests /api/revisions/lamp-slim-repair/accept; do
+    http "$endpoint" "denied-${endpoint##*/}" 403 --header "Origin: $origin" --header 'Content-Type: application/json' --data-binary "@$output/denied-write.json"
+    /usr/bin/grep -F 'REVIEW PREVIEW' "$output/http/denied-${endpoint##*/}.body" >/dev/null || fail 'Write denial did not come from read-only policy'
+done
+http /api/project denied-host 403 --header 'Host: example.invalid'
+http /api/project denied-origin 403 --header 'Origin: https://example.invalid'
+mark backend_write_and_host_origin_denials
+printf 'q\n' >&3
+wait_owned 20
+[ "$cli_status" -eq 0 ] || fail 'q/Enter shutdown returned failure'
+exec 3>&-; fifo_open=0
+/usr/bin/grep -F 'Review stopped.' "$output/logs/server.stdout" >/dev/null || fail 'Shutdown message missing'
+if /usr/bin/curl -q --silent --noproxy '*' --proto '=http' --connect-timeout 2 --max-time 3 "$origin/api/project" > "$output/http/after-shutdown.body" 2> "$output/logs/after-shutdown.stderr"; then
+    fail 'HTTP listener survived shutdown'
+else
+    [ "$?" -eq 7 ] || fail 'Shutdown probe did not establish connection refusal'
+fi
+mark graceful_q_shutdown_and_connection_refusal
+snapshot "$project" > "$output/project-after.tsv"
+snapshot "$bundle" > "$output/package-after.tsv"
+/usr/bin/cmp "$output/project-before.tsv" "$output/project-after.tsv" || fail 'Project file content or directory layout changed'
+/usr/bin/cmp "$output/package-before.tsv" "$output/package-after.tsv" || fail 'Extracted package content changed'
+/usr/bin/shasum -a 256 "$package" "$project_archive" > "$output/input-sha256-after.txt"
+/usr/bin/cmp "$output/input-sha256.txt" "$output/input-sha256-after.txt" || fail 'An input archive changed'
+mark project_package_and_input_content_unchanged
+# Preserve the dynamic-loader evidence. Its absence is a coverage gap, not a
+# pass; static linking and an empty PATH alone do not prove runtime isolation.
+/usr/bin/grep -hE '^dyld\[[0-9]+\]:' "$output"/logs/*.stderr > "$output/logs/dyld-loaded-libraries.txt" || true
+if [ -s "$output/logs/dyld-loaded-libraries.txt" ]; then
+    /usr/bin/sed -nE 's/^dyld\[[0-9]+\]: (<[^>]+> )?(\/.*)$/\2/p' "$output/logs/dyld-loaded-libraries.txt" | /usr/bin/sort -u > "$output/logs/dyld-loaded-paths.txt"
+    [ -s "$output/logs/dyld-loaded-paths.txt" ] || fail 'Unrecognized dyld diagnostics; cannot check loaded paths'
+    while IFS= read -r library; do
+        case "$library" in "$bundle"/*|/usr/lib/*|/System/Library/*) ;;
+            *) fail "Runtime loaded a non-system, non-bundled image: $library" ;;
+        esac
+    done < "$output/logs/dyld-loaded-paths.txt"
+    mark observed_dyld_images_are_bundled_or_os_libraries
+else
+    printf 'NOT_RUN\tdynamic_loader_output_unavailable\n' >> "$checks"
+fi
+final_status=passed

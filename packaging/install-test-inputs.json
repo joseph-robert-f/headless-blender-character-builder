@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "status": "ready",
+  "repository": "joseph-robert-f/headless-blender-character-builder",
+  "package_commit": "241b458ad7b45b3e2a4c89324c59f5efd26f0eb8",
+  "package_source_tree": "fa6cbe2824a5823d0cb49f1a2290b47bf52f94b4",
+  "package_run_id": 37033859451,
+  "targets": {
+    "windows-x64": {
+      "artifact_id": 11238313237,
+      "archive_sha256": "f08625f467311036fa2d317c34d7c8dd2634b5becb78375139a623387b7583eb"
+    },
+    "macos-arm64": {
+      "artifact_id": 11238837395,
+      "archive_sha256": "2bfa4e9b400aa68bd14c6d035da5d54f9a1d002a6f21fc5f112027c1d79b704d"
+    }
+  },
+  "lamp_run_id": 36940918404,
+  "lamp_artifact_id": 11199334214
+}
