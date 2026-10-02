@@ -1,0 +1,1411 @@
+{
+  "schema_version": 1,
+  "scope": "Hand-derived semantic expectations for the indexed translation v2 contract. No production canonicalizer, observer, or predicate generated the expected verdicts. v1 compatibility snapshots live separately.",
+  "baseline_commit": "db205966c49adb140cbffaa5bbb57caa84abd3e1",
+  "normal_boundary_contract": "Only binary64 atan2(hypot(cross), dot) comparisons are tested; these tests do not establish an exact-real-angle boundary proof.",
+  "models": {
+    "tetrahedron": {
+      "derivation": "Vertices are the origin and unit coordinate axes. Each listed triangular cycle is outward: z=0, y=0, x=0, then x+y+z=1. The last unit normal is (1,1,1)/sqrt(3). Material labels and index-to-surface correspondence are declared directly.",
+      "previous": {
+        "schema_version": 2,
+        "trusted_observation": true,
+        "units": {
+          "length": "meter",
+          "scale_length": 1.0,
+          "area": "square_meter",
+          "volume": "cubic_meter"
+        },
+        "visibility_policy": "All semantic geometry is included; source visibility flags are ignored",
+        "material_contract": "Constant base_color, alpha, metallic, roughness; default other Principled inputs",
+        "runtime": {
+          "blender_version": "synthetic-no-blender",
+          "python_version": "synthetic",
+          "autoexec_enabled": false
+        },
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "local_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "face_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                1
+              ],
+              [
+                0,
+                2
+              ],
+              [
+                0,
+                3
+              ],
+              [
+                1,
+                2
+              ],
+              [
+                1,
+                3
+              ],
+              [
+                2,
+                3
+              ]
+            ],
+            "face_material_indices": [
+              0,
+              0,
+              1,
+              1
+            ],
+            "face_world_corner_normals": [
+              [
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ]
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "triangle_material_indices": [
+              0,
+              0,
+              1,
+              1
+            ],
+            "triangle_world_normals": [
+              [
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ]
+              ]
+            ],
+            "materials": [
+              {
+                "base_color": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              },
+              {
+                "base_color": [
+                  0.0,
+                  0.0,
+                  1.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              }
+            ],
+            "material_hash": "5c5ca626b5ed6b6fa3719692b50188661a52a3f58400ccbd506e45cf09e28dbc",
+            "geometry_hash": "e7564bb7ee6e27bd57e95abfc781b3df2e68162d4c91261651cccdf120e8a9c4",
+            "transform_hash": "2163c9d76567ed72097e8c4d524c30a2163c6be4ef7565c48b3eb350242b07ae",
+            "matrix_world": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "normals": [
+              [
+                -0.5773502691896258,
+                -0.5773502691896258,
+                -0.5773502691896258
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "corner_normals": [
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ]
+            ],
+            "world_bounds": {
+              "min": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "max": [
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "surface_area": 2.3660254037844384,
+            "signed_volume": 0.16666666666666666,
+            "nonmanifold_edges": 0,
+            "boundary_edges": 0,
+            "vertices": 4,
+            "vertex_count": 4,
+            "edges": 6,
+            "edge_count": 6,
+            "faces": 4,
+            "face_count": 4,
+            "triangle_count": 4
+          }
+        }
+      },
+      "surface_ledger": [
+        {
+          "name": "z=0 base",
+          "oriented_cycle": [
+            0,
+            2,
+            1
+          ],
+          "material_index": 0,
+          "world_corner_normals": [
+            [
+              0.0,
+              0.0,
+              -1.0
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0
+            ]
+          ]
+        },
+        {
+          "name": "y=0 side",
+          "oriented_cycle": [
+            0,
+            1,
+            3
+          ],
+          "material_index": 0,
+          "world_corner_normals": [
+            [
+              0.0,
+              -1.0,
+              0.0
+            ],
+            [
+              0.0,
+              -1.0,
+              0.0
+            ],
+            [
+              0.0,
+              -1.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "x=0 side",
+          "oriented_cycle": [
+            0,
+            3,
+            2
+          ],
+          "material_index": 1,
+          "world_corner_normals": [
+            [
+              -1.0,
+              0.0,
+              0.0
+            ],
+            [
+              -1.0,
+              0.0,
+              0.0
+            ],
+            [
+              -1.0,
+              0.0,
+              0.0
+            ]
+          ]
+        },
+        {
+          "name": "x+y+z=1 slope",
+          "oriented_cycle": [
+            1,
+            2,
+            3
+          ],
+          "material_index": 1,
+          "world_corner_normals": [
+            [
+              0.5773502691896258,
+              0.5773502691896258,
+              0.5773502691896258
+            ],
+            [
+              0.5773502691896258,
+              0.5773502691896258,
+              0.5773502691896258
+            ],
+            [
+              0.5773502691896258,
+              0.5773502691896258,
+              0.5773502691896258
+            ]
+          ]
+        }
+      ]
+    },
+    "asymmetric_polygons": {
+      "derivation": "Disjoint CCW trapezoid (vertices 0..3) and unequal CCW triangle (4..6) in z=0. Shoelace areas are 2.5 and 1. Distinct declared unit split normals follow named corners, so rotating indices without normals is observable. These are synthetic observations, not a Blender-output claim.",
+      "previous": {
+        "schema_version": 2,
+        "trusted_observation": true,
+        "units": {
+          "length": "meter",
+          "scale_length": 1.0,
+          "area": "square_meter",
+          "volume": "cubic_meter"
+        },
+        "visibility_policy": "All semantic geometry is included; source visibility flags are ignored",
+        "material_contract": "Constant base_color, alpha, metallic, roughness; default other Principled inputs",
+        "runtime": {
+          "blender_version": "synthetic-no-blender",
+          "python_version": "synthetic",
+          "autoexec_enabled": false
+        },
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                2.0,
+                0.0,
+                0.0
+              ],
+              [
+                3.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                4.0,
+                0.0,
+                0.0
+              ],
+              [
+                6.0,
+                0.0,
+                0.0
+              ],
+              [
+                4.0,
+                1.0,
+                0.0
+              ]
+            ],
+            "local_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                2.0,
+                0.0,
+                0.0
+              ],
+              [
+                3.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                4.0,
+                0.0,
+                0.0
+              ],
+              [
+                6.0,
+                0.0,
+                0.0
+              ],
+              [
+                4.0,
+                1.0,
+                0.0
+              ]
+            ],
+            "face_indices": [
+              [
+                0,
+                1,
+                2,
+                3
+              ],
+              [
+                4,
+                5,
+                6
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                1
+              ],
+              [
+                1,
+                2
+              ],
+              [
+                2,
+                3
+              ],
+              [
+                3,
+                0
+              ],
+              [
+                4,
+                5
+              ],
+              [
+                5,
+                6
+              ],
+              [
+                6,
+                4
+              ]
+            ],
+            "face_material_indices": [
+              0,
+              1
+            ],
+            "face_world_corner_normals": [
+              [
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  0.6,
+                  0.0,
+                  0.8
+                ],
+                [
+                  0.0,
+                  0.6,
+                  0.8
+                ],
+                [
+                  -0.6,
+                  0.0,
+                  0.8
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  0.0,
+                  -0.6,
+                  0.8
+                ],
+                [
+                  0.6,
+                  0.0,
+                  0.8
+                ]
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                1,
+                2
+              ],
+              [
+                0,
+                2,
+                3
+              ],
+              [
+                4,
+                5,
+                6
+              ]
+            ],
+            "triangle_material_indices": [
+              0,
+              0,
+              1
+            ],
+            "triangle_world_normals": [
+              [
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  0.6,
+                  0.0,
+                  0.8
+                ],
+                [
+                  0.0,
+                  0.6,
+                  0.8
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  0.0,
+                  0.6,
+                  0.8
+                ],
+                [
+                  -0.6,
+                  0.0,
+                  0.8
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  0.0,
+                  -0.6,
+                  0.8
+                ],
+                [
+                  0.6,
+                  0.0,
+                  0.8
+                ]
+              ]
+            ],
+            "materials": [
+              {
+                "base_color": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              },
+              {
+                "base_color": [
+                  0.0,
+                  0.0,
+                  1.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              }
+            ],
+            "material_hash": "5c5ca626b5ed6b6fa3719692b50188661a52a3f58400ccbd506e45cf09e28dbc",
+            "geometry_hash": "97267532ebf322c1b024dc8e09d9b4d04587a7cb18972c92d988b8c6a1b2406a",
+            "transform_hash": "2163c9d76567ed72097e8c4d524c30a2163c6be4ef7565c48b3eb350242b07ae",
+            "matrix_world": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "normals": [
+              [
+                0.0,
+                0.0,
+                1.0
+              ],
+              [
+                0.6,
+                0.0,
+                0.8
+              ],
+              [
+                0.0,
+                0.6,
+                0.8
+              ],
+              [
+                -0.6,
+                0.0,
+                0.8
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ],
+              [
+                0.0,
+                -0.6,
+                0.8
+              ],
+              [
+                0.6,
+                0.0,
+                0.8
+              ]
+            ],
+            "corner_normals": [
+              [
+                0.0,
+                0.0,
+                1.0
+              ],
+              [
+                0.6,
+                0.0,
+                0.8
+              ],
+              [
+                0.0,
+                0.6,
+                0.8
+              ],
+              [
+                -0.6,
+                0.0,
+                0.8
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ],
+              [
+                0.0,
+                -0.6,
+                0.8
+              ],
+              [
+                0.6,
+                0.0,
+                0.8
+              ]
+            ],
+            "world_bounds": {
+              "min": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "max": [
+                6.0,
+                1.0,
+                0.0
+              ]
+            },
+            "surface_area": 3.5,
+            "signed_volume": 0.0,
+            "nonmanifold_edges": 7,
+            "boundary_edges": 7,
+            "vertices": 7,
+            "vertex_count": 7,
+            "edges": 7,
+            "edge_count": 7,
+            "faces": 2,
+            "face_count": 2,
+            "triangle_count": 3
+          }
+        }
+      },
+      "surface_ledger": [
+        {
+          "name": "asymmetric trapezoid",
+          "oriented_cycle": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "material_index": 0,
+          "world_corner_normals": [
+            [
+              0.0,
+              0.0,
+              1.0
+            ],
+            [
+              0.6,
+              0.0,
+              0.8
+            ],
+            [
+              0.0,
+              0.6,
+              0.8
+            ],
+            [
+              -0.6,
+              0.0,
+              0.8
+            ]
+          ]
+        },
+        {
+          "name": "separate triangle",
+          "oriented_cycle": [
+            4,
+            5,
+            6
+          ],
+          "material_index": 1,
+          "world_corner_normals": [
+            [
+              0.0,
+              0.0,
+              1.0
+            ],
+            [
+              0.0,
+              -0.6,
+              0.8
+            ],
+            [
+              0.6,
+              0.0,
+              0.8
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "tetrahedron-identity",
+      "model": "tetrahedron",
+      "operation": "none",
+      "delta": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "pass",
+      "rationale": "Every indexed vertex, oriented face, edge, face material, and corner normal is identical."
+    },
+    {
+      "name": "tetrahedron-offaxis",
+      "model": "tetrahedron",
+      "operation": "none",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "pass",
+      "rationale": "Each indexed point receives the same exactly representable three-axis displacement."
+    },
+    {
+      "name": "tetrahedron-face-permutation",
+      "model": "tetrahedron",
+      "operation": "permute_faces",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "pass",
+      "rationale": "Only aligned polygon rows are permuted; the declared surface ledger is unchanged."
+    },
+    {
+      "name": "tetrahedron-cyclic-aligned",
+      "model": "tetrahedron",
+      "operation": "cycle_aligned",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "pass",
+      "rationale": "Cyclic start changes preserve orientation and each material/normal stays attached to the same surface corner."
+    },
+    {
+      "name": "tetrahedron-edge-serialization",
+      "model": "tetrahedron",
+      "operation": "permute_edges",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "pass",
+      "rationale": "Undirected edge multiset is unchanged by row order and endpoint reversal."
+    },
+    {
+      "name": "asymmetric_polygons-identity",
+      "model": "asymmetric_polygons",
+      "operation": "none",
+      "delta": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "pass",
+      "rationale": "Every indexed vertex, oriented face, edge, face material, and corner normal is identical."
+    },
+    {
+      "name": "asymmetric_polygons-offaxis",
+      "model": "asymmetric_polygons",
+      "operation": "none",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "pass",
+      "rationale": "Each indexed point receives the same exactly representable three-axis displacement."
+    },
+    {
+      "name": "asymmetric_polygons-face-permutation",
+      "model": "asymmetric_polygons",
+      "operation": "permute_faces",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "pass",
+      "rationale": "Only aligned polygon rows are permuted; the declared surface ledger is unchanged."
+    },
+    {
+      "name": "asymmetric_polygons-cyclic-aligned",
+      "model": "asymmetric_polygons",
+      "operation": "cycle_aligned",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "pass",
+      "rationale": "Cyclic start changes preserve orientation and each material/normal stays attached to the same surface corner."
+    },
+    {
+      "name": "asymmetric_polygons-edge-serialization",
+      "model": "asymmetric_polygons",
+      "operation": "permute_edges",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "pass",
+      "rationale": "Undirected edge multiset is unchanged by row order and endpoint reversal."
+    },
+    {
+      "name": "wrong-delta",
+      "model": "tetrahedron",
+      "operation": "wrong_delta",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "fail",
+      "rationale": "All indexed vertices receive an extra x displacement rather than the declared delta."
+    },
+    {
+      "name": "local-deformation",
+      "model": "tetrahedron",
+      "operation": "deform",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "fail",
+      "rationale": "One vertex moves while all other translated positions remain correct."
+    },
+    {
+      "name": "winding-reversal",
+      "model": "tetrahedron",
+      "operation": "reverse_face",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "fail",
+      "rationale": "Reversal changes orientation; cyclic equivalence does not permit it."
+    },
+    {
+      "name": "distinct-topology-change",
+      "model": "asymmetric_polygons",
+      "operation": "different_polygon",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "fail",
+      "rationale": "A new triangle uses a different vertex despite preserving face count; its edge list is updated coherently, so this is an actual topology difference rather than missing boundary evidence."
+    },
+    {
+      "name": "duplicate-one-drop-another",
+      "model": "tetrahedron",
+      "operation": "duplicate_drop",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "unknown",
+      "rationale": "Replacing a surface with another creates an ambiguous duplicate oriented bucket; unsupported evidence cannot pass."
+    },
+    {
+      "name": "face-material-assignment",
+      "model": "tetrahedron",
+      "operation": "swap_assignments",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "fail",
+      "rationale": "Red base and blue x-side exchange materials with the palette unchanged."
+    },
+    {
+      "name": "material-palette",
+      "model": "tetrahedron",
+      "operation": "palette",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "fail",
+      "rationale": "One material roughness differs at its original palette slot."
+    },
+    {
+      "name": "corner-normal-reversal",
+      "model": "tetrahedron",
+      "operation": "reverse_normal",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "fail",
+      "rationale": "The outward base normal is changed to inward at one corner."
+    },
+    {
+      "name": "misaligned-cycle-normals",
+      "model": "asymmetric_polygons",
+      "operation": "cycle_without_normals",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "fail",
+      "rationale": "Distinct corner normals do not follow their vertex when only indices rotate."
+    },
+    {
+      "name": "indexed-edge-change",
+      "model": "asymmetric_polygons",
+      "operation": "edge_change",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "fail",
+      "rationale": "An additional valid loose edge joins vertices 0 and 4 while all polygon boundary edges remain present; the indexed edge multiset differs."
+    },
+    {
+      "name": "edge-multiplicity-change",
+      "model": "tetrahedron",
+      "operation": "edge_duplicate",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "fail",
+      "rationale": "An extra edge changes multiplicity even if all unique edges remain present."
+    },
+    {
+      "name": "vertex-reindex",
+      "model": "tetrahedron",
+      "operation": "reindex_vertices",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "fail",
+      "rationale": "Same rendered indexed mesh under coordinated vertex relabeling is outside this index-preserving contract."
+    },
+    {
+      "name": "palette-remap",
+      "model": "tetrahedron",
+      "operation": "remap_palette",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "fail",
+      "rationale": "Same colors after coordinated palette permutation is outside ordered-palette equivalence."
+    },
+    {
+      "name": "tessellation-equivalent",
+      "model": "asymmetric_polygons",
+      "operation": "tessellate",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "fail",
+      "rationale": "Replacing a polygon with triangles changes original polygon cycles; tessellation equivalence is not promised."
+    },
+    {
+      "name": "missing-evidence",
+      "model": "tetrahedron",
+      "operation": "missing_evidence",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "unknown",
+      "rationale": "The required explicit face-normal evidence is absent."
+    },
+    {
+      "name": "missing-parent",
+      "model": "tetrahedron",
+      "operation": "missing_parent",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "unknown",
+      "rationale": "A translation predicate cannot be proven without its accepted parent observation."
+    },
+    {
+      "name": "ambiguous-oriented-duplicate",
+      "model": "tetrahedron",
+      "operation": "duplicate_bucket",
+      "delta": [
+        0.25,
+        -0.5,
+        0.125
+      ],
+      "tolerance": 0.0,
+      "normal_tolerance_radians": 0.0,
+      "expected": "unknown",
+      "rationale": "Two equally oriented occurrences of the same cycle have no unique polygon correspondence."
+    }
+  ]
+}

@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import ast
 import importlib.metadata
+import importlib.util
 import json
 import os
 from pathlib import Path
 import platform
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import sysconfig
@@ -23,11 +25,57 @@ from experimental_modeling.preview_manifest import MANIFEST, inventory, sha256, 
 
 NAME = "hbcb-review-preview"
 PYTHON_VERSION = "3.13.16"
+PYINSTALLER_VERSION = "6.22.3"
+MACOS_SEAL_CODE = ("from PyInstaller.utils.osx import sign_binary; import sys; "
+                  "sign_binary(sys.argv[1], identity=None, entitlements_file=None, deep=False)")
 EXCLUDES = ["experimental_modeling.sandbox", "experimental_modeling.inspect_scene", "bpy",
             "tkinter", "_tkinter", "idlelib", "test", "unittest", "ensurepip", "pip",
             "setuptools", "sqlite3", "_sqlite3", "curses", "_curses", "readline",
-            "ssl", "_ssl", "_hashlib", "_bz2", "_lzma", "ctypes", "_ctypes",
-            "decimal", "_decimal"]
+            "ssl", "_ssl", "_hashlib", "_bz2", "_lzma", "ctypes", "_ctypes"]
+LIBMPDEC_VERSIONS = {"windows-x64": "4.0.0", "macos-arm64": "4.0.1"}
+
+
+def decimal_notices(target):
+    notices = ["licenses/CPython-LICENSE.txt", "licenses/CPython-incorporated-software.rst",
+               "licenses/CPython-decimal-libmpdec-NOTICES.txt"]
+    if target in LIBMPDEC_VERSIONS:
+        notices.append(f"licenses/CPython-libmpdec-{LIBMPDEC_VERSIONS[target]}-NOTICES.txt")
+    return notices
+
+
+def decimal_component(target):
+    import _decimal
+
+    version = _decimal.__libmpdec_version__
+    expected = LIBMPDEC_VERSIONS.get(target)
+    if expected is not None and version != expected:
+        raise ValueError(f"Unreviewed libmpdec version for {target}: {version}; expected {expected}")
+    return {"component": "libmpdec in CPython _decimal", "version": version,
+            "applicable": expected is not None,
+            "incorporation": ("Static, as selected by the reviewed CPython target build" if expected else
+                              "Local validation only; static incorporation and source identity are not asserted"),
+            "license_files": decimal_notices(target) if expected else [],
+            "notice_catalog": "licenses/sources.json",
+            "notice_catalog_entry": (f"CPython-libmpdec-{expected}-NOTICES.txt" if expected else None)}
+
+
+def bind_decimal_component(component, native, target):
+    matches = [row for row in native if Path(row["file"]).name.lower().startswith("_decimal.")]
+    origin = "extension"
+    if not matches and target == "linux-validation":
+        import _decimal
+
+        spec = importlib.util.find_spec("_decimal")
+        if ("_decimal" in sys.builtin_module_names and spec is not None and spec.origin == "built-in"
+                and getattr(_decimal, "__file__", None) is None):
+            matches = [row for row in native if row["bundled"] and row["component"] == "CPython"
+                       and re.fullmatch(r"libpython[0-9].*\.so(?:\..*)?", Path(row["file"]).name.lower())]
+            origin = "built-in; local validation only, source identity unverified"
+    if len(matches) != 1:
+        raise ValueError("The preview must include the _decimal native module used by fractions.Fraction; "
+                         "a verified Linux built-in requires one bundled libpython")
+    return {**component, "native_file": matches[0]["file"], "native_sha256": matches[0]["sha256"],
+            "runtime_module_origin": origin}
 
 
 def git(*args):
@@ -39,7 +87,7 @@ def write_json(path, value):
 
 
 def dependencies():
-    expected = {"pyinstaller": "6.22.3", "pyinstaller-hooks-contrib": "2026.8",
+    expected = {"pyinstaller": PYINSTALLER_VERSION, "pyinstaller-hooks-contrib": "2026.8",
                 "altgraph": "0.17.5", "packaging": "26.3", "setuptools": "84.0.0"}
     if sys.platform == "win32":
         expected.update({"pefile": "2024.8.26", "pywin32-ctypes": "0.2.3"})
@@ -87,6 +135,93 @@ def collect_notices(bundle):
     return catalog
 
 
+def checked_macos_command(command, timeout):
+    # Keep the helper and its codesign child in one owned process group.
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                               start_new_session=True)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+        if process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, command, output=stdout, stderr=stderr)
+    except BaseException as error:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass  # The owned process group already exited.
+        stdout, stderr = process.communicate()  # Reap only after the group stops.
+        if isinstance(error, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+            for name, value in (("stdout", stdout), ("stderr", stderr)):
+                value = value or getattr(error, name, None) or ""
+                if isinstance(value, bytes):
+                    value = value.decode("utf-8", errors="replace")
+                error.add_note(f"{name} (last 4096 characters): {value[-4096:]}")
+        raise
+    return {"returncode": process.returncode, "stdout": stdout[-4096:], "stderr": stderr[-4096:],
+            "stdout_truncated": len(stdout) > 4096, "stderr_truncated": len(stderr) > 4096}
+
+
+def seal_macos_framework(bundle, target):
+    """Seal the collected framework before package hashes. This does not establish OS trust."""
+    if target != "macos-arm64":
+        return None
+    if sys.platform != "darwin":
+        raise ValueError("Framework sealing must run on macOS")
+    if importlib.metadata.version("pyinstaller") != PYINSTALLER_VERSION:
+        raise ValueError("Framework sealing requires the reviewed PyInstaller version")
+    if bundle.is_symlink():
+        raise ValueError("The build bundle must not be a symlink")
+    bundle = bundle.resolve(strict=True)
+    if any((bundle / name).exists() for name in (MANIFEST, "provenance.json", "source")):
+        raise ValueError("Seal only new build output before package metadata and source archives")
+
+    # PyInstaller signs cached Mach-O files before COLLECT restores the framework.
+    # Seal the complete framework with the same pinned vendor helper.
+    # https://github.com/pyinstaller/pyinstaller/blob/v6.22.3/PyInstaller/utils/osx.py
+    framework = bundle / "_internal/Python.framework"
+    version = framework / "Versions" / ".".join(PYTHON_VERSION.split(".")[:2])
+    directories = [bundle / "_internal", framework, framework / "Versions", version, version / "Resources"]
+    files = [version / "Python", version / "Resources/Info.plist", bundle / NAME]
+    for path in directories + files:
+        if path.is_symlink() or not path.resolve(strict=True).is_relative_to(bundle):
+            raise ValueError("Framework sealing paths must stay in the new build bundle")
+        if not (path.is_dir() if path in directories else path.is_file()):
+            raise ValueError(f"Missing framework sealing input: {path.relative_to(bundle)}")
+        if path in files and path.stat().st_nlink != 1:
+            raise ValueError("Framework sealing inputs must not have hardlinks")
+    links = {framework / "Python": "Versions/Current/Python",
+             framework / "Resources": "Versions/Current/Resources",
+             framework / "Versions/Current": version.name}
+    for path, destination in links.items():
+        if not path.is_symlink() or os.readlink(path) != destination:
+            raise ValueError("The Python framework must have the reviewed internal links")
+    expected = set(directories[1:] + files[:2] + list(links))
+    if set(framework.rglob("*")) | {framework} != expected:
+        raise ValueError("The Python framework layout differs from the reviewed build input")
+    if set(bundle.rglob("*.framework")) != {framework}:
+        raise ValueError("The preview must contain only the reviewed Python framework")
+
+    # No identity, entitlements, or recursive signing. Never sign the whole output.
+    # The child uses this interpreter and its pinned vendor helper. Bound its runtime.
+    signing = checked_macos_command([sys.executable, "-I", "-c", MACOS_SEAL_CODE, str(framework)], timeout=60)
+    seal = version / "_CodeSignature/CodeResources"
+    if (seal.parent.is_symlink() or seal.is_symlink() or not seal.is_file()
+            or not seal.resolve(strict=True).is_relative_to(framework) or seal.stat().st_size == 0):
+        raise ValueError("Framework signing did not produce a resource seal")
+    checks = []
+    for path in (framework, version / "Python", bundle / NAME):
+        command = ["/usr/bin/codesign", "--verify", "--strict", "--verbose=4", str(path)]
+        result = checked_macos_command(command, timeout=30)
+        checks.append({"file": path.relative_to(bundle).as_posix(), **result,
+                       "command": command[:-1] + [path.relative_to(bundle).as_posix()]})
+    return {"scope": "New build output only. No publisher signature or notarization. OS trust is not tested.",
+            "framework": framework.relative_to(bundle).as_posix(),
+            "helper": "PyInstaller.utils.osx.sign_binary", "pyinstaller_version": PYINSTALLER_VERSION,
+            "identity": "ad-hoc", "entitlements": None, "deep": False,
+            "signing": signing,
+            "resource_seal": {"file": seal.relative_to(bundle).as_posix(), "sha256": sha256(seal)},
+            "strict_verification": checks}
+
+
 def native_inventory(bundle, work, target):
     # Record original analysis inputs before removing Microsoft runtime files.
     analysis = ast.literal_eval((work / NAME / "Analysis-00.toc").read_text(encoding="utf-8"))
@@ -120,8 +255,19 @@ def native_inventory(bundle, work, target):
         source = inputs.get(name)
         if any(x in name for x in ("libssl", "libcrypto", "libffi", "libbz2", "liblzma")):
             raise ValueError(f"Unused external native library entered the preview: {name}")
+        # Reviewed target builds incorporate libmpdec into _decimal.
+        # A separate library needs its own source and notice review.
+        if name.startswith(("libmpdec", "mpdec")) and target != "linux-validation":
+            unmapped.append({"name": name, "sha256": sha256(path), "analysis_source": source})
+            continue
         if name.startswith("libz."):
             component, notices = "zlib", ["licenses/zlib-LICENSE.txt"]
+        elif name.startswith("_decimal."):
+            if target in LIBMPDEC_VERSIONS:
+                component = f"CPython _decimal with static libmpdec {LIBMPDEC_VERSIONS[target]}"
+                notices = decimal_notices(target)
+            else:
+                component, notices = "Local Linux validation _decimal/libmpdec (not a distributed target)", []
         elif name.endswith(".pyd") or ".cpython-" in name or name.startswith(("libpython", "python3")) or name == "python":
             component, notices = "CPython", ["licenses/CPython-LICENSE.txt", "licenses/CPython-incorporated-software.rst"]
             # Static incorporated code is invisible to dynamic-library scans.
@@ -173,6 +319,7 @@ def main():
         raise ValueError('Output must be new or empty. No existing package is overwritten')
     out.mkdir(parents=True, exist_ok=True)
     deps = dependencies()
+    decimal = decimal_component(args.target)
     work = out / "work"
     command = [sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", "--onedir", "--console",
                "--noupx", "--name", NAME, "--distpath", str(out / "dist"), "--workpath", str(work),
@@ -186,7 +333,11 @@ def main():
     subprocess.run(command, cwd=ROOT, check=True, timeout=600)
     bundle = out / "dist" / NAME
     collect_notices(bundle)
+    framework_sealing = seal_macos_framework(bundle, args.target)
+    if framework_sealing is not None:
+        write_json(out / "macos-framework-sealing.json", framework_sealing)
     native, excluded = native_inventory(bundle, work, args.target)
+    decimal = bind_decimal_component(decimal, native, args.target)
     (bundle / "source").mkdir()
     with (bundle / "source" / "hbcb-corresponding-source.tar.gz").open("wb") as stream:
         subprocess.run(["git", "archive", "--format=tar.gz", "--prefix=hbcb-source/", tree],
@@ -204,9 +355,10 @@ def main():
                   "setup_python_action": "e797f83bcb11b83ae66e0230d6156d7c80228e7c",
                   "python_distribution": ("Local validation runtime, not for distribution" if args.target == "linux-validation" else "Official python.org runtime via pinned actions/setup-python; installed runtime bytes recorded separately"),
                   "signing": "No publisher signature or notarization; macOS ad-hoc loader signature only",
-                  "changes": "Frozen Python module closure, relocated runtime and static reviewer; unused modules excluded; macOS arm64 thinning; Microsoft runtime not redistributed",
+                  "changes": "Frozen Python module closure, relocated runtime and static reviewer; unused modules excluded; macOS arm64 thinning and final framework resource sealing; Microsoft runtime not redistributed",
                   "excluded_modules": EXCLUDES, "native_components": native, "external_microsoft_runtime": excluded,
                   "static_components": [
+                      decimal,
                       {"component": "HACL* hash code and KaRaMeL support in CPython", "version": "bb3d0dc8d9d15a5cd51094d5b69e70aa09005ff0",
                        "license_files": ["licenses/CPython-hacl-NOTICES.txt", "licenses/Apache-2.0.txt"]},
                       {"component": "BLAKE2 in CPython", "version": "libb2 0.98.1 as vendored in CPython 3.13.16",
@@ -218,6 +370,8 @@ def main():
                        "license_files": ["licenses/PyInstaller-zlib-LICENSE.txt"]}],
                   "system_libraries": "Provided by the target OS, not redistributed",
                   "runtime_network": "127.0.0.1 review server only; no downloads or provider calls"}
+    if framework_sealing is not None:
+        provenance["macos_framework_sealing"] = framework_sealing
     write_json(bundle / "provenance.json", provenance)
     write_json(bundle / MANIFEST, {"schema_version": 1, "files": inventory(bundle)})
     verify(bundle)

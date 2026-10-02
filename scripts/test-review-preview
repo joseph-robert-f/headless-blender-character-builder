@@ -108,8 +108,9 @@ def main():
             before = snapshot(project.root)
             before_bundle = inventory(bundle)
 
-            def start(port=0):
-                process = subprocess.Popen([str(executable), "--project", str(project.root), "--port", str(port)],
+            def start(port=0, selected_project=None):
+                selected_project = selected_project or project
+                process = subprocess.Popen([str(executable), "--project", str(selected_project.root), "--port", str(port)],
                                            cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                            stderr=subprocess.STDOUT, encoding="utf-8", errors="replace", bufsize=1)
                 processes.append(process)
@@ -202,6 +203,25 @@ def main():
             passed("three_runs_backend_write_denials_bound_evidence_static_assets_and_origin_checks")
             passed("graceful_q_shutdown_forced_stop_recovery_and_same_port_reuse")
             passed("project_content_and_directory_preservation")
+
+            # This is synthetic, hash-bound review evidence. It executes the v2
+            # arithmetic inside the extracted application, not Blender source.
+            from test_translation_v2_integration import saved_revision
+            v2_project = initialize(base / "Version 2 project", "Version 2 fixture")
+            saved_revision(v2_project.folder("evidence"), 2, "r0")
+            saved_revision(v2_project.folder("evidence"), 2, "r1", parent="r0")
+            v2_before = snapshot(v2_project.root)
+            process, origin, reader = start(selected_project=v2_project)
+            status, _, data = request(origin, "/api/revisions/r1")
+            check(status == 200 and data["report"]["schema_version"] == 2,
+                  "Version-2 evidence is unavailable in the frozen runtime")
+            check(data["report"]["machine_verified"], "Version-2 checks failed in the frozen runtime")
+            translated = next(row for row in data["report"]["requirements"] if row["kind"] == "translated")
+            check(translated["measured"]["indexed_translation_equal"] is True,
+                  "Exact translation arithmetic did not complete in the frozen runtime")
+            stop(process, reader)
+            check(snapshot(v2_project.root) == v2_before, "Version-2 review changed project files")
+            passed("version_2_exact_translation_in_extracted_runtime_without_project_changes")
 
             with socket.socket() as occupied:
                 occupied.bind(("127.0.0.1", 0))

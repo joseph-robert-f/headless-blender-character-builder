@@ -1,0 +1,6012 @@
+{
+  "baseline_commit": "db205966c49adb140cbffaa5bbb57caa84abd3e1",
+  "scope": "Literal v1 make_report outputs generated solely from git-archived original baseline source. These are compatibility snapshots only, not an independent semantic oracle or evidence of actual Blender/controller execution. Known incorrect passes are intentionally preserved.",
+  "provenance": {
+    "fixture_geometry": "Hand-derived outward tetrahedron adapted from translated_v1_probe.py",
+    "evaluator_source_sha256": {
+      "experimental_modeling/acceptance.py": "ef33b5fd67b4a56b83f3f61c98ac9c5d8978ca6083041050ef807f807d82ff4f",
+      "experimental_modeling/contracts.py": "13311d41bc1af8514d27b318cae2680b8290b920a8c18ae044ab3c329499eb91",
+      "experimental_modeling/verification.py": "0ffe3e54eb68dafe928cc54c52347ba9f3a9bfad94cae0e6ca5436f5587882bd",
+      "experimental_modeling/requirements.py": "b0316cba05e0097121f4dd68d5a3cff551c8aa7527562ef5ade127fc89a1c121"
+    },
+    "captured_from_immutable_baseline_export": true,
+    "baseline_export_path_note": "Generation imported only original baseline package from a separate temporary directory; no modified evaluator was imported."
+  },
+  "canonical_hash_contract": "SHA-256 of UTF-8 json.dumps(report, sort_keys=True, separators=(comma,colon), allow_nan=False)",
+  "cases": [
+    {
+      "name": "accepted",
+      "classification": "legacy-compatibility",
+      "independent_surface_semantics": true,
+      "result": {
+        "schema_version": 1,
+        "revision": "frozen-accepted",
+        "parent": "hand-tetra-baseline",
+        "status": "accepted",
+        "jobs": {
+          "author": {
+            "exit_code": 0
+          },
+          "inspect": {
+            "exit_code": 0
+          },
+          "roundtrip": {
+            "exit_code": 0
+          },
+          "reopen": {
+            "exit_code": 0
+          }
+        },
+        "provenance_verified": true,
+        "source_files": {},
+        "policy_hash": "1640c5738574cc23e661e75ac911465f9f21ed3f1b620201a4adaac6b481b982",
+        "runtime_hash": "synthetic-legacy-fixture",
+        "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+        "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "requirements_lock_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "execution_mode": "synthetic-offline",
+        "security_boundary": "not-a-model-execution"
+      },
+      "policy": {
+        "schema_version": 1,
+        "parts": [
+          "body"
+        ],
+        "changed_parts": [
+          "body"
+        ],
+        "constraints": [
+          {
+            "kind": "translated",
+            "part": "body",
+            "data": {
+              "delta": [
+                0,
+                0,
+                0.125
+              ],
+              "tolerance": 1e-06
+            }
+          }
+        ],
+        "profile": "scene"
+      },
+      "requirements": {
+        "schema_version": 1,
+        "requirements": []
+      },
+      "previous": {
+        "schema_version": 1,
+        "trusted_observation": true,
+        "units": {
+          "length": "meter",
+          "scale_length": 1.0,
+          "area": "square_meter",
+          "volume": "cubic_meter"
+        },
+        "visibility_policy": "All semantic geometry is included; source visibility flags are ignored",
+        "material_contract": "Constant base_color, alpha, metallic, roughness; default other Principled inputs",
+        "runtime": {
+          "blender_version": "synthetic-no-blender",
+          "python_version": "synthetic",
+          "autoexec_enabled": false
+        },
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "local_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "face_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                1
+              ],
+              [
+                0,
+                2
+              ],
+              [
+                0,
+                3
+              ],
+              [
+                1,
+                2
+              ],
+              [
+                1,
+                3
+              ],
+              [
+                2,
+                3
+              ]
+            ],
+            "triangle_material_indices": [
+              0,
+              0,
+              1,
+              1
+            ],
+            "triangle_world_normals": [
+              [
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ]
+              ]
+            ],
+            "materials": [
+              {
+                "base_color": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              },
+              {
+                "base_color": [
+                  0.0,
+                  0.0,
+                  1.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              }
+            ],
+            "material_hash": "5c5ca626b5ed6b6fa3719692b50188661a52a3f58400ccbd506e45cf09e28dbc",
+            "geometry_hash": "hand-fixture-geometry",
+            "transform_hash": "2163c9d76567ed72097e8c4d524c30a2163c6be4ef7565c48b3eb350242b07ae",
+            "matrix_world": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "normals": [
+              [
+                -0.5773502691896258,
+                -0.5773502691896258,
+                -0.5773502691896258
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "corner_normals": [
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ]
+            ],
+            "world_bounds": {
+              "min": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "max": [
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "vertices": 4,
+            "vertex_count": 4,
+            "edges": 6,
+            "edge_count": 6,
+            "faces": 4,
+            "face_count": 4,
+            "triangle_count": 4,
+            "nonmanifold_edges": 0,
+            "boundary_edges": 0,
+            "surface_area": 2.3660254037844384,
+            "signed_volume": 0.16666666666666666
+          }
+        }
+      },
+      "observation": {
+        "schema_version": 1,
+        "trusted_observation": true,
+        "units": {
+          "length": "meter",
+          "scale_length": 1.0,
+          "area": "square_meter",
+          "volume": "cubic_meter"
+        },
+        "visibility_policy": "All semantic geometry is included; source visibility flags are ignored",
+        "material_contract": "Constant base_color, alpha, metallic, roughness; default other Principled inputs",
+        "runtime": {
+          "blender_version": "synthetic-no-blender",
+          "python_version": "synthetic",
+          "autoexec_enabled": false
+        },
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0.0,
+                0.0,
+                0.125
+              ],
+              [
+                1.0,
+                0.0,
+                0.125
+              ],
+              [
+                0.0,
+                1.0,
+                0.125
+              ],
+              [
+                0.0,
+                0.0,
+                1.125
+              ]
+            ],
+            "local_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "face_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                1
+              ],
+              [
+                0,
+                2
+              ],
+              [
+                0,
+                3
+              ],
+              [
+                1,
+                2
+              ],
+              [
+                1,
+                3
+              ],
+              [
+                2,
+                3
+              ]
+            ],
+            "triangle_material_indices": [
+              0,
+              0,
+              1,
+              1
+            ],
+            "triangle_world_normals": [
+              [
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ]
+              ]
+            ],
+            "materials": [
+              {
+                "base_color": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              },
+              {
+                "base_color": [
+                  0.0,
+                  0.0,
+                  1.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              }
+            ],
+            "material_hash": "5c5ca626b5ed6b6fa3719692b50188661a52a3f58400ccbd506e45cf09e28dbc",
+            "geometry_hash": "hand-fixture-geometry",
+            "transform_hash": "a6e200d82e118b88f8005f7c93e19930e4b0a23a679271866389f06ff5911241",
+            "matrix_world": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0,
+                0.125
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "normals": [
+              [
+                -0.5773502691896258,
+                -0.5773502691896258,
+                -0.5773502691896258
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "corner_normals": [
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ]
+            ],
+            "world_bounds": {
+              "min": [
+                0.0,
+                0.0,
+                0.125
+              ],
+              "max": [
+                1.0,
+                1.0,
+                1.125
+              ]
+            },
+            "vertices": 4,
+            "vertex_count": 4,
+            "edges": 6,
+            "edge_count": 6,
+            "faces": 4,
+            "face_count": 4,
+            "triangle_count": 4,
+            "nonmanifold_edges": 0,
+            "boundary_edges": 0,
+            "surface_area": 2.3660254037844384,
+            "signed_volume": 0.16666666666666666
+          }
+        }
+      },
+      "report": {
+        "schema_version": 1,
+        "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+        "requirements": [
+          {
+            "id": "pipeline-author",
+            "title": "Author job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "author",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-inspect",
+            "title": "Independent inspection job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "inspect",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-roundtrip",
+            "title": "GLB roundtrip",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "roundtrip",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-reopen",
+            "title": "Saved Blender scene reopened",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "reopen",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "parent-reference",
+            "title": "Accepted baseline available and hash-bound",
+            "kind": "integrity",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "observation_available": true
+            },
+            "expected": {
+              "bound_parent": true
+            },
+            "evidence": {
+              "stage": "preservation_comparison"
+            },
+            "coverage": "A revision cannot skip preservation checks merely because its baseline observation is missing."
+          },
+          {
+            "id": "pipeline-provenance",
+            "title": "Source, rules and previous revision integrity",
+            "kind": "integrity",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "verified": true
+            },
+            "expected": {
+              "verified": true
+            },
+            "evidence": {
+              "stage": "controller_integrity"
+            },
+            "coverage": "Controller-checked file hashes; native mode is not a hostile-code security boundary."
+          },
+          {
+            "id": "policy-overall",
+            "title": "Declared parts, geometric policy and revision scope",
+            "kind": "policy",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "failures": []
+            },
+            "expected": {
+              "all_declared_policy_checks_pass": true
+            },
+            "evidence": {
+              "stage": "policy_geometry"
+            },
+            "coverage": "Includes exact semantic-part inventory, removed/new-part scope and complete preserved-part comparisons."
+          },
+          {
+            "id": "policy-001",
+            "title": "body: translated",
+            "kind": "translated",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "check_completed": true
+            },
+            "expected": {
+              "delta": [
+                0,
+                0,
+                0.125
+              ],
+              "tolerance": 1e-06
+            },
+            "evidence": {
+              "stage": "policy_geometry",
+              "part": "body"
+            },
+            "coverage": "Version-1 geometric policy check over the inspected mesh."
+          }
+        ],
+        "summary": {
+          "pass": 8,
+          "fail": 0,
+          "unknown": 0
+        },
+        "requirements_satisfied": true,
+        "revision": "frozen-accepted",
+        "parent": "hand-tetra-baseline",
+        "build_status": "accepted",
+        "execution_mode": "synthetic-offline",
+        "security_boundary": "not-a-model-execution",
+        "bindings": {
+          "policy_hash": "1640c5738574cc23e661e75ac911465f9f21ed3f1b620201a4adaac6b481b982",
+          "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+          "runtime_hash": "synthetic-legacy-fixture",
+          "source_files": {
+            "count": 0,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+          },
+          "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "requirements_lock_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "machine_verified": true,
+        "human_accepted": false
+      },
+      "report_sha256": "ca1bad32984a62c46e309003d55f4401457e7ef49df20fdc3ca86906d46b837e"
+    },
+    {
+      "name": "face-order-rejected",
+      "classification": "legacy-compatibility",
+      "independent_surface_semantics": true,
+      "result": {
+        "schema_version": 1,
+        "revision": "frozen-face-order-rejected",
+        "parent": "hand-tetra-baseline",
+        "status": "rejected",
+        "jobs": {
+          "author": {
+            "exit_code": 0
+          },
+          "inspect": {
+            "exit_code": 0
+          },
+          "roundtrip": {
+            "exit_code": 0
+          },
+          "reopen": {
+            "exit_code": 0
+          }
+        },
+        "provenance_verified": true,
+        "source_files": {},
+        "policy_hash": "1640c5738574cc23e661e75ac911465f9f21ed3f1b620201a4adaac6b481b982",
+        "runtime_hash": "synthetic-legacy-fixture",
+        "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+        "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "requirements_lock_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "execution_mode": "synthetic-offline",
+        "security_boundary": "not-a-model-execution"
+      },
+      "policy": {
+        "schema_version": 1,
+        "parts": [
+          "body"
+        ],
+        "changed_parts": [
+          "body"
+        ],
+        "constraints": [
+          {
+            "kind": "translated",
+            "part": "body",
+            "data": {
+              "delta": [
+                0,
+                0,
+                0.125
+              ],
+              "tolerance": 1e-06
+            }
+          }
+        ],
+        "profile": "scene"
+      },
+      "requirements": {
+        "schema_version": 1,
+        "requirements": []
+      },
+      "previous": {
+        "schema_version": 1,
+        "trusted_observation": true,
+        "units": {
+          "length": "meter",
+          "scale_length": 1.0,
+          "area": "square_meter",
+          "volume": "cubic_meter"
+        },
+        "visibility_policy": "All semantic geometry is included; source visibility flags are ignored",
+        "material_contract": "Constant base_color, alpha, metallic, roughness; default other Principled inputs",
+        "runtime": {
+          "blender_version": "synthetic-no-blender",
+          "python_version": "synthetic",
+          "autoexec_enabled": false
+        },
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "local_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "face_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                1
+              ],
+              [
+                0,
+                2
+              ],
+              [
+                0,
+                3
+              ],
+              [
+                1,
+                2
+              ],
+              [
+                1,
+                3
+              ],
+              [
+                2,
+                3
+              ]
+            ],
+            "triangle_material_indices": [
+              0,
+              0,
+              1,
+              1
+            ],
+            "triangle_world_normals": [
+              [
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ]
+              ]
+            ],
+            "materials": [
+              {
+                "base_color": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              },
+              {
+                "base_color": [
+                  0.0,
+                  0.0,
+                  1.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              }
+            ],
+            "material_hash": "5c5ca626b5ed6b6fa3719692b50188661a52a3f58400ccbd506e45cf09e28dbc",
+            "geometry_hash": "hand-fixture-geometry",
+            "transform_hash": "2163c9d76567ed72097e8c4d524c30a2163c6be4ef7565c48b3eb350242b07ae",
+            "matrix_world": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "normals": [
+              [
+                -0.5773502691896258,
+                -0.5773502691896258,
+                -0.5773502691896258
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "corner_normals": [
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ]
+            ],
+            "world_bounds": {
+              "min": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "max": [
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "vertices": 4,
+            "vertex_count": 4,
+            "edges": 6,
+            "edge_count": 6,
+            "faces": 4,
+            "face_count": 4,
+            "triangle_count": 4,
+            "nonmanifold_edges": 0,
+            "boundary_edges": 0,
+            "surface_area": 2.3660254037844384,
+            "signed_volume": 0.16666666666666666
+          }
+        }
+      },
+      "observation": {
+        "schema_version": 1,
+        "trusted_observation": true,
+        "units": {
+          "length": "meter",
+          "scale_length": 1.0,
+          "area": "square_meter",
+          "volume": "cubic_meter"
+        },
+        "visibility_policy": "All semantic geometry is included; source visibility flags are ignored",
+        "material_contract": "Constant base_color, alpha, metallic, roughness; default other Principled inputs",
+        "runtime": {
+          "blender_version": "synthetic-no-blender",
+          "python_version": "synthetic",
+          "autoexec_enabled": false
+        },
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0.0,
+                0.0,
+                0.125
+              ],
+              [
+                1.0,
+                0.0,
+                0.125
+              ],
+              [
+                0.0,
+                1.0,
+                0.125
+              ],
+              [
+                0.0,
+                0.0,
+                1.125
+              ]
+            ],
+            "local_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "face_indices": [
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                1,
+                2,
+                3
+              ],
+              [
+                0,
+                1,
+                3
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                1,
+                2,
+                3
+              ],
+              [
+                0,
+                1,
+                3
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                1
+              ],
+              [
+                0,
+                2
+              ],
+              [
+                0,
+                3
+              ],
+              [
+                1,
+                2
+              ],
+              [
+                1,
+                3
+              ],
+              [
+                2,
+                3
+              ]
+            ],
+            "triangle_material_indices": [
+              1,
+              0,
+              1,
+              0
+            ],
+            "triangle_world_normals": [
+              [
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              [
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              ]
+            ],
+            "materials": [
+              {
+                "base_color": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              },
+              {
+                "base_color": [
+                  0.0,
+                  0.0,
+                  1.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              }
+            ],
+            "material_hash": "5c5ca626b5ed6b6fa3719692b50188661a52a3f58400ccbd506e45cf09e28dbc",
+            "geometry_hash": "hand-fixture-geometry",
+            "transform_hash": "a6e200d82e118b88f8005f7c93e19930e4b0a23a679271866389f06ff5911241",
+            "matrix_world": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0,
+                0.125
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "normals": [
+              [
+                -0.5773502691896258,
+                -0.5773502691896258,
+                -0.5773502691896258
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "corner_normals": [
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ]
+            ],
+            "world_bounds": {
+              "min": [
+                0.0,
+                0.0,
+                0.125
+              ],
+              "max": [
+                1.0,
+                1.0,
+                1.125
+              ]
+            },
+            "vertices": 4,
+            "vertex_count": 4,
+            "edges": 6,
+            "edge_count": 6,
+            "faces": 4,
+            "face_count": 4,
+            "triangle_count": 4,
+            "nonmanifold_edges": 0,
+            "boundary_edges": 0,
+            "surface_area": 2.3660254037844384,
+            "signed_volume": 0.16666666666666666
+          }
+        }
+      },
+      "report": {
+        "schema_version": 1,
+        "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+        "requirements": [
+          {
+            "id": "pipeline-author",
+            "title": "Author job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "author",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-inspect",
+            "title": "Independent inspection job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "inspect",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-roundtrip",
+            "title": "GLB roundtrip",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "roundtrip",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-reopen",
+            "title": "Saved Blender scene reopened",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "reopen",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "parent-reference",
+            "title": "Accepted baseline available and hash-bound",
+            "kind": "integrity",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "observation_available": true
+            },
+            "expected": {
+              "bound_parent": true
+            },
+            "evidence": {
+              "stage": "preservation_comparison"
+            },
+            "coverage": "A revision cannot skip preservation checks merely because its baseline observation is missing."
+          },
+          {
+            "id": "pipeline-provenance",
+            "title": "Source, rules and previous revision integrity",
+            "kind": "integrity",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "verified": true
+            },
+            "expected": {
+              "verified": true
+            },
+            "evidence": {
+              "stage": "controller_integrity"
+            },
+            "coverage": "Controller-checked file hashes; native mode is not a hostile-code security boundary."
+          },
+          {
+            "id": "policy-overall",
+            "title": "Declared parts, geometric policy and revision scope",
+            "kind": "policy",
+            "hard": true,
+            "applicable": true,
+            "status": "fail",
+            "measured": {
+              "failures": [
+                {
+                  "check": "translated",
+                  "part": "body",
+                  "measured": 0.0,
+                  "expected": {
+                    "delta": [
+                      0,
+                      0,
+                      0.125
+                    ],
+                    "tolerance": 1e-06
+                  }
+                }
+              ]
+            },
+            "expected": {
+              "all_declared_policy_checks_pass": true
+            },
+            "evidence": {
+              "stage": "policy_geometry"
+            },
+            "coverage": "Includes exact semantic-part inventory, removed/new-part scope and complete preserved-part comparisons."
+          },
+          {
+            "id": "policy-001",
+            "title": "body: translated",
+            "kind": "translated",
+            "hard": true,
+            "applicable": true,
+            "status": "fail",
+            "measured": [
+              {
+                "check": "translated",
+                "part": "body",
+                "measured": 0.0,
+                "expected": {
+                  "delta": [
+                    0,
+                    0,
+                    0.125
+                  ],
+                  "tolerance": 1e-06
+                }
+              }
+            ],
+            "expected": {
+              "delta": [
+                0,
+                0,
+                0.125
+              ],
+              "tolerance": 1e-06
+            },
+            "evidence": {
+              "stage": "policy_geometry",
+              "part": "body"
+            },
+            "coverage": "Version-1 geometric policy check over the inspected mesh."
+          }
+        ],
+        "summary": {
+          "pass": 6,
+          "fail": 2,
+          "unknown": 0
+        },
+        "requirements_satisfied": true,
+        "revision": "frozen-face-order-rejected",
+        "parent": "hand-tetra-baseline",
+        "build_status": "rejected",
+        "execution_mode": "synthetic-offline",
+        "security_boundary": "not-a-model-execution",
+        "bindings": {
+          "policy_hash": "1640c5738574cc23e661e75ac911465f9f21ed3f1b620201a4adaac6b481b982",
+          "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+          "runtime_hash": "synthetic-legacy-fixture",
+          "source_files": {
+            "count": 0,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+          },
+          "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "requirements_lock_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "machine_verified": false,
+        "human_accepted": false
+      },
+      "report_sha256": "8f76a24b7db147b488fb05c800be0078ca3fe5d114ac59bf89536039465006e9"
+    },
+    {
+      "name": "deformed-rejected",
+      "classification": "legacy-compatibility",
+      "independent_surface_semantics": false,
+      "result": {
+        "schema_version": 1,
+        "revision": "frozen-deformed-rejected",
+        "parent": "hand-tetra-baseline",
+        "status": "rejected",
+        "jobs": {
+          "author": {
+            "exit_code": 0
+          },
+          "inspect": {
+            "exit_code": 0
+          },
+          "roundtrip": {
+            "exit_code": 0
+          },
+          "reopen": {
+            "exit_code": 0
+          }
+        },
+        "provenance_verified": true,
+        "source_files": {},
+        "policy_hash": "1640c5738574cc23e661e75ac911465f9f21ed3f1b620201a4adaac6b481b982",
+        "runtime_hash": "synthetic-legacy-fixture",
+        "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+        "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "requirements_lock_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "execution_mode": "synthetic-offline",
+        "security_boundary": "not-a-model-execution"
+      },
+      "policy": {
+        "schema_version": 1,
+        "parts": [
+          "body"
+        ],
+        "changed_parts": [
+          "body"
+        ],
+        "constraints": [
+          {
+            "kind": "translated",
+            "part": "body",
+            "data": {
+              "delta": [
+                0,
+                0,
+                0.125
+              ],
+              "tolerance": 1e-06
+            }
+          }
+        ],
+        "profile": "scene"
+      },
+      "requirements": {
+        "schema_version": 1,
+        "requirements": []
+      },
+      "previous": {
+        "schema_version": 1,
+        "trusted_observation": true,
+        "units": {
+          "length": "meter",
+          "scale_length": 1.0,
+          "area": "square_meter",
+          "volume": "cubic_meter"
+        },
+        "visibility_policy": "All semantic geometry is included; source visibility flags are ignored",
+        "material_contract": "Constant base_color, alpha, metallic, roughness; default other Principled inputs",
+        "runtime": {
+          "blender_version": "synthetic-no-blender",
+          "python_version": "synthetic",
+          "autoexec_enabled": false
+        },
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "local_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "face_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                1
+              ],
+              [
+                0,
+                2
+              ],
+              [
+                0,
+                3
+              ],
+              [
+                1,
+                2
+              ],
+              [
+                1,
+                3
+              ],
+              [
+                2,
+                3
+              ]
+            ],
+            "triangle_material_indices": [
+              0,
+              0,
+              1,
+              1
+            ],
+            "triangle_world_normals": [
+              [
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ]
+              ]
+            ],
+            "materials": [
+              {
+                "base_color": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              },
+              {
+                "base_color": [
+                  0.0,
+                  0.0,
+                  1.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              }
+            ],
+            "material_hash": "5c5ca626b5ed6b6fa3719692b50188661a52a3f58400ccbd506e45cf09e28dbc",
+            "geometry_hash": "hand-fixture-geometry",
+            "transform_hash": "2163c9d76567ed72097e8c4d524c30a2163c6be4ef7565c48b3eb350242b07ae",
+            "matrix_world": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "normals": [
+              [
+                -0.5773502691896258,
+                -0.5773502691896258,
+                -0.5773502691896258
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "corner_normals": [
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ]
+            ],
+            "world_bounds": {
+              "min": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "max": [
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "vertices": 4,
+            "vertex_count": 4,
+            "edges": 6,
+            "edge_count": 6,
+            "faces": 4,
+            "face_count": 4,
+            "triangle_count": 4,
+            "nonmanifold_edges": 0,
+            "boundary_edges": 0,
+            "surface_area": 2.3660254037844384,
+            "signed_volume": 0.16666666666666666
+          }
+        }
+      },
+      "observation": {
+        "schema_version": 1,
+        "trusted_observation": true,
+        "units": {
+          "length": "meter",
+          "scale_length": 1.0,
+          "area": "square_meter",
+          "volume": "cubic_meter"
+        },
+        "visibility_policy": "All semantic geometry is included; source visibility flags are ignored",
+        "material_contract": "Constant base_color, alpha, metallic, roughness; default other Principled inputs",
+        "runtime": {
+          "blender_version": "synthetic-no-blender",
+          "python_version": "synthetic",
+          "autoexec_enabled": false
+        },
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0.25,
+                0.0,
+                0.125
+              ],
+              [
+                1.0,
+                0.0,
+                0.125
+              ],
+              [
+                0.0,
+                1.0,
+                0.125
+              ],
+              [
+                0.0,
+                0.0,
+                1.125
+              ]
+            ],
+            "local_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "face_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                1
+              ],
+              [
+                0,
+                2
+              ],
+              [
+                0,
+                3
+              ],
+              [
+                1,
+                2
+              ],
+              [
+                1,
+                3
+              ],
+              [
+                2,
+                3
+              ]
+            ],
+            "triangle_material_indices": [
+              0,
+              0,
+              1,
+              1
+            ],
+            "triangle_world_normals": [
+              [
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ]
+              ]
+            ],
+            "materials": [
+              {
+                "base_color": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              },
+              {
+                "base_color": [
+                  0.0,
+                  0.0,
+                  1.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              }
+            ],
+            "material_hash": "5c5ca626b5ed6b6fa3719692b50188661a52a3f58400ccbd506e45cf09e28dbc",
+            "geometry_hash": "hand-fixture-geometry",
+            "transform_hash": "a6e200d82e118b88f8005f7c93e19930e4b0a23a679271866389f06ff5911241",
+            "matrix_world": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0,
+                0.125
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "normals": [
+              [
+                -0.5773502691896258,
+                -0.5773502691896258,
+                -0.5773502691896258
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "corner_normals": [
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ]
+            ],
+            "world_bounds": {
+              "min": [
+                0.0,
+                0.0,
+                0.125
+              ],
+              "max": [
+                1.0,
+                1.0,
+                1.125
+              ]
+            },
+            "vertices": 4,
+            "vertex_count": 4,
+            "edges": 6,
+            "edge_count": 6,
+            "faces": 4,
+            "face_count": 4,
+            "triangle_count": 4,
+            "nonmanifold_edges": 0,
+            "boundary_edges": 0,
+            "surface_area": 2.3660254037844384,
+            "signed_volume": 0.16666666666666666
+          }
+        }
+      },
+      "report": {
+        "schema_version": 1,
+        "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+        "requirements": [
+          {
+            "id": "pipeline-author",
+            "title": "Author job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "author",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-inspect",
+            "title": "Independent inspection job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "inspect",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-roundtrip",
+            "title": "GLB roundtrip",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "roundtrip",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-reopen",
+            "title": "Saved Blender scene reopened",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "reopen",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "parent-reference",
+            "title": "Accepted baseline available and hash-bound",
+            "kind": "integrity",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "observation_available": true
+            },
+            "expected": {
+              "bound_parent": true
+            },
+            "evidence": {
+              "stage": "preservation_comparison"
+            },
+            "coverage": "A revision cannot skip preservation checks merely because its baseline observation is missing."
+          },
+          {
+            "id": "pipeline-provenance",
+            "title": "Source, rules and previous revision integrity",
+            "kind": "integrity",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "verified": true
+            },
+            "expected": {
+              "verified": true
+            },
+            "evidence": {
+              "stage": "controller_integrity"
+            },
+            "coverage": "Controller-checked file hashes; native mode is not a hostile-code security boundary."
+          },
+          {
+            "id": "policy-overall",
+            "title": "Declared parts, geometric policy and revision scope",
+            "kind": "policy",
+            "hard": true,
+            "applicable": true,
+            "status": "fail",
+            "measured": {
+              "failures": [
+                {
+                  "check": "translated",
+                  "part": "body",
+                  "measured": 0.25,
+                  "expected": {
+                    "delta": [
+                      0,
+                      0,
+                      0.125
+                    ],
+                    "tolerance": 1e-06
+                  }
+                }
+              ]
+            },
+            "expected": {
+              "all_declared_policy_checks_pass": true
+            },
+            "evidence": {
+              "stage": "policy_geometry"
+            },
+            "coverage": "Includes exact semantic-part inventory, removed/new-part scope and complete preserved-part comparisons."
+          },
+          {
+            "id": "policy-001",
+            "title": "body: translated",
+            "kind": "translated",
+            "hard": true,
+            "applicable": true,
+            "status": "fail",
+            "measured": [
+              {
+                "check": "translated",
+                "part": "body",
+                "measured": 0.25,
+                "expected": {
+                  "delta": [
+                    0,
+                    0,
+                    0.125
+                  ],
+                  "tolerance": 1e-06
+                }
+              }
+            ],
+            "expected": {
+              "delta": [
+                0,
+                0,
+                0.125
+              ],
+              "tolerance": 1e-06
+            },
+            "evidence": {
+              "stage": "policy_geometry",
+              "part": "body"
+            },
+            "coverage": "Version-1 geometric policy check over the inspected mesh."
+          }
+        ],
+        "summary": {
+          "pass": 6,
+          "fail": 2,
+          "unknown": 0
+        },
+        "requirements_satisfied": true,
+        "revision": "frozen-deformed-rejected",
+        "parent": "hand-tetra-baseline",
+        "build_status": "rejected",
+        "execution_mode": "synthetic-offline",
+        "security_boundary": "not-a-model-execution",
+        "bindings": {
+          "policy_hash": "1640c5738574cc23e661e75ac911465f9f21ed3f1b620201a4adaac6b481b982",
+          "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+          "runtime_hash": "synthetic-legacy-fixture",
+          "source_files": {
+            "count": 0,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+          },
+          "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "requirements_lock_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "machine_verified": false,
+        "human_accepted": false
+      },
+      "report_sha256": "8c68dfa9c9141d711e98682a2b7f987633b6285ca773dbe276e7a858352ed13d"
+    },
+    {
+      "name": "material-palette-rejected",
+      "classification": "legacy-compatibility",
+      "independent_surface_semantics": false,
+      "result": {
+        "schema_version": 1,
+        "revision": "frozen-material-palette-rejected",
+        "parent": "hand-tetra-baseline",
+        "status": "rejected",
+        "jobs": {
+          "author": {
+            "exit_code": 0
+          },
+          "inspect": {
+            "exit_code": 0
+          },
+          "roundtrip": {
+            "exit_code": 0
+          },
+          "reopen": {
+            "exit_code": 0
+          }
+        },
+        "provenance_verified": true,
+        "source_files": {},
+        "policy_hash": "1640c5738574cc23e661e75ac911465f9f21ed3f1b620201a4adaac6b481b982",
+        "runtime_hash": "synthetic-legacy-fixture",
+        "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+        "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "requirements_lock_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "execution_mode": "synthetic-offline",
+        "security_boundary": "not-a-model-execution"
+      },
+      "policy": {
+        "schema_version": 1,
+        "parts": [
+          "body"
+        ],
+        "changed_parts": [
+          "body"
+        ],
+        "constraints": [
+          {
+            "kind": "translated",
+            "part": "body",
+            "data": {
+              "delta": [
+                0,
+                0,
+                0.125
+              ],
+              "tolerance": 1e-06
+            }
+          }
+        ],
+        "profile": "scene"
+      },
+      "requirements": {
+        "schema_version": 1,
+        "requirements": []
+      },
+      "previous": {
+        "schema_version": 1,
+        "trusted_observation": true,
+        "units": {
+          "length": "meter",
+          "scale_length": 1.0,
+          "area": "square_meter",
+          "volume": "cubic_meter"
+        },
+        "visibility_policy": "All semantic geometry is included; source visibility flags are ignored",
+        "material_contract": "Constant base_color, alpha, metallic, roughness; default other Principled inputs",
+        "runtime": {
+          "blender_version": "synthetic-no-blender",
+          "python_version": "synthetic",
+          "autoexec_enabled": false
+        },
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "local_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "face_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                1
+              ],
+              [
+                0,
+                2
+              ],
+              [
+                0,
+                3
+              ],
+              [
+                1,
+                2
+              ],
+              [
+                1,
+                3
+              ],
+              [
+                2,
+                3
+              ]
+            ],
+            "triangle_material_indices": [
+              0,
+              0,
+              1,
+              1
+            ],
+            "triangle_world_normals": [
+              [
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ]
+              ]
+            ],
+            "materials": [
+              {
+                "base_color": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              },
+              {
+                "base_color": [
+                  0.0,
+                  0.0,
+                  1.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              }
+            ],
+            "material_hash": "5c5ca626b5ed6b6fa3719692b50188661a52a3f58400ccbd506e45cf09e28dbc",
+            "geometry_hash": "hand-fixture-geometry",
+            "transform_hash": "2163c9d76567ed72097e8c4d524c30a2163c6be4ef7565c48b3eb350242b07ae",
+            "matrix_world": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "normals": [
+              [
+                -0.5773502691896258,
+                -0.5773502691896258,
+                -0.5773502691896258
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "corner_normals": [
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ]
+            ],
+            "world_bounds": {
+              "min": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "max": [
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "vertices": 4,
+            "vertex_count": 4,
+            "edges": 6,
+            "edge_count": 6,
+            "faces": 4,
+            "face_count": 4,
+            "triangle_count": 4,
+            "nonmanifold_edges": 0,
+            "boundary_edges": 0,
+            "surface_area": 2.3660254037844384,
+            "signed_volume": 0.16666666666666666
+          }
+        }
+      },
+      "observation": {
+        "schema_version": 1,
+        "trusted_observation": true,
+        "units": {
+          "length": "meter",
+          "scale_length": 1.0,
+          "area": "square_meter",
+          "volume": "cubic_meter"
+        },
+        "visibility_policy": "All semantic geometry is included; source visibility flags are ignored",
+        "material_contract": "Constant base_color, alpha, metallic, roughness; default other Principled inputs",
+        "runtime": {
+          "blender_version": "synthetic-no-blender",
+          "python_version": "synthetic",
+          "autoexec_enabled": false
+        },
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0.0,
+                0.0,
+                0.125
+              ],
+              [
+                1.0,
+                0.0,
+                0.125
+              ],
+              [
+                0.0,
+                1.0,
+                0.125
+              ],
+              [
+                0.0,
+                0.0,
+                1.125
+              ]
+            ],
+            "local_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "face_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                1
+              ],
+              [
+                0,
+                2
+              ],
+              [
+                0,
+                3
+              ],
+              [
+                1,
+                2
+              ],
+              [
+                1,
+                3
+              ],
+              [
+                2,
+                3
+              ]
+            ],
+            "triangle_material_indices": [
+              0,
+              0,
+              1,
+              1
+            ],
+            "triangle_world_normals": [
+              [
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ]
+              ]
+            ],
+            "materials": [
+              {
+                "base_color": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.75
+              },
+              {
+                "base_color": [
+                  0.0,
+                  0.0,
+                  1.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              }
+            ],
+            "material_hash": "5a13892a0573eabbf06a6c429db178cc9fd5ba7e0f953bc353192ee0a2f1237b",
+            "geometry_hash": "hand-fixture-geometry",
+            "transform_hash": "a6e200d82e118b88f8005f7c93e19930e4b0a23a679271866389f06ff5911241",
+            "matrix_world": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0,
+                0.125
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "normals": [
+              [
+                -0.5773502691896258,
+                -0.5773502691896258,
+                -0.5773502691896258
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "corner_normals": [
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ]
+            ],
+            "world_bounds": {
+              "min": [
+                0.0,
+                0.0,
+                0.125
+              ],
+              "max": [
+                1.0,
+                1.0,
+                1.125
+              ]
+            },
+            "vertices": 4,
+            "vertex_count": 4,
+            "edges": 6,
+            "edge_count": 6,
+            "faces": 4,
+            "face_count": 4,
+            "triangle_count": 4,
+            "nonmanifold_edges": 0,
+            "boundary_edges": 0,
+            "surface_area": 2.3660254037844384,
+            "signed_volume": 0.16666666666666666
+          }
+        }
+      },
+      "report": {
+        "schema_version": 1,
+        "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+        "requirements": [
+          {
+            "id": "pipeline-author",
+            "title": "Author job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "author",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-inspect",
+            "title": "Independent inspection job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "inspect",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-roundtrip",
+            "title": "GLB roundtrip",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "roundtrip",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-reopen",
+            "title": "Saved Blender scene reopened",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "reopen",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "parent-reference",
+            "title": "Accepted baseline available and hash-bound",
+            "kind": "integrity",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "observation_available": true
+            },
+            "expected": {
+              "bound_parent": true
+            },
+            "evidence": {
+              "stage": "preservation_comparison"
+            },
+            "coverage": "A revision cannot skip preservation checks merely because its baseline observation is missing."
+          },
+          {
+            "id": "pipeline-provenance",
+            "title": "Source, rules and previous revision integrity",
+            "kind": "integrity",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "verified": true
+            },
+            "expected": {
+              "verified": true
+            },
+            "evidence": {
+              "stage": "controller_integrity"
+            },
+            "coverage": "Controller-checked file hashes; native mode is not a hostile-code security boundary."
+          },
+          {
+            "id": "policy-overall",
+            "title": "Declared parts, geometric policy and revision scope",
+            "kind": "policy",
+            "hard": true,
+            "applicable": true,
+            "status": "fail",
+            "measured": {
+              "failures": [
+                {
+                  "check": "translated",
+                  "part": "body",
+                  "measured": 0.0,
+                  "expected": {
+                    "delta": [
+                      0,
+                      0,
+                      0.125
+                    ],
+                    "tolerance": 1e-06
+                  }
+                }
+              ]
+            },
+            "expected": {
+              "all_declared_policy_checks_pass": true
+            },
+            "evidence": {
+              "stage": "policy_geometry"
+            },
+            "coverage": "Includes exact semantic-part inventory, removed/new-part scope and complete preserved-part comparisons."
+          },
+          {
+            "id": "policy-001",
+            "title": "body: translated",
+            "kind": "translated",
+            "hard": true,
+            "applicable": true,
+            "status": "fail",
+            "measured": [
+              {
+                "check": "translated",
+                "part": "body",
+                "measured": 0.0,
+                "expected": {
+                  "delta": [
+                    0,
+                    0,
+                    0.125
+                  ],
+                  "tolerance": 1e-06
+                }
+              }
+            ],
+            "expected": {
+              "delta": [
+                0,
+                0,
+                0.125
+              ],
+              "tolerance": 1e-06
+            },
+            "evidence": {
+              "stage": "policy_geometry",
+              "part": "body"
+            },
+            "coverage": "Version-1 geometric policy check over the inspected mesh."
+          }
+        ],
+        "summary": {
+          "pass": 6,
+          "fail": 2,
+          "unknown": 0
+        },
+        "requirements_satisfied": true,
+        "revision": "frozen-material-palette-rejected",
+        "parent": "hand-tetra-baseline",
+        "build_status": "rejected",
+        "execution_mode": "synthetic-offline",
+        "security_boundary": "not-a-model-execution",
+        "bindings": {
+          "policy_hash": "1640c5738574cc23e661e75ac911465f9f21ed3f1b620201a4adaac6b481b982",
+          "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+          "runtime_hash": "synthetic-legacy-fixture",
+          "source_files": {
+            "count": 0,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+          },
+          "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "requirements_lock_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "machine_verified": false,
+        "human_accepted": false
+      },
+      "report_sha256": "9d1fdaf57c723a965422931f475a0b7e17a2f27b099fa26cce09bf89ff13c4b3"
+    },
+    {
+      "name": "material-assignment-incorrect-pass",
+      "classification": "legacy-compatibility-known-incorrect-pass",
+      "independent_surface_semantics": false,
+      "result": {
+        "schema_version": 1,
+        "revision": "frozen-material-assignment-incorrect-pass",
+        "parent": "hand-tetra-baseline",
+        "status": "accepted",
+        "jobs": {
+          "author": {
+            "exit_code": 0
+          },
+          "inspect": {
+            "exit_code": 0
+          },
+          "roundtrip": {
+            "exit_code": 0
+          },
+          "reopen": {
+            "exit_code": 0
+          }
+        },
+        "provenance_verified": true,
+        "source_files": {},
+        "policy_hash": "1640c5738574cc23e661e75ac911465f9f21ed3f1b620201a4adaac6b481b982",
+        "runtime_hash": "synthetic-legacy-fixture",
+        "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+        "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "requirements_lock_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "execution_mode": "synthetic-offline",
+        "security_boundary": "not-a-model-execution"
+      },
+      "policy": {
+        "schema_version": 1,
+        "parts": [
+          "body"
+        ],
+        "changed_parts": [
+          "body"
+        ],
+        "constraints": [
+          {
+            "kind": "translated",
+            "part": "body",
+            "data": {
+              "delta": [
+                0,
+                0,
+                0.125
+              ],
+              "tolerance": 1e-06
+            }
+          }
+        ],
+        "profile": "scene"
+      },
+      "requirements": {
+        "schema_version": 1,
+        "requirements": []
+      },
+      "previous": {
+        "schema_version": 1,
+        "trusted_observation": true,
+        "units": {
+          "length": "meter",
+          "scale_length": 1.0,
+          "area": "square_meter",
+          "volume": "cubic_meter"
+        },
+        "visibility_policy": "All semantic geometry is included; source visibility flags are ignored",
+        "material_contract": "Constant base_color, alpha, metallic, roughness; default other Principled inputs",
+        "runtime": {
+          "blender_version": "synthetic-no-blender",
+          "python_version": "synthetic",
+          "autoexec_enabled": false
+        },
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "local_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "face_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                1
+              ],
+              [
+                0,
+                2
+              ],
+              [
+                0,
+                3
+              ],
+              [
+                1,
+                2
+              ],
+              [
+                1,
+                3
+              ],
+              [
+                2,
+                3
+              ]
+            ],
+            "triangle_material_indices": [
+              0,
+              0,
+              1,
+              1
+            ],
+            "triangle_world_normals": [
+              [
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ]
+              ]
+            ],
+            "materials": [
+              {
+                "base_color": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              },
+              {
+                "base_color": [
+                  0.0,
+                  0.0,
+                  1.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              }
+            ],
+            "material_hash": "5c5ca626b5ed6b6fa3719692b50188661a52a3f58400ccbd506e45cf09e28dbc",
+            "geometry_hash": "hand-fixture-geometry",
+            "transform_hash": "2163c9d76567ed72097e8c4d524c30a2163c6be4ef7565c48b3eb350242b07ae",
+            "matrix_world": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "normals": [
+              [
+                -0.5773502691896258,
+                -0.5773502691896258,
+                -0.5773502691896258
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "corner_normals": [
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ]
+            ],
+            "world_bounds": {
+              "min": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "max": [
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "vertices": 4,
+            "vertex_count": 4,
+            "edges": 6,
+            "edge_count": 6,
+            "faces": 4,
+            "face_count": 4,
+            "triangle_count": 4,
+            "nonmanifold_edges": 0,
+            "boundary_edges": 0,
+            "surface_area": 2.3660254037844384,
+            "signed_volume": 0.16666666666666666
+          }
+        }
+      },
+      "observation": {
+        "schema_version": 1,
+        "trusted_observation": true,
+        "units": {
+          "length": "meter",
+          "scale_length": 1.0,
+          "area": "square_meter",
+          "volume": "cubic_meter"
+        },
+        "visibility_policy": "All semantic geometry is included; source visibility flags are ignored",
+        "material_contract": "Constant base_color, alpha, metallic, roughness; default other Principled inputs",
+        "runtime": {
+          "blender_version": "synthetic-no-blender",
+          "python_version": "synthetic",
+          "autoexec_enabled": false
+        },
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0.0,
+                0.0,
+                0.125
+              ],
+              [
+                1.0,
+                0.0,
+                0.125
+              ],
+              [
+                0.0,
+                1.0,
+                0.125
+              ],
+              [
+                0.0,
+                0.0,
+                1.125
+              ]
+            ],
+            "local_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "face_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                1
+              ],
+              [
+                0,
+                2
+              ],
+              [
+                0,
+                3
+              ],
+              [
+                1,
+                2
+              ],
+              [
+                1,
+                3
+              ],
+              [
+                2,
+                3
+              ]
+            ],
+            "triangle_material_indices": [
+              1,
+              0,
+              0,
+              1
+            ],
+            "triangle_world_normals": [
+              [
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ]
+              ]
+            ],
+            "materials": [
+              {
+                "base_color": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              },
+              {
+                "base_color": [
+                  0.0,
+                  0.0,
+                  1.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              }
+            ],
+            "material_hash": "5c5ca626b5ed6b6fa3719692b50188661a52a3f58400ccbd506e45cf09e28dbc",
+            "geometry_hash": "hand-fixture-geometry",
+            "transform_hash": "a6e200d82e118b88f8005f7c93e19930e4b0a23a679271866389f06ff5911241",
+            "matrix_world": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0,
+                0.125
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "normals": [
+              [
+                -0.5773502691896258,
+                -0.5773502691896258,
+                -0.5773502691896258
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "corner_normals": [
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ]
+            ],
+            "world_bounds": {
+              "min": [
+                0.0,
+                0.0,
+                0.125
+              ],
+              "max": [
+                1.0,
+                1.0,
+                1.125
+              ]
+            },
+            "vertices": 4,
+            "vertex_count": 4,
+            "edges": 6,
+            "edge_count": 6,
+            "faces": 4,
+            "face_count": 4,
+            "triangle_count": 4,
+            "nonmanifold_edges": 0,
+            "boundary_edges": 0,
+            "surface_area": 2.3660254037844384,
+            "signed_volume": 0.16666666666666666
+          }
+        }
+      },
+      "report": {
+        "schema_version": 1,
+        "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+        "requirements": [
+          {
+            "id": "pipeline-author",
+            "title": "Author job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "author",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-inspect",
+            "title": "Independent inspection job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "inspect",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-roundtrip",
+            "title": "GLB roundtrip",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "roundtrip",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-reopen",
+            "title": "Saved Blender scene reopened",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "reopen",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "parent-reference",
+            "title": "Accepted baseline available and hash-bound",
+            "kind": "integrity",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "observation_available": true
+            },
+            "expected": {
+              "bound_parent": true
+            },
+            "evidence": {
+              "stage": "preservation_comparison"
+            },
+            "coverage": "A revision cannot skip preservation checks merely because its baseline observation is missing."
+          },
+          {
+            "id": "pipeline-provenance",
+            "title": "Source, rules and previous revision integrity",
+            "kind": "integrity",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "verified": true
+            },
+            "expected": {
+              "verified": true
+            },
+            "evidence": {
+              "stage": "controller_integrity"
+            },
+            "coverage": "Controller-checked file hashes; native mode is not a hostile-code security boundary."
+          },
+          {
+            "id": "policy-overall",
+            "title": "Declared parts, geometric policy and revision scope",
+            "kind": "policy",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "failures": []
+            },
+            "expected": {
+              "all_declared_policy_checks_pass": true
+            },
+            "evidence": {
+              "stage": "policy_geometry"
+            },
+            "coverage": "Includes exact semantic-part inventory, removed/new-part scope and complete preserved-part comparisons."
+          },
+          {
+            "id": "policy-001",
+            "title": "body: translated",
+            "kind": "translated",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "check_completed": true
+            },
+            "expected": {
+              "delta": [
+                0,
+                0,
+                0.125
+              ],
+              "tolerance": 1e-06
+            },
+            "evidence": {
+              "stage": "policy_geometry",
+              "part": "body"
+            },
+            "coverage": "Version-1 geometric policy check over the inspected mesh."
+          }
+        ],
+        "summary": {
+          "pass": 8,
+          "fail": 0,
+          "unknown": 0
+        },
+        "requirements_satisfied": true,
+        "revision": "frozen-material-assignment-incorrect-pass",
+        "parent": "hand-tetra-baseline",
+        "build_status": "accepted",
+        "execution_mode": "synthetic-offline",
+        "security_boundary": "not-a-model-execution",
+        "bindings": {
+          "policy_hash": "1640c5738574cc23e661e75ac911465f9f21ed3f1b620201a4adaac6b481b982",
+          "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+          "runtime_hash": "synthetic-legacy-fixture",
+          "source_files": {
+            "count": 0,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+          },
+          "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "requirements_lock_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "machine_verified": true,
+        "human_accepted": false
+      },
+      "report_sha256": "2e6136243b24aa5745e57afd39c583035c18de81b4e7e3b195507c92370cd1cb"
+    },
+    {
+      "name": "normal-incorrect-pass",
+      "classification": "legacy-compatibility-known-incorrect-pass",
+      "independent_surface_semantics": false,
+      "result": {
+        "schema_version": 1,
+        "revision": "frozen-normal-incorrect-pass",
+        "parent": "hand-tetra-baseline",
+        "status": "accepted",
+        "jobs": {
+          "author": {
+            "exit_code": 0
+          },
+          "inspect": {
+            "exit_code": 0
+          },
+          "roundtrip": {
+            "exit_code": 0
+          },
+          "reopen": {
+            "exit_code": 0
+          }
+        },
+        "provenance_verified": true,
+        "source_files": {},
+        "policy_hash": "1640c5738574cc23e661e75ac911465f9f21ed3f1b620201a4adaac6b481b982",
+        "runtime_hash": "synthetic-legacy-fixture",
+        "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+        "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "requirements_lock_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "execution_mode": "synthetic-offline",
+        "security_boundary": "not-a-model-execution"
+      },
+      "policy": {
+        "schema_version": 1,
+        "parts": [
+          "body"
+        ],
+        "changed_parts": [
+          "body"
+        ],
+        "constraints": [
+          {
+            "kind": "translated",
+            "part": "body",
+            "data": {
+              "delta": [
+                0,
+                0,
+                0.125
+              ],
+              "tolerance": 1e-06
+            }
+          }
+        ],
+        "profile": "scene"
+      },
+      "requirements": {
+        "schema_version": 1,
+        "requirements": []
+      },
+      "previous": {
+        "schema_version": 1,
+        "trusted_observation": true,
+        "units": {
+          "length": "meter",
+          "scale_length": 1.0,
+          "area": "square_meter",
+          "volume": "cubic_meter"
+        },
+        "visibility_policy": "All semantic geometry is included; source visibility flags are ignored",
+        "material_contract": "Constant base_color, alpha, metallic, roughness; default other Principled inputs",
+        "runtime": {
+          "blender_version": "synthetic-no-blender",
+          "python_version": "synthetic",
+          "autoexec_enabled": false
+        },
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "local_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "face_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                1
+              ],
+              [
+                0,
+                2
+              ],
+              [
+                0,
+                3
+              ],
+              [
+                1,
+                2
+              ],
+              [
+                1,
+                3
+              ],
+              [
+                2,
+                3
+              ]
+            ],
+            "triangle_material_indices": [
+              0,
+              0,
+              1,
+              1
+            ],
+            "triangle_world_normals": [
+              [
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ]
+              ]
+            ],
+            "materials": [
+              {
+                "base_color": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              },
+              {
+                "base_color": [
+                  0.0,
+                  0.0,
+                  1.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              }
+            ],
+            "material_hash": "5c5ca626b5ed6b6fa3719692b50188661a52a3f58400ccbd506e45cf09e28dbc",
+            "geometry_hash": "hand-fixture-geometry",
+            "transform_hash": "2163c9d76567ed72097e8c4d524c30a2163c6be4ef7565c48b3eb350242b07ae",
+            "matrix_world": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "normals": [
+              [
+                -0.5773502691896258,
+                -0.5773502691896258,
+                -0.5773502691896258
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "corner_normals": [
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ]
+            ],
+            "world_bounds": {
+              "min": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "max": [
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "vertices": 4,
+            "vertex_count": 4,
+            "edges": 6,
+            "edge_count": 6,
+            "faces": 4,
+            "face_count": 4,
+            "triangle_count": 4,
+            "nonmanifold_edges": 0,
+            "boundary_edges": 0,
+            "surface_area": 2.3660254037844384,
+            "signed_volume": 0.16666666666666666
+          }
+        }
+      },
+      "observation": {
+        "schema_version": 1,
+        "trusted_observation": true,
+        "units": {
+          "length": "meter",
+          "scale_length": 1.0,
+          "area": "square_meter",
+          "volume": "cubic_meter"
+        },
+        "visibility_policy": "All semantic geometry is included; source visibility flags are ignored",
+        "material_contract": "Constant base_color, alpha, metallic, roughness; default other Principled inputs",
+        "runtime": {
+          "blender_version": "synthetic-no-blender",
+          "python_version": "synthetic",
+          "autoexec_enabled": false
+        },
+        "parts": {
+          "body": {
+            "world_vertices": [
+              [
+                0.0,
+                0.0,
+                0.125
+              ],
+              [
+                1.0,
+                0.0,
+                0.125
+              ],
+              [
+                0.0,
+                1.0,
+                0.125
+              ],
+              [
+                0.0,
+                0.0,
+                1.125
+              ]
+            ],
+            "local_vertices": [
+              [
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "face_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "triangle_indices": [
+              [
+                0,
+                2,
+                1
+              ],
+              [
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                3,
+                2
+              ],
+              [
+                1,
+                2,
+                3
+              ]
+            ],
+            "edge_indices": [
+              [
+                0,
+                1
+              ],
+              [
+                0,
+                2
+              ],
+              [
+                0,
+                3
+              ],
+              [
+                1,
+                2
+              ],
+              [
+                1,
+                3
+              ],
+              [
+                2,
+                3
+              ]
+            ],
+            "triangle_material_indices": [
+              0,
+              0,
+              1,
+              1
+            ],
+            "triangle_world_normals": [
+              [
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  1.0
+                ]
+              ],
+              [
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  -1.0,
+                  0.0,
+                  0.0
+                ]
+              ],
+              [
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ],
+                [
+                  0.5773502691896258,
+                  0.5773502691896258,
+                  0.5773502691896258
+                ]
+              ]
+            ],
+            "materials": [
+              {
+                "base_color": [
+                  1.0,
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              },
+              {
+                "base_color": [
+                  0.0,
+                  0.0,
+                  1.0,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.5
+              }
+            ],
+            "material_hash": "5c5ca626b5ed6b6fa3719692b50188661a52a3f58400ccbd506e45cf09e28dbc",
+            "geometry_hash": "hand-fixture-geometry",
+            "transform_hash": "a6e200d82e118b88f8005f7c93e19930e4b0a23a679271866389f06ff5911241",
+            "matrix_world": [
+              [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0,
+                0.125
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "normals": [
+              [
+                -0.5773502691896258,
+                -0.5773502691896258,
+                -0.5773502691896258
+              ],
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "corner_normals": [
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                -1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ],
+              [
+                0.5773502691896258,
+                0.5773502691896258,
+                0.5773502691896258
+              ]
+            ],
+            "world_bounds": {
+              "min": [
+                0.0,
+                0.0,
+                0.125
+              ],
+              "max": [
+                1.0,
+                1.0,
+                1.125
+              ]
+            },
+            "vertices": 4,
+            "vertex_count": 4,
+            "edges": 6,
+            "edge_count": 6,
+            "faces": 4,
+            "face_count": 4,
+            "triangle_count": 4,
+            "nonmanifold_edges": 0,
+            "boundary_edges": 0,
+            "surface_area": 2.3660254037844384,
+            "signed_volume": 0.16666666666666666
+          }
+        }
+      },
+      "report": {
+        "schema_version": 1,
+        "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+        "requirements": [
+          {
+            "id": "pipeline-author",
+            "title": "Author job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "author",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-inspect",
+            "title": "Independent inspection job completed",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "inspect",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-roundtrip",
+            "title": "GLB roundtrip",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "roundtrip",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "pipeline-reopen",
+            "title": "Saved Blender scene reopened",
+            "kind": "pipeline",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "exit_code": 0
+            },
+            "expected": {
+              "exit_code": 0
+            },
+            "evidence": {
+              "stage": "reopen",
+              "reason": ""
+            },
+            "coverage": "Recorded completion of this stage only; other stages and requirements still apply."
+          },
+          {
+            "id": "parent-reference",
+            "title": "Accepted baseline available and hash-bound",
+            "kind": "integrity",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "observation_available": true
+            },
+            "expected": {
+              "bound_parent": true
+            },
+            "evidence": {
+              "stage": "preservation_comparison"
+            },
+            "coverage": "A revision cannot skip preservation checks merely because its baseline observation is missing."
+          },
+          {
+            "id": "pipeline-provenance",
+            "title": "Source, rules and previous revision integrity",
+            "kind": "integrity",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "verified": true
+            },
+            "expected": {
+              "verified": true
+            },
+            "evidence": {
+              "stage": "controller_integrity"
+            },
+            "coverage": "Controller-checked file hashes; native mode is not a hostile-code security boundary."
+          },
+          {
+            "id": "policy-overall",
+            "title": "Declared parts, geometric policy and revision scope",
+            "kind": "policy",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "failures": []
+            },
+            "expected": {
+              "all_declared_policy_checks_pass": true
+            },
+            "evidence": {
+              "stage": "policy_geometry"
+            },
+            "coverage": "Includes exact semantic-part inventory, removed/new-part scope and complete preserved-part comparisons."
+          },
+          {
+            "id": "policy-001",
+            "title": "body: translated",
+            "kind": "translated",
+            "hard": true,
+            "applicable": true,
+            "status": "pass",
+            "measured": {
+              "check_completed": true
+            },
+            "expected": {
+              "delta": [
+                0,
+                0,
+                0.125
+              ],
+              "tolerance": 1e-06
+            },
+            "evidence": {
+              "stage": "policy_geometry",
+              "part": "body"
+            },
+            "coverage": "Version-1 geometric policy check over the inspected mesh."
+          }
+        ],
+        "summary": {
+          "pass": 8,
+          "fail": 0,
+          "unknown": 0
+        },
+        "requirements_satisfied": true,
+        "revision": "frozen-normal-incorrect-pass",
+        "parent": "hand-tetra-baseline",
+        "build_status": "accepted",
+        "execution_mode": "synthetic-offline",
+        "security_boundary": "not-a-model-execution",
+        "bindings": {
+          "policy_hash": "1640c5738574cc23e661e75ac911465f9f21ed3f1b620201a4adaac6b481b982",
+          "requirements_hash": "0f60885c0851ee135c6a324dd67697330f218f65113e34cb864fb81b06c893a6",
+          "runtime_hash": "synthetic-legacy-fixture",
+          "source_files": {
+            "count": 0,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+          },
+          "parent_result_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "requirements_lock_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "machine_verified": true,
+        "human_accepted": false
+      },
+      "report_sha256": "eb4c46b1716b05d70a88642461dd79ad2105159bfc73c9bcd64c844bfdf608b7"
+    }
+  ]
+}

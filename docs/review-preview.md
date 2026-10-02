@@ -18,7 +18,7 @@ A review test that passes does not show model-generation support on Windows or M
 
 ## Preview targets and prerequisites
 
-- `windows-x64`: Native Windows x64 CI uses Windows Server 2022. An existing Microsoft Visual C++ runtime can be necessary.
+- `windows-x64`: Native Windows x64 CI uses Windows Server 2022. A compatible Microsoft Visual C++ x64 runtime is required.
   The `external_microsoft_runtime` field in `provenance.json` identifies DLLs that the package does not redistribute.
   The package also excludes Windows API-set stubs that the OS supplies. The Windows loader resolves these contracts.
   This preview does not install or download a runtime.
@@ -28,6 +28,9 @@ A review test that passes does not show model-generation support on Windows or M
   This build does not validate Intel Macs or earlier macOS versions.
 - `linux-validation`: This target gives packaging development evidence only.
   It is not a preview distribution target. Its locally installed Python and dependencies can be different.
+
+A clean Windows Server Core test could not load `python313.dll` without `VCRUNTIME140.dll` and `VCRUNTIME140_1.dll`.
+The runtime version on a passing hosted runner does not establish the minimum compatible version.
 
 The saved smoke report shows the test result for each artifact.
 The target list alone does not show test success.
@@ -72,7 +75,10 @@ Hashes identify corruption and mismatched files.
 They do not authenticate the publisher.
 If an attacker replaces the archive and hashes, the hashes cannot show safety.
 The package has no publisher certificate, notarization, or verified OS reputation.
-macOS binaries have only the ad-hoc loader signature that PyInstaller uses for Apple Silicon.
+
+macOS binaries use ad-hoc loader signatures.
+The build seals the assembled Python framework resources and verifies that seal.
+These checks do not establish publisher trust or notarization.
 
 **CAUTION:** If Gatekeeper, SmartScreen, antivirus, or an organization policy blocks the artifact, stop.
 Keep the diagnostic information.
@@ -153,7 +159,7 @@ Local builds from staged files record any difference.
 
 Project code is GPL-3.0-or-later.
 `licenses/` contains the full license texts and upstream notice sources.
-The package records runtime selection, relocation, and macOS thinning as changes.
+The package records runtime selection, relocation, macOS thinning, and framework resource sealing as changes.
 It does not include Blender, generated models, or user project data.
 Its corresponding-source archive includes the example source code from the repository.
 
@@ -193,7 +199,9 @@ python scripts/test-review-preview --package build/review-preview/hbcb-review-pr
 
 On Windows, use `windows-x64` and the `.zip` package.
 Output directories must be new or empty.
-Build scripts do not make a release, tag, installer registration, signature request, or deployment.
+
+Build scripts do not make a release, tag, installer registration, or deployment.
+They do not request a publisher certificate or notarization.
 Before a pin update, examine the new notices and native inventory.
 Get new native smoke evidence.
 Do not update a version in only one file.

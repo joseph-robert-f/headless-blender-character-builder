@@ -40,7 +40,14 @@ class Constraint:
     data: dict[str, Any]
 
     @classmethod
-    def parse(cls, raw: Any) -> "Constraint":
+    def parse(cls, raw: Any, *, policy_version: int = 1) -> "Constraint":
+        def number(value):
+            try:
+                return finite(value)
+            except OverflowError as exc:
+                if policy_version == 2:
+                    raise ValueError("Number exceeds the check limit.") from exc
+                raise
         if not isinstance(raw, dict) or set(raw) != {"kind", "part", "data"}:
             raise ValueError("constraint requires kind, part, data")
         kind, part, data = raw["kind"], identifier(raw["part"]), raw["data"]
@@ -49,12 +56,19 @@ class Constraint:
         fields = {"anchor": {"point", "tolerance"}, "extent": {"axis", "min", "max"},
                   "path_length": {"groups", "min", "max"}, "distance": {"groups", "min", "max"},
                   "manifold": set(), "translated": {"delta", "tolerance"}, "centroid": {"indices", "point", "tolerance"}}[kind]
+        if kind == "translated" and policy_version == 2:
+            fields = fields | {"normal_tolerance_radians"}
         if set(data) != fields:
             raise ValueError("unexpected constraint fields")
         if kind == "translated":
+            if policy_version == 2 and not 0 <= number(data["normal_tolerance_radians"]) <= .01:
+                raise ValueError("Normal tolerance must be from 0 to 0.01 radians.")
             if not isinstance(data["delta"], list) or len(data["delta"]) != 3: raise ValueError("translation must be a 3-vector")
-            for value in data["delta"]: finite(value)
-            if not 0 <= finite(data["tolerance"]) <= 1: raise ValueError("invalid translation tolerance")
+            for value in data["delta"]:
+                value = number(value)
+                if policy_version == 2 and abs(value) > 1e9:
+                    raise ValueError("Translation exceeds the check limit.")
+            if not 0 <= number(data["tolerance"]) <= 1: raise ValueError("invalid translation tolerance")
         if kind == "centroid":
             indices = data["indices"]
             if not isinstance(indices, list) or not 1 <= len(indices) <= 256 or len(set(indices)) != len(indices):
@@ -63,10 +77,10 @@ class Constraint:
         if kind in {"anchor", "centroid"}:
             if not isinstance(data["point"], list) or len(data["point"]) != 3:
                 raise ValueError("anchor point must be a 3-vector")
-            for v in data["point"]: finite(v)
-            if not 0 <= finite(data["tolerance"]) <= 1: raise ValueError("anchor tolerance out of range")
+            for v in data["point"]: number(v)
+            if not 0 <= number(data["tolerance"]) <= 1: raise ValueError("anchor tolerance out of range")
         if kind in {"extent", "path_length", "distance"}:
-            if not 0 <= finite(data["min"]) <= finite(data["max"]): raise ValueError("invalid limits")
+            if not 0 <= number(data["min"]) <= number(data["max"]): raise ValueError("invalid limits")
         if kind == "extent" and (type(data["axis"]) is not int or data["axis"] not in (0, 1, 2)):
             raise ValueError("axis must be 0..2")
         if kind in {"path_length", "distance"}:
@@ -92,7 +106,7 @@ class Policy:
     def parse(cls, raw: Any) -> "Policy":
         if not isinstance(raw, dict) or set(raw) != {"schema_version", "parts", "changed_parts", "constraints", "profile"}:
             raise ValueError("policy fields mismatch")
-        if type(raw["schema_version"]) is not int or raw["schema_version"] != 1: raise ValueError("unsupported policy")
+        if type(raw["schema_version"]) is not int or raw["schema_version"] not in (1, 2): raise ValueError("unsupported policy")
         if raw["profile"] not in ("scene", "print"): raise ValueError("unknown profile")
         for key in ("parts", "changed_parts"):
             if not isinstance(raw[key], list) or len(raw[key]) > 128: raise ValueError("invalid parts")
@@ -100,6 +114,8 @@ class Policy:
             if len(set(raw[key])) != len(raw[key]): raise ValueError("duplicate parts")
         if not raw["parts"] or not set(raw["changed_parts"]) <= set(raw["parts"]): raise ValueError("invalid change scope")
         if not isinstance(raw["constraints"], list) or len(raw["constraints"]) > 1024: raise ValueError("invalid constraints")
-        constraints = tuple(Constraint.parse(c) for c in raw["constraints"])
+        if raw["schema_version"] == 2 and len(raw["constraints"]) > 32:
+            raise ValueError("Version 2 permits at most 32 constraints.")
+        constraints = tuple(Constraint.parse(c, policy_version=raw["schema_version"]) for c in raw["constraints"])
         if any(c.part not in raw["parts"] for c in constraints): raise ValueError("unknown constraint part")
-        return cls(1, tuple(raw["parts"]), tuple(raw["changed_parts"]), constraints, raw["profile"])
+        return cls(raw["schema_version"], tuple(raw["parts"]), tuple(raw["changed_parts"]), constraints, raw["profile"])

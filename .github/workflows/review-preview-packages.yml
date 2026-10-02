@@ -81,7 +81,12 @@
         },
         {
           "name": "Run source packaging contracts",
-          "run": "python -m unittest discover -s tests/experimental_modeling -p test_review_preview.py -v"
+          "run": "python -m unittest discover -s tests/experimental_modeling -p test_review_preview.py -v\npython -m unittest discover -s tests/experimental_modeling -p test_decimal_preview_packaging.py -v"
+        },
+        {
+          "name": "Run macOS framework sealing contracts",
+          "if": "${{ matrix.target.name == 'macos-arm64' }}",
+          "run": "python -m unittest discover -s tests/experimental_modeling -p test_macos_framework_sealing.py -v"
         },
         {
           "name": "Build native unsigned review-only package",

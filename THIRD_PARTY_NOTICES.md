@@ -126,7 +126,21 @@ archive SHA-256 and individual source-file hashes in the notice catalog.
 The native component inventory, hashes, runtime modifications, exclusions,
 runner/runtime provenance, and OS-provided prerequisites are recorded for each
 artifact. Unused TLS/ctypes/compression modules are excluded. Windows Microsoft
-runtime DLLs are not redistributed; an existing runtime may be required. Apple
-system libraries/frameworks remain external. Unknown native components stop the
+runtime DLLs are not redistributed. A compatible installed Microsoft runtime is
+required for the Windows preview. Apple system libraries/frameworks remain external. Unknown native components stop the
 build for review. No Blender binary, Node runtime, model asset, account SDK,
 signing credential, installer, or automatic runtime download is bundled.
+
+The preview retains `decimal` and `_decimal` because `fractions.Fraction` imports
+`Decimal`. The package includes the CPython `_decimal` wrapper notices and the
+vendored libmpdec 2.5.1 notices. These notices include Henry S. Warren's separate
+permission grant from `typearith.h`.
+
+The reviewed CPython target recipes select libmpdec 4.0.0 for Windows and 4.0.1
+for macOS. The package includes their full copyright files and source notices.
+The notice catalog records each source archive hash, source-file hash, and
+CPython recipe source. The build checks the runtime libmpdec version.
+Each `_decimal` native component identifies its applicable notices.
+A separate libmpdec dynamic library stops a target build for review.
+
+Linux validation does not establish target source identity or static incorporation.
