@@ -35,15 +35,19 @@ class ReleasePolicyTests(unittest.TestCase):
     def test_workflows_are_json_form_yaml_with_minimal_permissions(self) -> None:
         self.assertEqual(
             {path.name for path in WORKFLOWS},
-            {"ci.yml", "dependency-audit.yml", "release-candidate.yml", "experimental-modeling-sandbox.yml", "experimental-project-platforms.yml", "review-preview-packages.yml"},
+            {"ci.yml", "dependency-audit.yml", "release-candidate.yml", "experimental-modeling-sandbox.yml", "experimental-project-platforms.yml", "review-preview-packages.yml", "review-preview-install-checks.yml"},
         )
         for path in WORKFLOWS:
             with self.subTest(path=path.name):
                 document = json.loads(path.read_text(encoding="utf-8"))
                 self.assertIsInstance(document, dict)
-                self.assertEqual(document.get("permissions"), {"contents": "read"})
+                permissions = {"contents": "read"}
+                if path.name == "review-preview-install-checks.yml":
+                    # Read exact package artifacts from an earlier run in this repository.
+                    permissions["actions"] = "read"
+                self.assertEqual(document.get("permissions"), permissions)
                 self.assertTrue(
-                    all(item == {"contents": "read"} for item in values(document, "permissions")),
+                    all(item == permissions for item in values(document, "permissions")),
                     path.name,
                 )
                 self.assertNotIn("pull_request_target", document.get("on", {}))
@@ -95,6 +99,36 @@ class ReleasePolicyTests(unittest.TestCase):
         self.assertEqual(uploads[1]["if"], "${{ always() }}")
         self.assertNotIn("*.zip", uploads[1]["with"]["path"])
         self.assertNotIn("*.tar.gz", uploads[1]["with"]["path"])
+
+    def test_install_workflow_pins_inputs_and_retains_failed_checks(self):
+        document = json.loads((WORKFLOW_ROOT / "review-preview-install-checks.yml").read_text())
+        self.assertEqual(document["permissions"], {"contents": "read", "actions": "read"})
+        self.assertIn("pull_request", document["on"])
+        self.assertEqual(set(document["jobs"]), {"install-windows-x64", "install-macos-arm64"})
+        for name, job in document["jobs"].items():
+            target = "windows-x64" if name.endswith("windows-x64") else "macos-arm64"
+            self.assertEqual(job["runs-on"], "windows-2022" if target == "windows-x64" else "macos-15")
+            self.assertEqual(job["env"]["INSTALL_TARGET"], target)
+            steps = job["steps"]
+            commands = "\n".join(step.get("run", "") for step in steps)
+            for required in ("package_commit", "package_source_tree", "archive_sha256", "smoke-results.json"):
+                self.assertIn(required, commands)
+            for forbidden in ("pip install", "docker pull", "ExecutionPolicy", "chmod", "actions/setup-python"):
+                self.assertNotIn(forbidden, json.dumps(job))
+            for step in steps:
+                self.assertNotIn("${{", step.get("shell", ""))
+            downloads = [step for step in steps if str(step.get("uses", "")).startswith("actions/download-artifact@")]
+            self.assertEqual(len(downloads), 2)
+            for download in downloads:
+                self.assertIn("artifact-ids", download["with"])
+                self.assertIn("run-id", download["with"])
+                self.assertNotIn("repository", download["with"])  # Same repository only.
+            upload = next(step for step in steps if str(step.get("uses", "")).startswith("actions/upload-artifact@"))
+            self.assertEqual(upload["if"], "${{ always() }}")
+            self.assertIn("servercore-results.json", upload["with"]["path"])
+            self.assertIn("macos-native/logs/**", upload["with"]["path"])
+            self.assertEqual(steps[-1]["name"], "Set the check result")
+            self.assertIn('== "success"', steps[-1]["run"])
 
     def test_action_reference_policy_rejects_mutable_or_ambiguous_uses(self) -> None:
         self.assertTrue(FULL_ACTION_SHA.fullmatch(CHECKOUT_ACTION))
