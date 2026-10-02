@@ -115,6 +115,23 @@
           "run": "node tests/experimental_modeling/review_verifier_ui_qa.cjs"
         },
         {
+          "name": "Create bounded verifier proof archive",
+          "id": "verifier_proof",
+          "if": "${{ always() }}",
+          "run": "python3 tests/experimental_modeling/pack_verifier_evidence.py --root \"$RUNNER_TEMP\" --output \"$RUNNER_TEMP/verifier-proof.zip\""
+        },
+        {
+          "name": "Retain bounded verifier proof",
+          "if": "${{ always() && steps.verifier_proof.outcome == 'success' }}",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "name": "verifier-proof-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "${{ runner.temp }}/verifier-proof.zip",
+            "if-no-files-found": "error",
+            "retention-days": 7
+          }
+        },
+        {
           "name": "Retain bounded experimental evidence",
           "if": "${{ always() }}",
           "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",

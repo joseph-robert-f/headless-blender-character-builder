@@ -126,8 +126,8 @@ archive SHA-256 and individual source-file hashes in the notice catalog.
 The native component inventory, hashes, runtime modifications, exclusions,
 runner/runtime provenance, and OS-provided prerequisites are recorded for each
 artifact. Unused TLS/ctypes/compression modules are excluded. Windows Microsoft
-runtime DLLs are not redistributed; an existing runtime may be required. Apple
-system libraries/frameworks remain external. Unknown native components stop the
+runtime DLLs are not redistributed. A compatible installed Microsoft runtime is
+required for the Windows preview. Apple system libraries/frameworks remain external. Unknown native components stop the
 build for review. No Blender binary, Node runtime, model asset, account SDK,
 signing credential, installer, or automatic runtime download is bundled.
 
