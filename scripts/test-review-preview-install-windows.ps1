@@ -153,6 +153,14 @@ try {
     Pass 'os_process_positive_control'
     $result.phase = 'preview_checks'
     $result.verify = Run-Program $exe '--verify' $bundle
+    if ($result.verify.exit_code -ne 0 -and
+        $result.verify.stderr.Contains('Failed to load Python DLL') -and
+        $result.verify.stderr.Contains('The specified module could not be found')) {
+        # Rule out the Unicode extraction path without adding or replacing a runtime.
+        # Do not retry a denied execution or an OS security warning.
+        $asciiBundle = Extract-Zip $Package (Join-Path $base 'ASCII extraction control') 'hbcb-review-preview'
+        $result.ascii_path_control = Run-Program (Join-Path $asciiBundle 'hbcb-review-preview.exe') '--verify' $asciiBundle
+    }
     Check ($result.verify.exit_code -eq 0) ('README --verify failed: ' + $result.verify.stderr)
     $verified = $result.verify.stdout | ConvertFrom-Json
     Check ($verified.verified -eq $true) 'Package verification did not pass.'
