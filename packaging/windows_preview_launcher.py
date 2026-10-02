@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_NAME = "hbcb-review-preview.exe"
 PAYLOAD_NAME = "hbcb-review-preview-runtime.exe"
 SOURCE = ROOT / "packaging/windows_preview_launcher.c"
+LOAD_CONFIG = ROOT / "packaging/windows_load_config.h"
 PROTECTIONS = 0x20 | 0x40 | 0x100  # high-entropy VA, dynamic base, NX
 OS_IMPORTS = {
     "advapi32.dll", "bcrypt.dll", "comctl32.dll", "comdlg32.dll", "crypt32.dll",
@@ -41,9 +42,11 @@ def pe_information(path):
                  "symbols": sorted(item.name.decode("ascii") if item.name else f"ordinal:{item.ordinal}"
                                    for item in row.imports)}
                 for row in getattr(pe, attribute, [])], key=lambda row: row["dll"])
+        config = getattr(pe, "DIRECTORY_ENTRY_LOAD_CONFIG", None)
         return {"sha256": sha256(path), "machine": pe.FILE_HEADER.Machine,
                 "subsystem": pe.OPTIONAL_HEADER.Subsystem,
                 "optional_header_magic": pe.OPTIONAL_HEADER.Magic,
+                "dependent_load_flags": getattr(config.struct, "DependentLoadFlags", None) if config else None,
                 "dll_characteristics": pe.OPTIONAL_HEADER.DllCharacteristics,
                 "imports": imports("DIRECTORY_ENTRY_IMPORT"),
                 "delay_imports": imports("DIRECTORY_ENTRY_DELAY_IMPORT")}
@@ -56,6 +59,8 @@ def inspect_launcher(path):
         raise ValueError("The launcher must be a Windows x64 console executable")
     if result["dll_characteristics"] & PROTECTIONS != PROTECTIONS:
         raise ValueError("The launcher must retain ASLR, high-entropy VA, and NX")
+    if result["dependent_load_flags"] != 0x800:
+        raise ValueError("The launcher must restrict static dependency loading to System32")
     if result["delay_imports"] or [row["dll"] for row in result["imports"]] != ["kernel32.dll"]:
         raise ValueError("The launcher must import only kernel32.dll without delay imports")
     if not result["imports"][0]["symbols"] or any(
@@ -175,7 +180,7 @@ def compile_native(source, output, work, *, entry="launcher_entry", libraries=("
     if obj.exists() or map_file.exists():
         raise ValueError("Native intermediate output must be new")
     compile_command = [str(compiler), "/nologo", "/TC", "/c", "/O1", "/W4", "/WX", "/GS", "/Zl",
-                       "/utf-8", "/Brepro", f"/Fo{obj}", str(source)]
+                       "/utf-8", "/Brepro", f"/FI{LOAD_CONFIG}", f"/Fo{obj}", str(source)]
     link_command = [str(linker), "/nologo", "/WX", "/NODEFAULTLIB", f"/ENTRY:{entry}", "/MACHINE:X64",
                     "/SUBSYSTEM:CONSOLE", "/DYNAMICBASE", "/HIGHENTROPYVA", "/NXCOMPAT", "/INCREMENTAL:NO",
                     "/MANIFEST:NO", "/DEPENDENTLOADFLAG:0x800", "/Brepro", f"/MAP:{map_file}",
@@ -195,6 +200,7 @@ def compile_native(source, output, work, *, entry="launcher_entry", libraries=("
     # resource object, precompiled object, or compiler startup object is supplied.
     evidence = {"schema_version": 1, "source": str(source), "source_sha256": sha256(source),
                 "compiler": tool_record(compiler), "linker": tool_record(linker), "selection": selection,
+                "forced_include": {"file": str(LOAD_CONFIG), "sha256": sha256(LOAD_CONFIG)},
                 "windows_sdk_version": env_keys["WINDOWSSDKVERSION"].rstrip("\\/"),
                 "import_libraries": [{"file": str(path), "sha256": sha256(path)} for path in imports],
                 "object": {"file": obj.name, "sha256": sha256(obj)}, "commands": results,

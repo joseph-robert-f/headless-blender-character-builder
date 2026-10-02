@@ -173,7 +173,7 @@ class MockPE(SimpleNamespace):
         self.close()
 
 
-def pe_fixture(*, machine=0x8664, subsystem=3, protections=0x160, imports=None, delay=None, magic=0x20B):
+def pe_fixture(*, machine=0x8664, subsystem=3, protections=0x160, imports=None, delay=None, magic=0x20B, load_flags=0x800):
     def imported(name, symbols):
         return SimpleNamespace(dll=name.encode("ascii"),
                                imports=[SimpleNamespace(name=symbol.encode("ascii") if symbol else None,
@@ -182,6 +182,7 @@ def pe_fixture(*, machine=0x8664, subsystem=3, protections=0x160, imports=None, 
                   OPTIONAL_HEADER=SimpleNamespace(Magic=magic, Subsystem=subsystem, DllCharacteristics=protections,
                                                    AddressOfEntryPoint=0x1000,
                                                    DATA_DIRECTORY=[SimpleNamespace(VirtualAddress=0, Size=0) for _ in range(16)]),
+                  DIRECTORY_ENTRY_LOAD_CONFIG=SimpleNamespace(struct=SimpleNamespace(DependentLoadFlags=load_flags)),
                   DIRECTORY_ENTRY_IMPORT=[imported(name, symbols) for name, symbols in (imports if imports is not None else
                                                                                      [("KERNEL32.dll", ["ExitProcess", "LoadLibraryExW"])])],
                   DIRECTORY_ENTRY_DELAY_IMPORT=[] if delay is None else [imported(name, symbols) for name, symbols in delay])
@@ -220,6 +221,12 @@ class LauncherPEGateTests(unittest.TestCase):
         for flag in (0x20, 0x40, 0x100):
             with self.subTest(flag=flag), self.assertRaisesRegex(ValueError, "launcher"):
                 self.inspect(pe_fixture(protections=0x160 & ~flag))
+
+    def test_requires_system32_static_load_configuration(self):
+        for flags in (None, 0, 0x1000):
+            with self.subTest(flags=flags), self.assertRaisesRegex(ValueError, "launcher"):
+                self.inspect(pe_fixture(load_flags=flags))
+        self.assertEqual(self.inspect(pe_fixture())["dependent_load_flags"], 0x800)
 
     def test_rejects_crt_python_api_set_and_other_unreviewed_imports(self):
         for name in ("VCRUNTIME140.dll", "ucrtbase.dll", "msvcrt.dll", "python313.dll",
@@ -285,6 +292,9 @@ class LauncherBuildInputTests(unittest.TestCase):
         self.assertEqual([value for value in link_command if value.lower().endswith(".lib")], [str(self.lib)])
         self.assertEqual(len([value for value in link_command if value.lower().endswith(".obj")]), 1)
         self.assertNotIn("/DLL", link_command)
+        self.assertIn("/DEPENDENTLOADFLAG:0x800", link_command)
+        self.assertIn(f"/FI{self.helper.LOAD_CONFIG}", compile_command)
+        self.assertEqual(evidence["forced_include"]["sha256"], self.helper.sha256(self.helper.LOAD_CONFIG))
         self.assertFalse({"/MT", "/MD", "/GS-"} & set(compile_command))
         self.assertEqual(evidence["output_sha256"], self.helper.sha256(self.output))
         self.assertEqual(evidence["source_sha256"], self.helper.sha256(self.source))

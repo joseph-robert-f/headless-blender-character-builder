@@ -334,7 +334,7 @@ def main():
         # Newly added build inputs must be in corresponding source, not merely
         # present as untracked files in a maintainer working directory.
         for relative in ("scripts/build-review-preview", "packaging/windows_preview_launcher.py",
-                         "packaging/windows_preview_launcher.c"):
+                         "packaging/windows_preview_launcher.c", "packaging/windows_load_config.h"):
             indexed = subprocess.check_output(["git", "show", f"{tree}:{relative}"], cwd=ROOT, timeout=30)
             if indexed != (ROOT / relative).read_bytes():
                 raise ValueError(f"Build input differs from the selected source tree: {relative}")

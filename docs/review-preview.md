@@ -18,7 +18,7 @@ A review test that passes does not show model-generation support on Windows or M
 
 ## Preview targets and prerequisites
 
-- `windows-x64`: Native Windows x64 CI uses Windows Server 2022. The launcher requires Windows 10 or later and a compatible Microsoft Visual C++ x64 runtime.
+- `windows-x64`: Native Windows x64 CI uses Windows Server 2022. The launcher requires Windows 10 version 1607 or later, or Windows Server 2016 or later. A compatible Microsoft Visual C++ x64 runtime is required.
   The `external_microsoft_runtime` field in `provenance.json` identifies DLLs that the package does not redistribute.
   The package also excludes Windows API-set stubs that the OS supplies. The Windows loader resolves these contracts.
 
@@ -196,6 +196,9 @@ It has no static or dynamic C runtime dependency.
 The build disables default libraries and records explicit link inputs, tool versions, hashes, and a linker map.
 A PE check requires x64 console format, ASLR, high-entropy addresses, NX, and only `kernel32.dll` imports.
 The launcher has no delay imports.
+
+Its project-owned PE load configuration restricts static dependency loading to System32.
+The build checks this field in the linked executable.
 
 Compiler buffer checks remain enabled. Unexpected runtime helper references fail the link.
 
