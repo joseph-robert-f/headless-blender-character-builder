@@ -137,6 +137,16 @@ def assert_geometry_rejection(failures, defect):
     assert {key for key in TRANSLATION_COMPONENTS if failure['measured'][key] is not True} == expected, failures
 
 
+def assert_completed_verification(verification, *, strict_unknowns):
+    # The recorded lamp includes an intentional soft manual-review requirement
+    # and a revision-only requirement that is not applicable to its baseline.
+    # Neither may hide an unknown hard check that actually applies.
+    assert not any(row['status'] == 'unknown' for row in verification['requirements']
+                   if row['hard'] and row['applicable']), verification
+    if strict_unknowns:
+        assert verification['summary']['unknown'] == 0, verification
+
+
 def geometry_cases():
     manifest = read(GEOMETRY_CASES)
     assert manifest['schema_version'] == 1
@@ -311,7 +321,8 @@ def run(store, *, sandbox_image, docker_executable=None, docker_socket=Path('/va
             assert set(raw_probes[name]) == {'authored-blend', 'saved-blend', 'exported-glb'}
             verification = read(directory / 'verification.json')
             assert verification['machine_verified'] == (status == 'accepted')
-            assert verification['summary']['unknown'] == 0, verification
+            assert_completed_verification(verification,
+                strict_unknowns=tetra_case is not None or geometry_case is not None)
             if status == 'accepted':
                 pointer = read(target / 'last_good.json')
                 assert pointer['revision'] == name

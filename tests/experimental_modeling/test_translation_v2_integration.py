@@ -553,6 +553,22 @@ class StaticValidationRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, 'Incomplete inspected face data'):
             inspect(bad)
 
+    def test_live_gate_distinguishes_soft_and_inapplicable_unknowns(self):
+        runner = self.load_runner()
+        verification = {'summary': {'unknown': 2}, 'requirements': [
+            {'id': 'manual-review', 'hard': False, 'applicable': True, 'status': 'unknown'},
+            {'id': 'revision-only', 'hard': True, 'applicable': False, 'status': 'unknown'},
+            {'id': 'pipeline-author', 'hard': True, 'applicable': True, 'status': 'pass'}]}
+        runner.assert_completed_verification(verification, strict_unknowns=False)
+        with self.assertRaises(AssertionError):
+            runner.assert_completed_verification(verification, strict_unknowns=True)
+        verification['requirements'][1]['applicable'] = True
+        with self.assertRaises(AssertionError):
+            runner.assert_completed_verification(verification, strict_unknowns=False)
+        complete = {'summary': {'unknown': 0}, 'requirements': [
+            {'id': 'translated-negative', 'hard': True, 'applicable': True, 'status': 'fail'}]}
+        runner.assert_completed_verification(complete, strict_unknowns=True)
+
     def test_validation_runner_requires_explicit_isolation_and_fresh_output(self):
         runner = self.load_runner()
         with tempfile.TemporaryDirectory() as tmp:
