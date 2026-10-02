@@ -111,7 +111,9 @@ def main():
     def run(*command, timeout=30):
         result = subprocess.run([docker, *command], capture_output=True, text=True, timeout=timeout)
         if result.returncode:
-            raise RuntimeError(f"Docker {command[0]} failed: {result.stderr[-4000:]}")
+            report.setdefault("failed_commands", []).append({"operation": command[0], "exit_code": result.returncode,
+                "stdout": result.stdout[-8000:], "stderr": result.stderr[-4000:]})
+            raise RuntimeError(f"Docker {command[0]} failed: {result.stderr[-4000:]} {result.stdout[-8000:]}")
         return result.stdout
     try:
         if sys.platform != "win32":

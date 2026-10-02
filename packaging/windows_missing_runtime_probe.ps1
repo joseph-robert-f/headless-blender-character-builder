@@ -12,7 +12,7 @@ Set-StrictMode -Version 2
 $result = [ordered]@{schema_version=1; successful=$false; checks=@(); scope='Missing-runtime diagnostic only. Application startup remains unavailable.'}
 $owned = @()
 function Check([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
-function Run-Program([string]$Executable, [string]$Arguments, [string]$Directory) {
+function Run-Program([string]$Executable, [string]$Arguments, [string]$Directory, [hashtable]$EnvironmentOverrides = @{}) {
     $p = New-Object Diagnostics.Process
     $p.StartInfo = New-Object Diagnostics.ProcessStartInfo
     $p.StartInfo.FileName = $Executable
@@ -23,6 +23,9 @@ function Run-Program([string]$Executable, [string]$Arguments, [string]$Directory
     $p.StartInfo.RedirectStandardInput = $true
     $p.StartInfo.RedirectStandardOutput = $true
     $p.StartInfo.RedirectStandardError = $true
+    foreach ($key in $EnvironmentOverrides.Keys) {
+        $p.StartInfo.EnvironmentVariables[$key] = [string]$EnvironmentOverrides[$key]
+    }
     Check ($p.Start()) 'Could not start the requested process.'
     $script:owned += $p
     $stdout = $p.StandardOutput.ReadToEndAsync()
@@ -66,12 +69,16 @@ try {
             [IO.File]::WriteAllText((Join-Path $directory $dll), 'Not a runtime DLL')
         }
     }
-    $env:PATH = Join-Path $base 'poison PATH'
-    $env:SystemRoot = $fakeRoot
-    $env:WINDIR = $fakeRoot
-    $env:PYTHONHOME = Join-Path $base 'no Python'
-    $env:PYTHONPATH = Join-Path $base 'no modules'
-    $result.probe = Run-Program $exe '--verify' $cwd
+    # Poison only the preview child. The PowerShell harness still needs its
+    # genuine OS environment for cryptographic providers and final evidence.
+    $poison = @{
+        PATH = (Join-Path $base 'poison PATH')
+        SystemRoot = $fakeRoot
+        WINDIR = $fakeRoot
+        PYTHONHOME = (Join-Path $base 'no Python')
+        PYTHONPATH = (Join-Path $base 'no modules')
+    }
+    $result.probe = Run-Program $exe '--verify' $cwd $poison
     Check ($result.probe.exit_code -eq 78) 'Expected the missing-prerequisite exit code 78.'
     Check ($result.probe.stdout.Length -eq 0) 'The payload unexpectedly produced stdout.'
     foreach ($text in @('VCRUNTIME140.dll','VCRUNTIME140_1.dll','System32','Windows error','x64',

@@ -587,6 +587,14 @@ class ServerCoreWrapperTests(unittest.TestCase):
         self.assertIn("unexpected container name", report["cleanup_error"])
         self.assertNotIn("rm", [command[0] for command in commands])
 
+    def test_poisoned_environment_is_scoped_to_preview_child_not_crypto_harness(self):
+        source = (ROOT / "packaging/windows_missing_runtime_probe.ps1").read_text(encoding="utf-8")
+        self.assertIn("[hashtable]$EnvironmentOverrides = @{}", source)
+        self.assertIn("$p.StartInfo.EnvironmentVariables[$key] = [string]$EnvironmentOverrides[$key]", source)
+        self.assertIn("Run-Program $exe '--verify' $cwd $poison", source)
+        self.assertNotIn("$env:SystemRoot =", source)
+        self.assertNotIn("$env:PATH =", source)
+
     def test_powershell_probe_has_real_missing_runtime_gate_and_no_installation_or_download(self):
         source = (ROOT / "packaging/windows_missing_runtime_probe.ps1").read_text(encoding="utf-8")
         for required in ("[Environment]::SystemDirectory", "VCRUNTIME140.dll", "VCRUNTIME140_1.dll",
