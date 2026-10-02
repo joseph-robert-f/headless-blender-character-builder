@@ -406,7 +406,14 @@ class ServerCoreWrapperTests(unittest.TestCase):
                 self.provenance if provenance is None else provenance))
             archive.writestr("hbcb-review-preview/hbcb-review-preview.exe", self.launcher)
             for name, data in extra:
-                archive.writestr(name, data)
+                if isinstance(name, str):
+                    member = zipfile.ZipInfo("raw-fixture")
+                    # Preserve deliberately malformed bytes on Windows too.
+                    member.filename = name
+                    member.orig_filename = name
+                else:
+                    member = name
+                archive.writestr(member, data)
         return self.archive
 
     def test_accepts_exact_commit_windows_archive_and_binds_launcher_bytes(self):
@@ -422,6 +429,11 @@ class ServerCoreWrapperTests(unittest.TestCase):
                      "hbcb-review-preview/provenance.json "):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 self.wrapper.validate_archive(self.make_archive([(name, b"unsafe")]))
+
+    def test_rejects_raw_name_before_windows_zipinfo_normalization(self):
+        archive = self.make_archive([("hbcb-review-preview/sub\\outside.txt", b"unsafe")])
+        with patch.object(zipfile.os, "sep", "\\"), self.assertRaises(ValueError):
+            self.wrapper.validate_archive(archive)
 
     def test_rejects_unix_symlink_zip_member(self):
         member = zipfile.ZipInfo("hbcb-review-preview/link")

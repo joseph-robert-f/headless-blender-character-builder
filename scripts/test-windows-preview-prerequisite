@@ -28,9 +28,11 @@ def validate_archive(path):
         if len(archive.infolist()) > 4096:
             raise ValueError("Archive has too many entries")
         for entry in archive.infolist():
-            name = entry.filename
+            # ZipInfo normalizes backslashes on Windows and truncates NULs.
+            # Validate the original archive spelling before .NET extraction.
+            name = entry.orig_filename
             components = name.rstrip("/").split("/")
-            if (not name.startswith("hbcb-review-preview/") or "\\" in name or ":" in name
+            if (name != entry.filename or not name.startswith("hbcb-review-preview/") or "\\" in name or ":" in name
                     or any(not part or part in {".", ".."} or part.endswith((".", " "))
                            or re.match(r"(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)", part)
                            for part in components)
