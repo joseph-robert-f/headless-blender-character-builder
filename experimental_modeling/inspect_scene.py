@@ -83,7 +83,7 @@ def material_value(mat):
         if not surface.is_linked or surface.links[0].from_node != node:
             raise ValueError('Material output must use the Principled shader directly')
         if any(s.is_linked for s in node.inputs):
-            raise ValueError('Linked/procedural material inputs are outside the experimental contract')
+            raise ValueError('The experimental contract does not include linked or procedural material inputs.')
         # Compare every other value against Blender's own default shader so
         # e.g. altered IOR, anisotropy or thin-film inputs cannot disappear.
         default_mat = bpy.data.materials.new('__trusted_defaults__')
@@ -119,7 +119,7 @@ def material_value(mat):
                 raise ValueError('Unsupported material feature: ' + name)
         if 'Emission Color' in node.inputs and 'Emission Strength' in node.inputs:
             if node.inputs['Emission Strength'].default_value and any(node.inputs['Emission Color'].default_value[:3]):
-                raise ValueError('Emission materials are outside the experimental contract')
+                raise ValueError('The experimental contract does not include emission materials.')
     return {'base_color': finite(color), 'metallic': finite(metallic), 'roughness': finite(roughness)}
 
 
@@ -140,7 +140,7 @@ def make_material(value, name):
 def snapshot_source(expected_ids):
     clear_active_content()
     if abs(bpy.context.scene.unit_settings.scale_length - 1.0) > 1e-9:
-        raise ValueError('Experimental contract requires scale_length=1; coordinates are meters')
+        raise ValueError('Experimental contract requires scale_length=1. Coordinates are meters')
     source_objects = [o for o in bpy.context.scene.objects if o.type in {'MESH', 'CURVE', 'SURFACE', 'FONT'}]
     if not source_objects:
         raise ValueError('Scene has no semantic geometry')

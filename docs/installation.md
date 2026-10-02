@@ -1,48 +1,51 @@
 # Installation and first model
 
-The recommended path builds a pinned `linux/amd64` Blender image from this
-repository and runs it through Docker. You do not need Blender, Python, Docker
-Compose, an AI key, or a provider account for one-shot builds.
+We recommend the Docker procedure. It makes a `linux/amd64` Blender image
+from this repository, with specified dependency versions. Docker then uses
+that image for the build. A one-shot build does not use host Blender, host
+Python, Docker Compose, an AI key, or a provider account.
 
-> **Availability:** this repository currently ships source and container build
-> definitions only. There is no published GitHub Release or container image.
-> There is also no project-published PyPI package or supported `pip install`
-> path; do not substitute a similarly named package from PyPI. Cloning `main`
-> is useful for source evaluation, but it is not the same as installing a
-> signed versioned release.
+> **Availability:** This repository contains source files and container build
+> definitions only. It has no published GitHub Release or container image.
+> It has no project-published PyPI package or supported `pip install` procedure.
+> Do not install a package with a name that looks the same from PyPI.
+> You can clone `main` to examine the source. This does not install a signed,
+> versioned release.
 
-The first release (v0.1) supports one trusted user building their own model locally with the
-one-shot Docker path. “Trusted” means that you control the machine and create
-or review the bounded JSON request. The local service is experimental; public,
-multi-tenant, and VPS operation are outside v0.1 support.
+The first release (v0.1) is for one trusted user and the local one-shot Docker
+procedure. A trusted user controls the computer and writes or examines the
+JSON request before use. The JSON contract limits the request. The local
+service is experimental. Public, multi-tenant, and VPS operation are outside
+v0.1 support.
 
-## Choose a path
+<a id="choose-a-path"></a>
+## Select a procedure
 
 | Path | Status | Requirements |
 |---|---|---|
-| [Docker with Make](#container-path-recommended) | Supported v0.1 path | Git, current Docker Engine/Desktop with BuildKit and `linux/amd64` support, GNU Make |
-| [Docker without Make](#docker-without-make) | Equivalent manual path | Git, Docker, a POSIX shell, `id`, and `mkdir` |
-| [Native Blender](#native-blender-best-effort) | Best-effort contributor path | Git, Python 3.11+, exact Blender 4.5.12 LTS |
+| [Docker with Make](#container-path-recommended) | Supported v0.1 procedure | Git, current Docker Engine/Desktop with BuildKit and `linux/amd64` support, GNU Make |
+| [Docker without Make](#docker-without-make) | Equivalent manual procedure | Git, Docker, a POSIX shell, `id`, and `mkdir` |
+| [Native Blender](#native-blender-best-effort) | Contributor procedure without a compatibility guarantee | Git, Python 3.11+, Blender 4.5.12 LTS |
 | [Local asynchronous service](#local-asynchronous-service) | Experimental, local-only | One trusted operator, local Docker daemon/context, Docker Compose 2.24.4+, Python 3.11+, 8 GiB Docker memory, 20 GB free disk, and the container requirements |
-| [VPS reference](deployment.md) | Design reference; outside v0.1 support | Linux `amd64`, Python 3.11+, Compose 2.24.4+, and operations/security expertise; not a v0.1 installation path |
+| [VPS reference](deployment.md) | Design reference outside v0.1 support | Linux `amd64`, Python 3.11+, Compose 2.24.4+, and knowledge of operations and security |
 
-The container runtime limit is four CPUs, 4 GB RAM, 512 PIDs, and 2 GB of
-scratch. Allow about four CPU cores, 8 GB of host RAM, and 10 GB of free disk
-for the quickstart. Apple Silicon uses `linux/amd64` emulation and is slower.
+The container limits are four CPUs, 4 GB RAM, 512 PIDs, and 2 GB of temporary
+storage. For the first build, approximately four CPU cores, 8 GB of host RAM,
+and 10 GB of free disk space are necessary. Apple Silicon uses `linux/amd64`
+emulation, which is slower.
 
 ## Platform setup
 
 ### macOS without Homebrew
 
-Homebrew is optional. You can install every quickstart prerequisite from the
-vendor:
+Homebrew is optional. You can install all necessary software from the vendors:
 
-1. Run `xcode-select --install` in Terminal and complete Apple's installer.
-   The Command Line Tools provide Git and GNU Make.
+1. Use `xcode-select --install` in Terminal. Complete the Apple installation
+   procedure. The Command Line Tools include Git and GNU Make.
 2. Install and start [Docker Desktop for Mac](https://docs.docker.com/desktop/setup/install/mac-install/).
-   Choose the download for your Mac's chip and allow at least 4 GB of memory
-   for Docker workloads.
-3. Open a new Terminal window and confirm the tools are visible:
+   Select the download for your Mac chip. Set a minimum of 4 GB of memory for
+   Docker workloads.
+3. Open a new Terminal window. Do a check of the tools:
 
    ```sh
    git --version
@@ -50,39 +53,41 @@ vendor:
    docker info
    ```
 
-`make --version` must identify GNU Make. A successful `docker info` confirms
-that Docker Desktop is running; `docker --version` alone checks only the
-client.
+`make --version` must identify GNU Make. Success from `docker info` shows that
+Docker Desktop operates. `docker --version` does a check of the client only.
 
-The one-shot container path does not need host Python or Blender. For native
-work, install Python 3.11 or newer from
-[python.org](https://www.python.org/downloads/macos/) and Blender 4.5.12 LTS
-from [blender.org](https://www.blender.org/download/lts/4-5/); Homebrew is still
-not required.
+The one-shot container procedure does not use host Python or Blender. For
+native work, install Python 3.11 or newer from
+[python.org](https://www.python.org/downloads/macos/). Install Blender 4.5.12
+LTS from [blender.org](https://www.blender.org/download/lts/4-5/).
+Homebrew is not necessary.
 
-For the optional local service, Docker Desktop supplies the Compose plugin.
-Install Python 3.11+ from python.org,
-and allocate at least 8 GiB to Docker Desktop (12 GiB for `service-smoke`). The
-service doctor verifies Python, Compose, and the current
-Docker allocation before any service build.
+Docker Desktop includes the Compose plugin for the optional local service.
+Install Python 3.11+ from python.org. Set a minimum of 8 GiB for Docker Desktop.
+For `service-smoke`, set a minimum of 12 GiB. Before a service build, the
+service doctor does checks of Python, Compose, and the Docker memory allocation.
 
 ### Linux
 
-Install Git and GNU Make with your distribution's package manager. On Debian
-or Ubuntu:
+Install Git and GNU Make with the package manager for your distribution.
+On Debian or Ubuntu, use these commands:
 
 ```sh
 sudo apt-get update
 sudo apt-get install -y git make
 ```
 
-Install Docker Engine and its Buildx plugin using the
+Install Docker Engine and its Buildx plugin. Use the
 [official instructions for your distribution](https://docs.docker.com/engine/install/).
-Then follow Docker's
-[Linux post-install guidance](https://docs.docker.com/engine/install/linux-postinstall/)
-to choose a documented rootless or Docker-group setup so your ordinary user
-can reach the daemon. Docker group membership grants root-level privileges;
-review that tradeoff before enabling it. Verify:
+Then read the Docker
+[Linux post-install guidance](https://docs.docker.com/engine/install/linux-postinstall/).
+Select a documented rootless or Docker-group configuration that gives your
+user account access to the daemon.
+
+**WARNING:** Docker group membership gives root-level privileges. Examine
+this security risk before you enable group membership.
+
+Do these checks:
 
 ```sh
 git --version
@@ -91,43 +96,42 @@ docker info
 docker buildx version
 ```
 
-Do not work around a daemon permission failure by making the Docker socket
-world-writable.
+Do not make the Docker socket world-writable to correct a daemon permission failure.
 
-For the optional local service, also install a Python 3.11+ interpreter and
-Docker's Compose plugin inside Linux. Follow Docker's official repository
-instructions for `docker-compose-plugin`; a legacy standalone `docker-compose`
-binary is not the documented path. Verify with `python3 --version` and
-`docker compose version`. Curl is optional and is used only by the manual API
-protocol example.
+For the optional local service, install Python 3.11+ and the Docker Compose
+plugin inside Linux. Obey the official Docker repository instructions for
+`docker-compose-plugin`. Do not use the previous standalone `docker-compose` binary
+for this procedure. Do checks with `python3 --version` and
+`docker compose version`. Curl is optional. Only the manual API protocol
+example uses it.
 
 Native Linux `amd64` is the reference runtime. Linux `arm64` can emulate the
-release image but is best effort; no official native `arm64` Blender archive is
-pinned for v0.1.
+release image, but this configuration has no compatibility guarantee.
+v0.1 does not specify an official native `arm64` Blender archive.
 
 ### Windows with WSL2 (experimental)
 
-The Windows path is non-release-blocking and experimental. Use a WSL2 Linux
-distribution, then either enable Docker Desktop's WSL integration for that
-distribution or install Docker Engine inside it. Install Git and GNU Make in
-the Linux distribution, not only on Windows. For the optional service, install
-Python 3.11+ and the Docker Compose plugin in that same distribution and
-verify them from the WSL shell.
+The Windows procedure is experimental. Windows test failures do not stop the
+release. Use a WSL2 Linux distribution. Enable the Docker Desktop WSL
+integration for that distribution, or install Docker Engine inside it.
+Install Git and GNU Make in the Linux distribution, not only on Windows.
 
-Keep the repository in the WSL filesystem, such as
-`~/headless-blender-character-builder`, instead of `/mnt/c/...`; bind-mounted
-builds are generally faster and have simpler permissions there. Run all
-project commands from the WSL shell. If you use Docker Desktop, start it before
-running the doctor.
+For the optional service, install Python 3.11+ and the Docker Compose plugin
+in the same distribution. Do checks of them from the WSL shell.
 
-The output files can be opened from Windows through the distribution's
-`\\wsl$` share or by running `explorer.exe .` from the repository directory.
-Please include the Windows, WSL distribution, architecture, and Docker versions
-in any bug report.
+Keep the repository in the WSL filesystem, for example
+`~/headless-blender-character-builder`. Do not use `/mnt/c/...` for this procedure. Bind-mounted
+builds usually operate faster there, and filesystem permissions are simpler.
+Use the WSL shell for all project commands. If you use Docker Desktop, start
+it before you use the doctor.
+
+To open output files from Windows, use the distribution's `\\wsl$` share.
+As an alternative, use `explorer.exe .` from the repository directory.
+In a bug report, include the Windows, WSL distribution, architecture, and Docker versions.
 
 ## Container path (recommended)
 
-Clone the source and run the prerequisite check from the repository root:
+Clone the source. Then do the prerequisite check from the repository root:
 
 ```sh
 git clone https://github.com/joseph-robert-f/headless-blender-character-builder.git
@@ -135,43 +139,48 @@ cd headless-blender-character-builder
 ./scripts/doctor
 ```
 
-The doctor checks Git, GNU Make, Docker, daemon access, and the local platform.
-It reports failures without installing or changing anything.
+The doctor does checks of Git, GNU Make, Docker, daemon access, and the local
+platform. It reports failures. It does not install software or change the configuration.
 
-Build and independently verify the bundled request:
+Use the build and separate verification commands for the included request:
 
 ```sh
 make build REQUEST="$PWD/examples/requests/facet-bot.json" OUTPUT_NAME=facet-bot
 make verify REQUEST="$PWD/examples/requests/facet-bot.json" OUTPUT_NAME=facet-bot
 ```
 
-`OUTPUT_NAME` must be a lowercase, hyphen-separated name. It selects a direct
-child of `build/`; it is not a general filesystem path. A complete run prints:
+`OUTPUT_NAME` must be a lowercase name with hyphens between words. It selects
+a direct child of `build/`. It is not a general filesystem path. A build and verification that pass give this output:
 
 ```text
 BUILDER_BUILD: PASS
 BUILDER_VERIFY: PASS
 ```
 
-The first command builds the local image and may take several minutes. Docker
-needs outbound access only while resolving the pinned image, Blender archive,
-and Debian packages. The actual build and verification containers use
-`--network none`, a non-root user, a read-only root, dropped capabilities, and
-bounded resources.
+The first command makes the local image. This can take some minutes.
+Docker uses outbound access only to get the specified image, Blender archive,
+and Debian packages. The build and verification containers use these controls:
 
-The old names remain convenience aliases:
+- `--network none`
+- A non-root user
+- A read-only root
+- Dropped capabilities
+- Resource limits.
+
+These previous command names stay as aliases:
 
 ```sh
 make demo
 make verify-demo
 ```
 
-They use the bundled request and `build/demo/`. Prefer `build` and `verify`
-when documenting or automating named outputs.
+The aliases use the included request and `build/demo/`. We recommend `build` and
+`verify` in documentation and automation for named outputs.
 
-## Inspect and open the artifacts
+<a id="inspect-and-open-the-artifacts"></a>
+## Examine and open the artifacts
 
-A successful `OUTPUT_NAME=facet-bot` run creates:
+A `OUTPUT_NAME=facet-bot` build that passes makes these files:
 
 ```text
 build/facet-bot/
@@ -187,19 +196,19 @@ build/facet-bot/
 └── qa.json
 ```
 
-Print a bounded, path-free summary of the success manifest before opening any
-large artifact:
+Before you open a large artifact, print the size-limited summary of the
+success manifest. The summary contains no paths:
 
 ```sh
 make inspect OUTPUT_NAME=facet-bot
 ```
 
-This read-only command validates canonical `manifest.json` and reports the
-version, dimensions, QA summary, artifact count/bytes, and provenance hashes.
-It intentionally omits artifact paths and image references. It does not replace
-the fresh-process checks performed by `make verify`.
+This read-only command validates canonical `manifest.json`. It reports the
+version, dimensions, QA summary, artifact count and bytes, and provenance
+hashes. It does not include artifact paths or image references. It does not
+replace the fresh-process checks in `make verify`.
 
-You can inspect the preview with the file browser or a platform command:
+Examine the preview with the file browser or a platform command:
 
 ```sh
 # macOS
@@ -209,17 +218,20 @@ open build/facet-bot/preview.png
 xdg-open build/facet-bot/preview.png
 ```
 
-Open `model.blend` with Blender 4.5.12 LTS when you need parity with the
-verified build environment. `model.glb` is the display/interchange model.
-Import `model.stl` into your slicer and select millimeters explicitly; STL
-stores numeric coordinates but no unit metadata. Check `qa.json` before using
-the model and retain `manifest.json` with the files if provenance matters.
+To use the same Blender version as the verified build environment, open
+`model.blend` with Blender 4.5.12 LTS. `model.glb` is the display/interchange
+model. Import `model.stl` into your slicer. Select millimeters explicitly.
+STL stores numeric coordinates but no unit metadata.
 
-Automated QA establishes structural properties; it does not choose printer,
-material, nozzle, supports, orientation, or slicer settings, and it cannot
-guarantee a safe or successful physical print.
+Before you use the model, examine `qa.json`. To keep the provenance data,
+keep `manifest.json` with the files.
 
-## Build another request
+Automated QA does checks of structural properties. It does not select the
+printer, material, nozzle, supports, orientation, or slicer settings.
+It cannot give a guarantee of a safe physical print or print success.
+
+<a id="build-another-request"></a>
+## Build a different request
 
 Keep experiments in the ignored `build/` directory:
 
@@ -232,39 +244,42 @@ make build REQUEST="$PWD/build/requests/my-character.json" OUTPUT_NAME=my-charac
 make verify REQUEST="$PWD/build/requests/my-character.json" OUTPUT_NAME=my-character
 ```
 
-`make validate` rebuilds the current checkout's builder (normally from Docker's
-cache), then checks the bounded JSON contract without starting Blender or
-writing output. See the [request examples](../examples/README.md),
+`make validate` makes the builder from the source checkout, usually with the
+Docker cache. Then it does checks of the JSON contract. It does not start
+Blender or write output. Before you change fields, read the
+[request examples](../examples/README.md),
 [configuration reference](configuration.md), and
-[character contract](character-spec.md) before editing fields.
+[character contract](character-spec.md).
 
-## Preserve, clean up, and rerun
+<a id="preserve-clean-up-and-rerun"></a>
+## Keep outputs and do a build again
 
-Builds never overwrite an output directory. Preserve a previous run before
-reusing its name:
+Builds do not overwrite an output directory. Before you use the same name
+again, move the previous output:
 
 ```sh
 mv build/facet-bot build/facet-bot.previous
 ```
 
-Alternatively, leave the old run in place and choose a new `OUTPUT_NAME`.
-Artifacts are ordinary local files, so archive or remove only the exact build
-directories you no longer need. Do not use broad recursive cleanup commands
-against the repository or workspace.
+As an alternative, keep the previous output at its path and select a new
+`OUTPUT_NAME`. Artifacts are local files. Archive or remove only the specified
+build directories that are no longer necessary. Do not use general recursive
+cleanup commands on the repository or workspace.
 
-The local builder image is cached so later builds are faster. To reclaim its
-disk space after stopping the optional service, remove only the exact dev image:
+Docker keeps the local builder image in its cache. This makes subsequent
+builds faster. To get back the image disk space, first stop the optional
+service. Then remove only the specified development image:
 
 ```sh
 docker image rm headless-blender-character-builder:dev
 ```
 
-Docker can rebuild it from source on the next `make build`.
+Docker can make the image again from source at the next `make build` command.
 
 ## Update a source checkout
 
-First preserve wanted outputs and local edits, then update without creating an
-implicit merge:
+First, keep copies of necessary outputs and local changes. Then update the
+source without an implicit merge:
 
 ```sh
 git status --short
@@ -272,23 +287,23 @@ git pull --ff-only
 ./scripts/doctor
 ```
 
-Use a new output name for the first build after an update. `make build`
-rebuilds the builder image from the current source. For the optional service,
-rerun `make service-up`; its wrapper rebuilds the checkout-scoped builder and
-service images from the current source before starting the stack.
+Use a new output name for the first build after an update. `make build` makes
+the builder image from the updated source. For the optional service, use
+`make service-up` again. Its wrapper makes the checkout-scoped builder and
+service images from the updated source before it starts the stack.
 
-Do not update a deployed release tree with `git pull`. Future VPS deployments
-must install an exact published source release together with its matching
-digest lock and follow the [forward-only upgrade procedure](deployment.md#upgrade-and-rollback).
+Do not use `git pull` to update a deployed release tree. Future VPS deployments
+must use a specified published source release and its related digest lock.
+Use the [forward-only upgrade procedure](deployment.md#upgrade-and-rollback).
 
 ## Docker without Make
 
-The Makefile is the concise, reviewed interface. If GNU Make is unavailable,
-the following commands expose the equivalent container contract. They assume
-an ordinary non-root POSIX-shell user and a repository path that Docker Desktop
-or Docker Engine can bind-mount.
+The Makefile is the recommended interface. If GNU Make is not available,
+use the equivalent container commands that follow. These commands are for a
+non-root POSIX-shell user. Docker Desktop or Docker Engine must have
+bind-mount access to the repository path.
 
-Build and inspect the pinned `linux/amd64` image:
+Make the `linux/amd64` image with its specified versions. Then examine the image:
 
 ```sh
 docker build \
@@ -306,7 +321,7 @@ builder_image_id="$(docker image inspect --format '{{.Id}}' \
   headless-blender-character-builder:dev)"
 ```
 
-Build the model:
+Make the model:
 
 ```sh
 docker run \
@@ -331,7 +346,8 @@ docker run \
   build --request /input/request.json --output /output/facet-bot-direct
 ```
 
-Then reopen and verify it in a new container with the output mount read-only:
+Open the model again in a new container for verification. Use a read-only
+output mount:
 
 ```sh
 docker run \
@@ -356,19 +372,20 @@ docker run \
   verify --request /input/request.json --output /output/facet-bot-direct
 ```
 
-If your current user has numeric UID or GID `0`, use the Make targets instead;
-they safely select the container's unprivileged fallback identity.
+If your user has numeric UID or GID `0`, use the Make targets as an alternative.
+They select the container's alternative identity without root privileges.
 
 ## Native Blender (best effort)
 
-Native mode is useful while developing the generator, but it is not the
-release-blocking path. Use exact Blender 4.5.12 LTS and Python 3.11 or newer;
-other Blender versions can change rendering, import/export, or Python behavior.
-No third-party Python package is required for a normal native builder run.
+Native mode is for generator development. Native test failures do not stop
+the release. Use Blender 4.5.12 LTS and Python 3.11 or newer. Other Blender
+versions can change rendering, import/export, or Python behavior. A usual
+native builder operation does not use third-party Python packages.
 
-Set the Blender binary for your platform and run the native doctor. For a
-standard macOS application install, select the supported interpreter first;
-for example, after installing Python 3.11 when the system `python3` is older:
+Set the Blender binary for your platform. Then use the native doctor.
+For a standard macOS application installation, first select a compatible
+interpreter. For example, use this procedure after Python 3.11 installation
+if the system `python3` is older:
 
 ```sh
 export PYTHON=python3.11
@@ -377,9 +394,9 @@ BLENDER=/Applications/Blender.app/Contents/MacOS/Blender \
   ./scripts/doctor --native
 ```
 
-On Linux, replace that path with the absolute `blender` executable from the
-official Blender 4.5.12 LTS archive. Then build and verify from the repository
-root:
+On Linux, use the absolute `blender` executable path from the official
+Blender 4.5.12 LTS archive. Then use the build and verification commands from
+the repository root:
 
 ```sh
 mkdir -p build
@@ -394,30 +411,34 @@ HBCB_BLENDER_BINARY=/absolute/path/to/blender \
   --output "$PWD/build/facet-bot-native"
 ```
 
-The exported `PYTHON` selector also reaches the existing
-`make demo-native BLENDER=/absolute/path/to/blender` and
-`make verify-demo-native BLENDER=/absolute/path/to/blender` aliases; they use
-`build/demo/`. Keep the same selector for the complete native session.
+The exported `PYTHON` selector also applies to these aliases:
+
+- `make demo-native BLENDER=/absolute/path/to/blender`
+- `make verify-demo-native BLENDER=/absolute/path/to/blender`.
+
+They use `build/demo/`. Keep the same selector for the full native session.
 
 ## Local asynchronous service
 
-> **Scope:** this service is an experimental convenience for one trusted local
-> operator. Keep it on loopback and submit only requests you created or
-> reviewed. Do not use it for Internet-facing, multi-user, multi-tenant, or
-> hostile-input workloads.
+> **Scope:** This experimental service is for one trusted local operator.
+> Keep the service on loopback. Send only requests that you wrote or
+> examined. Do not use it for Internet-facing, multi-user, multi-tenant,
+> or hostile-input workloads.
 
-The local service is optional and requires a Docker daemon on this machine.
-An SSH, TCP, or HTTP Docker context is not supported because the API and
-artifact ports bind to the daemon host while the documented client connects to
-this machine's loopback. If the doctor reports a remote context, switch to a
-local context in Docker Desktop or with `docker context use <local-context>`;
-also clear `DOCKER_HOST` or `DOCKER_CONTEXT` if you set either to select a
-remote daemon.
+The optional local service uses a Docker daemon on this computer. It cannot
+use an SSH, TCP, or HTTP Docker context. The API and artifact ports bind to
+the daemon host. But the documented client connects to this computer's loopback.
 
-Check `python3 --version` first. If it is older
-than 3.11, select an installed interpreter once for this terminal session with
-`export PYTHON=python3.11`. Then check the additional prerequisites, create
-credentials once, validate the configuration, and start it:
+If the doctor reports a remote context, select a local context in Docker Desktop.
+As an alternative, use `docker context use <local-context>`.
+If `DOCKER_HOST` or `DOCKER_CONTEXT` selects a remote daemon, clear that variable.
+
+First, do a check with `python3 --version`. If the version is older than 3.11,
+select an installed interpreter with `export PYTHON=python3.11`.
+This selection applies to this terminal session.
+
+Then do these prerequisite checks. Make the credentials one time,
+validate the configuration, and start the service:
 
 ```sh
 ./scripts/doctor --service
@@ -427,63 +448,73 @@ make service-up
 make service-ps
 ```
 
-`service-ps` should show `api`, `worker`, PostgreSQL, Redis, and MinIO running.
-The one-shot `database-init` and `minio-init` rows should show `Exited (0)`;
-that is successful initialization, not a crash. Submit a request with the
-lightweight client, then run `make service-down` when finished:
+`service-ps` must show `api`, `worker`, PostgreSQL, Redis, and MinIO in operation.
+The one-shot `database-init` and `minio-init` rows must show `Exited (0)`.
+This output identifies initialization success, not a crash. Send a
+request with the lightweight client. When you complete the work, use `make service-down`:
 
 ```sh
 make service-client REQUEST="$PWD/examples/requests/facet-bot.json"
 make service-down
 ```
 
-Use Python 3.11 or newer consistently. If `python3` is older, select an installed
-interpreter explicitly, for example `PYTHON=python3.11 make service-up`; use the
-same `PYTHON=python3.11` override for `service-config`, `service-ps`,
-`service-logs`, and `service-smoke`. On macOS, install Python 3.11+ from
-[python.org](https://www.python.org/downloads/macos/) if needed. On Linux,
-install it through the distribution's supported packages or python.org. In
-WSL2, install and invoke it inside the Linux distribution, not from Windows.
+Always use Python 3.11 or newer. If `python3` is older, explicitly select an
+installed interpreter. For example, use `PYTHON=python3.11 make service-up`.
+Use the same `PYTHON=python3.11` override for `service-config`, `service-ps`,
+`service-logs`, and `service-smoke`.
+
+On macOS, install Python 3.11+ from
+[python.org](https://www.python.org/downloads/macos/) if necessary.
+On Linux, use the distribution's supported packages or python.org.
+In WSL2, install and use Python inside the Linux distribution, not from Windows.
 
 The default loopback ports are `127.0.0.1:8080` for the API and
-`127.0.0.1:9000` for artifact downloads. If either is occupied, choose distinct
-ports from 1 through 65535 before `make service-up`, and retain the same values
-for every service command:
+`127.0.0.1:9000` for artifact downloads. If a port is in use, select different
+ports from 1 through 65535 before `make service-up`. Keep the same values for
+each service command:
 
 ```sh
 export HBCB_API_HOST_PORT=18080 HBCB_STORAGE_HOST_PORT=19000
 make service-up
 ```
 
-The `export` retains the selection for the remaining service and API-client
-commands in this terminal. These variables change only the host port; the
-supported bind address remains loopback. The steady stack's configured ceilings total about 7 GiB RAM and 7.5
-CPUs; initialization can briefly total about 7.375 GiB and 8.25 CPUs. Begin with
-at least 8 GiB allocated to Docker and 20 GB free disk. `make service-smoke` is a maintainer
-integration gate, not a required startup step: its additional direct-builder
-workload can add 4 GiB, so allocate at least 12 GiB to Docker. Release and CI
-validation then run `make orphan-minio-check` separately. That destructive test
-uses a newly generated, internal-only Compose project with fresh PostgreSQL and
-MinIO volumes; it never targets the persistent local-service volumes and
-verifies that its disposable containers, network, and volumes are removed.
+`export` keeps this selection for subsequent service and API-client commands
+in the terminal. These variables change only the host port. The supported
+bind address stays loopback.
+
+The configured limits for steady stack operation total approximately 7 GiB
+RAM and 7.5 CPUs. During initialization, the total can increase to
+approximately 7.375 GiB and 8.25 CPUs. Start with a minimum of 8 GiB for
+Docker and 20 GB of free disk space.
+
+`make service-smoke` is a maintainer integration test. It is not necessary
+for startup. Its separate direct-builder workload can add 4 GiB.
+For this test, set a minimum of 12 GiB for Docker.
+
+Release and CI validation then use `make orphan-minio-check` as a separate operation.
+This destructive test uses a new internal-only Compose project. It uses new
+PostgreSQL and MinIO volumes. It does not use the persistent local-service
+volumes. It makes sure that it removes its temporary containers, network,
+and volumes.
 
 `make init-env` records `HBCB_COMPOSE_PROJECT_NAME`, a safe checkout-specific
-Compose identity. Moving a checkout together with its ignored `.env` preserves
-its containers and named-volume identity. An older `.env` without this key keeps
-the legacy `hbcb-local` identity so its existing volumes remain reachable.
-Advanced callers may set the standard `COMPOSE_PROJECT_NAME`, but must use the
-same safe value for every command that manages that stack; changing it selects
-a different set of containers and volumes.
+Compose identity. If you move the checkout with its ignored `.env`, the
+container and named-volume identity stay the same. An older `.env` without
+this key keeps the previous `hbcb-local` identity. Thus, its volumes stay
+available.
 
-`make service-down` stops containers while preserving the PostgreSQL, Redis,
-and MinIO development volumes. Preserve the ignored `.env` while those volumes
-exist because its generated credentials must continue to match them. The
-[API guide](api.md#lightweight-local-client) explains the client and protocol, and
-[troubleshooting](troubleshooting.md) covers safe recovery and evidence to
-include in a report.
+Advanced callers can set the standard `COMPOSE_PROJECT_NAME`. They must use
+the same safe value for each command that controls the stack. A different
+value selects a different set of containers and volumes.
 
-To reclaim only the selected service project's local image tags, stop first,
-review the exact list, and then invoke the narrow removal helper:
+`make service-down` stops containers but keeps the PostgreSQL, Redis, and
+MinIO development volumes. Keep the ignored `.env` while you keep those volumes.
+Its generated credentials must continue to agree with the volume credentials.
+Read the [API guide](api.md#lightweight-local-client) for the client and protocol.
+Read [troubleshooting](troubleshooting.md) for safe recovery and report evidence.
+
+To remove only the local image tags for the selected service project,
+first stop the service. Examine the list, then use the removal helper:
 
 ```sh
 make service-down
@@ -491,24 +522,33 @@ make service-images
 make service-image-cleanup
 ```
 
-The helper removes only the six exact builder, derived-PostgreSQL, API, worker,
-MinIO-fixture, and test tags printed by `make service-images`. It keeps `.env` and every named
-volume. It also keeps shared Docker/BuildKit cache because Docker cannot prove
-that every cache record belongs to one checkout. Never substitute a global
-`docker system prune`, `docker builder prune`, `docker image prune`, or
-`docker volume prune`. A legacy `.env` without `HBCB_COMPOSE_PROJECT_NAME` selects shared
-`hbcb-local` tags, so automated removal refuses that identity; inspect the list
-and remove exact tags manually only after every legacy checkout is stopped.
+The helper removes only the six tags that `make service-images` prints.
+These are the builder, derived-PostgreSQL, API, worker, MinIO-fixture, and test
+tags. It keeps `.env` and each named volume. It also keeps the shared
+Docker/BuildKit cache. Docker cannot show that each cache record belongs to
+one checkout.
 
-Use `make service-ps` for status and `make service-logs` for the last 100 API and
-worker log lines. These wrappers restore the checkout identity and required
-provenance automatically; do not substitute raw `docker compose` commands.
+Do not use these global cleanup commands as alternatives:
 
-For a custom request, copy and validate the example as described in [Build
-another request](#build-another-request), start the stack, and pass that JSON
-path as `REQUEST` to `make service-client`.
+- `docker system prune`
+- `docker builder prune`
+- `docker image prune`
+- `docker volume prune`.
 
-The local stack is loopback-only and uses a MinIO compatibility fixture. It is
-not the [VPS reference](deployment.md) and must not be exposed to the Internet.
-The VPS material is a design and validation reference, not a supported v0.1
-deployment path.
+An previous `.env` without `HBCB_COMPOSE_PROJECT_NAME` selects shared `hbcb-local`
+tags. The automatic removal helper rejects that identity. Examine the list.
+Before you manually remove specified tags, stop each checkout with that identity.
+
+Use `make service-ps` for status. Use `make service-logs` for the last 100 API
+and worker log lines. These wrappers automatically restore the checkout
+identity and necessary provenance. Do not use raw `docker compose` commands
+as alternatives.
+
+For a different request, copy and validate the example in
+[Build a different request](#build-another-request). Start the stack. Give that
+JSON path as `REQUEST` to `make service-client`.
+
+The local stack uses loopback only and a MinIO compatibility fixture.
+Do not give the Internet access to this stack. It is separate from the
+[VPS reference](deployment.md). The VPS material is a design and validation
+reference. VPS deployment is outside v0.1 support.

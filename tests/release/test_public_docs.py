@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import stat
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from urllib.parse import unquote
@@ -23,6 +24,9 @@ def markdown_anchors(path: Path) -> set[str]:
             continue
         if fenced:
             continue
+        explicit = re.fullmatch(r'<a\s+id="([^"<>]+)"></a>', line.strip())
+        if explicit is not None:
+            anchors.add(explicit.group(1).lower())
         match = HEADING.match(line)
         if match is None:
             continue
@@ -118,7 +122,7 @@ class PublicDocumentationTests(unittest.TestCase):
         self.assertIn("make verify", readme)
         self.assertIn("make inspect", readme)
         self.assertIn("OUTPUT_NAME=", readme)
-        self.assertIn("No project package is published on PyPI", readme)
+        self.assertIn("The project has no hosted service, published container images, or package on PyPI.", readme)
 
         installation = (ROOT / "docs" / "installation.md").read_text(
             encoding="utf-8"
@@ -130,7 +134,7 @@ class PublicDocumentationTests(unittest.TestCase):
         self.assertIn('"$PYTHON" -m builder_cli build', installation)
         self.assertIn('"$PYTHON" -m builder_cli verify', installation)
         self.assertIn("make service-image-cleanup", installation)
-        self.assertIn("Never substitute a global", installation)
+        self.assertIn("Do not use these global cleanup commands as alternatives:", installation)
         for command in (
             "docker system prune",
             "docker builder prune",
@@ -169,38 +173,37 @@ class PublicDocumentationTests(unittest.TestCase):
         threat_model = (ROOT / "docs" / "threat-model.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn("networking disabled", readme.lower())
+        self.assertIn("containers without network access", readme.lower())
         for text in (architecture, threat_model):
             self.assertIn("--network none", text)
         self.assertIn("shares", readme.lower())
         self.assertRegex(readme.lower(), r"network\s+namespace")
-        self.assertIn("shares", architecture.lower())
+        self.assertIn("subprocess uses the supervisor\ncontainer's network namespace", architecture.lower())
         self.assertRegex(architecture.lower(), r"network\s+namespace")
         self.assertIn("internal-only", threat_model.lower())
 
         deployment = (ROOT / "docs" / "deployment.md").read_text(encoding="utf-8")
         self.assertIn("## Availability", deployment)
-        self.assertIn("does **not** publish", deployment.lower())
-        self.assertIn("not yet a copy-paste", deployment.lower())
+        self.assertIn("does not publish these items", deployment.lower())
+        self.assertIn("cannot at this time give a full public production", deployment.lower())
         self.assertIn("placeholder", deployment.lower())
-        self.assertIn("Python 3.11 or newer as `python3`", deployment)
+        self.assertIn("Python 3.11 or newer is available as `python3`", deployment)
         self.assertNotIn("supported production reference", deployment.lower())
 
         release_process = (ROOT / "docs" / "release-process.md").read_text(
             encoding="utf-8"
         )
         self.assertIn("Python 3.11+", release_process)
-        self.assertIn("at least 12 GiB allocated to", release_process)
-        self.assertIn("30 GB of Docker disk headroom", release_process)
+        self.assertIn("A minimum of 12 GiB for Docker", release_process)
+        self.assertIn("30 GB of free Docker disk space", release_process)
         self.assertIn(
             "PYTHON=python3.11 HBCB_RELEASE_RUN_ID=review-1 make release-check",
             release_process,
         )
         self.assertIn("## Source-only v0.1 release", release_process)
-        self.assertIn("normal tracked-file index flags", release_process)
+        self.assertIn("usual tracked-file index flags", release_process)
         self.assertIn(
-            "It never authenticates to GHCR, never pushes an image, and never\n"
-            "changes any package visibility.",
+            "It does not authenticate to GHCR, push an image, or change package visibility.",
             release_process,
         )
 
@@ -214,7 +217,7 @@ class PublicDocumentationTests(unittest.TestCase):
         self.assertIn("moss-hopper.json", examples)
         self.assertIn("**`needs_review`**", examples)
         self.assertIn("schema-valid", examples.lower().replace(" ", "-"))
-        self.assertIn("not pre-verified", examples.lower())
+        self.assertIn("not geometry fixtures with completed verification", examples.lower())
         self.assertRegex(readme, r"OUTPUT_NAME=facet-bot(?:\s|$)")
         self.assertRegex(examples, r"OUTPUT_NAME=facet-bot-example(?:\s|$)")
         self.assertNotRegex(examples, r"OUTPUT_NAME=facet-bot(?:\s|$)")
@@ -224,13 +227,13 @@ class PublicDocumentationTests(unittest.TestCase):
         )
         self.assertIn("manifest baked provenance mismatch", troubleshooting)
         self.assertIn("manifest Blender binary provenance mismatch", troubleshooting)
-        self.assertIn("README quickstart uses `build/facet-bot`", troubleshooting)
-        self.assertIn("`make demo` alias uses\n`build/demo`", troubleshooting)
+        self.assertIn("README first-build procedure uses `build/facet-bot`", troubleshooting)
+        self.assertIn("`make demo` alias uses `build/demo`", troubleshooting)
         self.assertIn("make inspect OUTPUT_NAME=facet-bot", troubleshooting)
         self.assertIn("docker: command not found` inside WSL2", troubleshooting)
         self.assertIn("Native Windows shell or path errors", troubleshooting)
         self.assertIn("make service-image-cleanup", troubleshooting)
-        self.assertIn("never run a global image, builder, volume, or", troubleshooting)
+        self.assertIn("Do not use global image, builder, volume, or system prune", troubleshooting)
 
         guide = (ROOT / "docs" / "character-spec.md").read_text(encoding="utf-8")
         for value in (
@@ -265,16 +268,16 @@ class PublicDocumentationTests(unittest.TestCase):
         ):
             self.assertIn(marker, makefile)
             self.assertIn(marker, troubleshooting)
-        self.assertIn("before building or inspecting an image", troubleshooting)
-        self.assertIn("GNU Make itself usually exits `2`", troubleshooting)
+        self.assertIn("before an image build or inspection", troubleshooting)
+        self.assertIn("GNU Make\nusually exits `2`", troubleshooting)
         self.assertIn("`BUILDER: FAIL[n]`", troubleshooting)
         self.assertIn("`Error n`", troubleshooting)
         self.assertIn("BLENDER_BUILDER: FAIL[11]", troubleshooting)
         self.assertIn("safe diagnostics:", troubleshooting)
         self.assertIn("builder reports `BUILDER: FAIL[11]`", examples)
-        self.assertIn("`make` process itself normally exits `2`", examples)
+        self.assertIn("`make` process usually exits `2`", examples)
         self.assertNotIn("the build exits `11`", examples)
-        self.assertIn("GNU Make usually exits `2`", guide)
+        self.assertIn("usually gives GNU Make exit code `2`", guide)
         self.assertIn("`BUILDER: FAIL[n]`", guide)
 
     def test_api_and_environment_recovery_are_copyable_and_secret_aware(self) -> None:
@@ -306,23 +309,24 @@ class PublicDocumentationTests(unittest.TestCase):
         configuration = (ROOT / "docs" / "configuration.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn("restore the original", troubleshooting.lower())
+        self.assertIn("restore the initial", troubleshooting.lower())
         self.assertIn("irreversible", troubleshooting.lower())
         self.assertRegex(
-            troubleshooting.lower(), r"provides no one-command\s+reset"
+            troubleshooting.lower(), r"has no one-command\s+reset"
         )
         self.assertIn("active Docker context", troubleshooting)
         self.assertNotIn("access the network", troubleshooting)
-        self.assertIn("matched set", configuration.lower())
+        self.assertIn("keep `.env` with its related named compose volumes", configuration.lower())
+        self.assertIn("do not replace `.env` while those volumes exist", configuration.lower())
         self.assertNotIn("rename it before generating", troubleshooting.lower())
 
     def test_vps_install_secrets_and_component_notices_are_consistent(self) -> None:
         deployment = (ROOT / "docs" / "deployment.md").read_text(encoding="utf-8")
         for value in (
-            "Docker Compose 2.24.4 or newer",
+            "Compose 2.24.4 or newer",
             "/absolute/path/to/verified-source",
             "sudo cp -a",
-            "no such published source package exists yet",
+            "No such published source package\nis available",
         ):
             self.assertIn(value, deployment, value)
 
@@ -330,8 +334,8 @@ class PublicDocumentationTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertNotIn("<random>", secrets)
-        self.assertIn("same placeholder name must be replaced by the same value", secrets)
-        self.assertIn("different placeholder names must receive independent values", secrets)
+        self.assertIn("Replace the same placeholder name with the same value at each location.", secrets)
+        self.assertIn("Give different placeholder names independently generated values.", secrets)
         for placeholder in (
             "<DB_ADMIN_PASSWORD_64_HEX>",
             "<DB_MIGRATOR_PASSWORD_64_HEX>",
@@ -352,6 +356,19 @@ class PublicDocumentationTests(unittest.TestCase):
         self.assertIn("preserves the upstream filesystem, entrypoint, and notices", notices)
         self.assertIn("local and VPS-reference queue/coordination service", notices)
         self.assertIn("local compatibility fixture only", notices)
+
+    def test_markdown_anchors_include_explicit_preserved_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            document = Path(temporary) / "guide.md"
+            document.write_text(
+                '<a id="previous-heading"></a>\n# Revised heading\n'
+                '# Revised heading\n```html\n<a id="code-only"></a>\n```\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                markdown_anchors(document),
+                {"previous-heading", "revised-heading", "revised-heading-1"},
+            )
 
     def test_relative_markdown_heading_anchors_resolve(self) -> None:
         failures: list[str] = []

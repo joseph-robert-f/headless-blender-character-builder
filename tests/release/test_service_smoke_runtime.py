@@ -153,7 +153,7 @@ esac
                 check=False,
             )
             self.assertEqual(completed.returncode, 3, completed.stdout)
-            self.assertIn("Python 3.11+ is required", completed.stdout)
+            self.assertIn("Python 3.11+ is necessary", completed.stdout)
             self.assertFalse(docker_log.exists())
             self.assertFalse((root / "build").exists())
 

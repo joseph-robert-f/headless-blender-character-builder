@@ -1,18 +1,17 @@
 # HTTP API v1
 
-The source checkout includes a loopback-only asynchronous service used for
-integration testing and self-hosting experiments. It is not a hosted public
-API, it is not a v0.1-supported product path, and no production images are
-currently published. Use it only as an experimental evaluation with one
-trusted local operator and requests that operator created or reviewed.
+The source checkout contains an experimental asynchronous service for loopback use.
+Use it with one trusted local operator. The operator must create or review each request.
+This service is not a hosted public API or a supported v0.1 product mode.
+No production images are published.
 
-The API is a small asynchronous control surface over the repository's pinned,
-containerized builder contract. It accepts only `BuildRequest v1` JSON, never
-arbitrary Python, Blender arguments, paths, URLs, uploads, or provider keys.
+The API uses the repository's fixed container builder contract.
+It accepts only `BuildRequest v1` JSON.
+It does not accept Python, Blender arguments, paths, URLs, uploads, or provider keys.
 
 ## Run locally
 
-The first-evaluation path is:
+Use these commands for the first local evaluation:
 
 ```sh
 ./scripts/doctor --service
@@ -22,20 +21,21 @@ make service-up
 make service-ps
 ```
 
-Follow the client journey below. When finished, run `make service-down` in a
-separate command; it stops this checkout's stack while preserving its data.
+Use the client procedure below. Then run `make service-down` as a different command.
+This command stops the checkout's stack and keeps its data.
 
-`make init-env` creates a private local bearer token, a checkout-specific Compose
-project identity, and other scoped credentials in ignored `.env`; it prints no
-secret and refuses to overwrite an existing file. The API binds to loopback,
-using host port `8080` by default. The lightweight client below is the
-documented first evaluation of this experimental path. `make service-smoke` is
-a separate, slower
-maintainer/integration confidence gate that builds directly and through the
-service, restarts the API, tests cancellation and IAM, downloads all artifacts,
-and independently verifies them. The local stack is for loopback evaluation
-only; do not publish its ports or treat the future G8 design reference as a v0.1
-deployment path.
+`make init-env` creates a private local bearer token, a Compose project identity,
+and different credentials in the ignored `.env` file.
+It prints no secret and does not overwrite an existing file.
+The API binds to loopback. Its default host port is `8080`.
+Use the lightweight client for the first evaluation.
+
+Maintainers can use the slower `make service-smoke` integration test.
+It builds directly and through the service, starts the API again,
+and does cancellation and IAM tests.
+It downloads all artifacts and verifies them independently.
+Do not publish the local stack's ports.
+The future G8 design is not a v0.1 deployment procedure.
 
 ## Lightweight local client
 
@@ -45,57 +45,61 @@ Run one command from the repository root after `make service-up`:
 make service-client REQUEST="$PWD/examples/requests/facet-bot.json"
 ```
 
-The client submits the selected request, prints bounded status updates, and
-saves a complete verified result below `build/service-client/<build-id>/`.
-It reads the local bearer token and stored port selectors from the private
-`.env` without sourcing that file. Shell `HBCB_API_HOST_PORT` and
-`HBCB_STORAGE_HOST_PORT` selections take precedence, matching the service
-wrappers. If `python3` is older than 3.11, use the same explicit selector as the
-service commands:
+The client submits the selected request and prints status updates in fixed limits.
+It saves the complete verified result below `build/service-client/<build-id>/`.
+It reads the bearer token and port selectors from the private `.env` file.
+It does not execute that file.
+Shell values for `HBCB_API_HOST_PORT` and `HBCB_STORAGE_HOST_PORT`
+replace the stored values, as they do for the service wrappers.
+If `python3` is older than 3.11, select the same Python version as the service commands:
 
 ```sh
 PYTHON=python3.11 make service-client \
   REQUEST="$PWD/examples/requests/facet-bot-tidepool.json"
 ```
 
-The client has no third-party Python dependencies. It disables proxies, rejects
-redirects, accepts downloads only from the selected loopback storage port,
-bounds polling and response sizes, checks every declared byte count and SHA-256
-hash, refuses to overwrite an existing build-ID result, and sends one bounded
-best-effort cancellation request if a known nonterminal build fails or is
-interrupted. A submission failure may leave the build ID unknown, and an API
-or network failure can prevent cancellation confirmation. It removes private
-scratch and signed URLs before returning.
+The client has no third-party Python dependencies.
+It disables proxies and rejects redirects.
+It downloads only from the selected loopback storage port.
+It limits polling and response sizes.
+It compares each declared byte count and SHA-256 hash with the downloaded bytes.
+It does not overwrite an existing build-ID result.
 
-Open the exact directory printed after `verified model and evidence saved in`.
-It contains `model.blend`, `model.glb`, `model.stl`, the preview and three
-diagnostic renders, `qa.json`, `manifest.json`, and one final `build.json` API
-record. When finished, run `make service-down`; named service data volumes are
-preserved.
+If a known nonterminal build fails or stops unexpectedly, the client sends one cancellation request in fixed limits.
+Cancellation can fail. A submission failure can leave the build ID unknown.
+An API or network failure can prevent confirmation of cancellation.
+Before the client exits, it removes private scratch data and signed URLs.
+
+Open the specified directory printed after `verified model and evidence saved in`.
+It contains `model.blend`, `model.glb`, `model.stl`, the preview, and three diagnostic renders.
+It also contains `qa.json`, `manifest.json`, and one last `build.json` API record.
+When you finish, run `make service-down`. This command keeps named service data volumes.
 
 ## Manual protocol example
 
-The longer block below is retained for integrators who need to see every HTTP
-step. New users should use `make service-client` above. Run this manual example
-from the repository root after `make service-up`; paste the whole block at once.
-It runs in a subshell, so a failure stops only this client run—not your
-interactive shell. It removes private scratch data on every exit and publishes
-nothing until the complete nine-file artifact set has passed its declared byte
-counts and SHA-256 hashes.
+The example below shows each HTTP step for integrators.
+For a first evaluation, use `make service-client` above.
+After `make service-up`, run the manual example from the repository root.
+Paste the complete block at one time.
 
-Set `HBCB_REQUEST` to a schema-valid custom JSON file first if desired; the
-default is Facet Bot. For example, this selects the checked-in request by its
-exact absolute path (replace that path with your own schema-valid JSON):
+The example uses a subshell. A failure stops this client run, not the interactive shell.
+On each exit, it removes private scratch data.
+It publishes nothing until all nine artifact files pass byte-count and SHA-256 hash validation.
+
+To use a different request, first set `HBCB_REQUEST` to a JSON file that passes schema validation.
+The default is Facet Bot.
+The command below selects the repository example with a specified absolute path.
+Replace that path with your JSON file path, if applicable.
 
 ```sh
 export HBCB_REQUEST="$PWD/examples/requests/facet-bot.json"
 ```
 
-If `python3` is older than 3.11, run
-`export PYTHON=python3.11` once for this terminal session. The shared settings
-helper reads only allowlisted, validated nonsecret selectors from `.env`; it
-does not source credentials. Omitting `Idempotency-Key` intentionally creates a
-new build each time, which is friendlier while iterating.
+If `python3` is older than 3.11, run `export PYTHON=python3.11` for this terminal session.
+The shared settings helper reads only validated nonsecret selectors on the allowlist from `.env`.
+It does not source credentials.
+If you omit `Idempotency-Key`, each submission creates a new build.
+Use this behavior when you change a request between builds.
 
 ```sh
 (
@@ -465,60 +469,67 @@ printf 'verified model and evidence saved in %s\n' "$HBCB_RESULT"
 )
 ```
 
-The result contains `model.blend`, `model.glb`, `model.stl`, the preview and
-three diagnostic renders, `qa.json`, `manifest.json`, and one final
-`build.json` API record. It deliberately does not retain the artifact-listing
-response or its short-lived signed URLs. The build-ID directory is reserved
-atomically, and the verified payload appears inside it with one atomic rename;
-an existing file, directory, or symlink with that build ID is never
-overwritten. Artifact redirects are rejected without being followed, and every
-initial and final download URL must use the exact selected loopback storage
-port.
+The result contains `model.blend`, `model.glb`, `model.stl`, the preview,
+and three diagnostic renders. It also contains `qa.json`, `manifest.json`,
+and one last `build.json` API record.
+It does not keep the artifact-listing response or its temporary signed URLs.
 
-Use Finder, File Explorer, or your Linux file manager to open the exact result
-directory printed after `verified model and evidence saved in`. Open its
-`preview.png` to inspect the render and `model.blend` to inspect the Blender
-source. STL carries geometry but no color or materials, while GLB is the
-convenient colored viewer/export format. Pressing Control-C while the client block is
-polling—or a polling request or response failure—sends one bounded cancellation
-request for a nonterminal build before removing scratch data. Terminal failures
-print only the API's bounded safe `terminal_code`; response bodies and signed
-URLs remain in private scratch and are removed. The cancellation endpoint
-contract is documented below.
+The client reserves the build-ID directory atomically.
+It puts the verified payload in that directory with one atomic rename.
+It does not overwrite an existing file, directory, or symlink with that build ID.
+It rejects artifact redirects without access to their targets.
+All initial and last download URLs must use the selected loopback storage port.
 
-When finished, stop the stack. The client block already removed its private
-scratch directory and retained only the verified result:
+Use Finder, File Explorer, or a Linux file manager to open the result directory.
+Use the directory printed after `verified model and evidence saved in`.
+Open `preview.png` to examine the render.
+Open `model.blend` to examine the Blender source.
+STL contains geometry, but no color or materials.
+GLB is the format for a color viewer or export.
+
+During polling, Control-C or a polling request/response failure causes one
+cancellation request for a nonterminal build.
+This request has limits. The client then removes scratch data.
+A terminal failure prints only the API's safe `terminal_code`, with output limits.
+The client removes response bodies and signed URLs from private scratch data.
+The cancellation endpoint contract is below.
+
+When you finish, stop the stack. The client block removed its private scratch directory
+and kept only the verified result:
 
 ```sh
 make service-down
 ```
 
-`make service-down` preserves the named local data volumes and their matching
-credentials. The [troubleshooting guide](troubleshooting.md) explains the safe
-choices if `.env` is missing or those volumes are no longer wanted.
+`make service-down` keeps named local data volumes and their related credentials.
+Use the [troubleshooting guide](troubleshooting.md) if there is no `.env` file or you must remove the volumes.
 
 ## Authentication and response policy
 
-`GET /healthz` is public. `GET /readyz` and every `/v1/*` route require exactly one header:
+`GET /healthz` is public. For `GET /readyz` and each `/v1/*` route, supply one and only one authorization header:
 
 ```text
 Authorization: Bearer <HBCB_API_TOKEN>
 ```
 
-The token is generated by `make init-env`. Missing, duplicated, malformed, or incorrect authorization returns `401` with `WWW-Authenticate: Bearer`. Authentication runs before route parsing and request-body processing.
+`make init-env` generates the token.
+Missing, duplicate, malformed, or incorrect authorization causes a `401` response with `WWW-Authenticate: Bearer`.
+Authentication occurs before the service parses the route or processes the request body.
 
-An idempotency key is useful for an automated retry, but do not reuse one after
-editing the request: the same key and same canonical request replay the original
-build, while the same key with different content returns `409`.
+Use an idempotency key for an automatic retry.
+Do not use the same key after you change the request.
+The same key and canonical request return the initial build.
+The same key with different content causes a `409` response.
 
-Every response includes:
+Each response includes:
 
 ```text
 Cache-Control: no-store
 X-Request-ID: <server-generated UUID>
 ```
 
-The service disables interactive API documentation, OpenAPI publication, CORS, proxy-header trust, server-version headers, and access logs by default.
+By default, the service disables interactive API documentation, OpenAPI publication,
+CORS, proxy-header trust, server-version headers, and access logs.
 
 ## Submit a build
 
@@ -531,17 +542,25 @@ Idempotency-Key: my-character-0001
 <BuildRequest v1 JSON>
 ```
 
-`Content-Type` must be exactly `application/json` with an optional single `charset=utf-8` parameter. `Content-Encoding` may be absent or `identity`. The raw body is capped at 65,536 bytes while streaming, before JSON parsing. Duplicate headers, duplicate JSON keys, malformed UTF-8, non-finite/pathological numbers, extra fields, and every other contract violation fail closed.
+Set `Content-Type` to `application/json`.
+You can add one `charset=utf-8` parameter.
+Omit `Content-Encoding`, or set it to `identity`.
+The service limits the raw body to 65,536 bytes during data transfer, before JSON parsing.
+It rejects duplicate headers, duplicate JSON keys, malformed UTF-8, non-finite or pathological numbers, and fields not in the schema.
+It also rejects each other contract violation.
 
-`Idempotency-Key` is optional. When supplied, it must be 8–128 ASCII bytes using letters, digits, `.`, `_`, `~`, or `-`, beginning with a letter or digit. The database stores only its HMAC-SHA-256 digest.
+`Idempotency-Key` is optional. Use 8–128 ASCII bytes.
+The permitted characters are letters, digits, `.`, `_`, `~`, and `-`.
+Start with a letter or digit.
+The database stores only the HMAC-SHA-256 digest of the key.
 
 Responses:
 
-- `202 Accepted` for a newly queued build;
-- `200 OK` when the same idempotency key replays the same canonical request;
-- `409 Conflict` when that key was already used for another request.
+- `202 Accepted` for a new queued build.
+- `200 OK` when the same idempotency key replays the same canonical request.
+- `409 Conflict` when that key was used for another request.
 
-Both success responses include `Location: /v1/builds/{build_id}` and a build document. Submission never waits for Blender.
+The two success responses include `Location: /v1/builds/{build_id}` and a build document. Submission does not wait for Blender.
 
 ## Inspect a build
 
@@ -572,7 +591,9 @@ The build document contains:
 }
 ```
 
-Externally visible states are `queued`, `running`, `geometry_qa`, `rendering`, `succeeded`, `failed`, `canceled`, and `needs_review`. The G4 builder is opaque, so the supervisor may move directly from `running` to a terminal state rather than inventing intermediate progress.
+The API states are `queued`, `running`, `geometry_qa`, `rendering`, `succeeded`, `failed`, `canceled`, and `needs_review`.
+The G4 builder does not report intermediate progress.
+Thus, the supervisor can change directly from `running` to a terminal state.
 
 ## Retrieve artifacts
 
@@ -581,9 +602,11 @@ GET /v1/builds/{build_id}/artifacts
 Authorization: Bearer <token>
 ```
 
-Only a durably succeeded build exposes artifacts. A nonterminal build returns `409 artifacts_not_ready`; a failed, canceled, or review-required build returns `409 artifacts_unavailable`.
+Artifacts are available only after the database records build success.
+A nonterminal build returns `409 artifacts_not_ready`.
+A failed, canceled, or review-required build returns `409 artifacts_unavailable`.
 
-Success returns exactly nine records in the fixed contract order:
+Success returns nine and only nine records in the fixed contract order:
 
 ```text
 model.blend
@@ -597,7 +620,10 @@ qa.json
 manifest.json
 ```
 
-Each record contains `path`, `content_type`, `bytes`, `sha256`, and a short-lived `download_url`. URLs are signed for the exact immutable object version and default to 300 seconds. The URL itself is never written to service logs.
+Each record contains `path`, `content_type`, `bytes`, `sha256`, and a temporary `download_url`.
+Each signed URL identifies the specified immutable object version.
+Its default validity period is 300 seconds.
+The service does not write the URL to logs.
 
 ## Cancel a build
 
@@ -607,12 +633,22 @@ Authorization: Bearer <token>
 Content-Length: 0
 ```
 
-The body must be empty. A queued build is canceled atomically and returns `200`. A running build records cancellation intent and returns `202`; the supervisor terminates the full builder/Blender process tree and cancellation wins over retry or publication. Repeating cancellation on an already canceled build returns `200`. A terminal successful, failed, or review-required build returns `409`.
+The body must be empty.
+The service cancels a queued build atomically and returns `200`.
+For a running build, it records the cancellation request and returns `202`.
+
+The supervisor stops the complete builder/Blender process tree.
+Cancellation prevents retry or publication.
+A repeat cancellation for an canceled build returns `200`.
+A terminal successful, failed, or review-required build returns `409`.
 
 ## Health and readiness
 
-- `GET /healthz` returns `200 {"status":"ok"}` without contacting dependencies.
-- `GET /readyz` is authenticated and returns `200 {"status":"ready"}` only when PostgreSQL responds, the exact migration catalog matches, the Redis consumer group exists, and the versioned artifact bucket is available. Otherwise it returns `503 service_not_ready` without dependency details.
+- `GET /healthz` returns `200 {"status":"ok"}` without a dependency check.
+- `GET /readyz` uses authentication. It returns `200 {"status":"ready"}` only when
+  PostgreSQL responds and the specified migration catalog agrees with the expected catalog.
+  The Redis consumer group and versioned artifact bucket must also be available.
+  Otherwise, it returns `503 service_not_ready` without dependency details.
 
 ## Error envelope
 
@@ -629,4 +665,17 @@ Errors use one stable shape:
 }
 ```
 
-Expected status families are `400` for malformed requests, `401` for authorization, `404` for unknown builds/routes, `405` for methods, `409` for state/idempotency conflicts, `413` for oversized input, `415` for media/encoding policy, `422` for a well-formed request that violates the contract, `503` for unavailable dependencies, and a generic secret-free `500` for unexpected internal failures.
+The API uses these status families:
+
+| Status | Cause |
+|---|---|
+| `400` | Malformed request |
+| `401` | Authorization error |
+| `404` | Unknown build or route |
+| `405` | Method error |
+| `409` | State or idempotency conflict |
+| `413` | Input larger than the limit |
+| `415` | Media or encoding policy violation |
+| `422` | Correct request syntax, but a contract violation |
+| `503` | Unavailable dependency |
+| `500` | Unexpected internal failure. The response contains no secret. |

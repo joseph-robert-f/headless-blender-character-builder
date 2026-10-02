@@ -54,7 +54,7 @@ fi
 
 if [ "$HBCB_COMPOSE_PROJECT_NAME" = hbcb-local ]; then
   printf '%s\n' \
-    'SERVICE_IMAGES: FAIL: legacy hbcb-local tags may be shared by older checkouts; inspect the listed tags and remove them manually only after every legacy stack is stopped' >&2
+    'SERVICE_IMAGES: FAIL: legacy hbcb-local tags may be shared by older checkouts. Inspect the listed tags and remove them manually only after every legacy stack is stopped' >&2
   exit 4
 fi
 if [ -f .env ] && ! hbcb_service_env_private; then
@@ -63,11 +63,11 @@ if [ -f .env ] && ! hbcb_service_env_private; then
   exit 4
 fi
 if ! command -v "$docker_bin" >/dev/null 2>&1; then
-  printf '%s\n' 'SERVICE_IMAGES: FAIL: Docker executable is unavailable' >&2
+  printf '%s\n' 'SERVICE_IMAGES: FAIL: Docker executable is not available' >&2
   exit 4
 fi
 if ! "$docker_bin" info --format '{{.ServerVersion}}' >/dev/null 2>&1; then
-  printf '%s\n' 'SERVICE_IMAGES: FAIL: Docker daemon is unavailable' >&2
+  printf '%s\n' 'SERVICE_IMAGES: FAIL: Docker daemon is not available' >&2
   exit 4
 fi
 
@@ -97,4 +97,4 @@ image_rows | while IFS="$(printf '\t')" read -r role reference; do
   printf 'SERVICE_IMAGE_REMOVED: role=%s reference=%s\n' "$role" "$reference"
 done
 printf '%s\n' \
-  'SERVICE_IMAGES: cleanup complete; named volumes and shared Docker build cache were retained'
+  'SERVICE_IMAGES: cleanup complete. Named volumes and shared Docker build cache were retained'

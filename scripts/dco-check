@@ -103,13 +103,13 @@ def _commits(base: str, head: str) -> tuple[str, ...]:
             ).splitlines()
         )
     except UnicodeDecodeError as exc:
-        raise DcoFailure("invalid_history", "Git returned an invalid commit list") from exc
+        raise DcoFailure("invalid_history", 'Git returned an incorrect commit list') from exc
     if not commits:
         raise DcoFailure("empty_range", "the proposed head contains no commits outside the base")
     if len(commits) > MAX_COMMITS:
         raise DcoFailure("range_too_large", "the proposed change exceeds the 500-commit review limit")
     if any(FULL_SHA.fullmatch(commit) is None for commit in commits):
-        raise DcoFailure("invalid_history", "Git returned an invalid commit list")
+        raise DcoFailure("invalid_history", 'Git returned an incorrect commit list')
     return commits
 
 

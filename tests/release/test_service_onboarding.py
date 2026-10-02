@@ -104,7 +104,7 @@ class ServiceOnboardingTests(unittest.TestCase):
         ):
             self.assertIn(marker, api, marker)
         self.assertNotIn("facet-request-0001", api)
-        self.assertIn("Omitting `Idempotency-Key`", api)
+        self.assertIn("If you omit `Idempotency-Key`", api)
         self.assertIn("## Lightweight local client", api)
         self.assertIn("make service-client", api)
         self.assertNotIn(
@@ -191,8 +191,8 @@ class ServiceOnboardingTests(unittest.TestCase):
             "7 GiB RAM and 7.5 CPUs",
             "7.375 GiB and 8.25 CPUs",
             "20 GB free disk",
-            "at least 12 GiB Docker memory",
-            "maintainer/integration confidence gate",
+            "minimum of 12 GiB Docker memory",
+            "maintainer integration test",
         ):
             self.assertIn(marker, combined, marker)
         self.assertNotRegex(

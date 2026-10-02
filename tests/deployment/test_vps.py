@@ -249,7 +249,7 @@ class VpsOperatorTests(unittest.TestCase):
                         VPS.validate_secret_files(directory)
                     write_env(directory / filename, values[filename])
 
-            with self.assertRaisesRegex(VPS.OperatorError, "unsafe owner"):
+            with self.assertRaisesRegex(VPS.OperatorError, "owner.*not permitted"):
                 VPS.validate_secret_files(directory, owner_uid=os.getuid() + 1)
 
             worker = directory / "worker.env"
@@ -300,9 +300,9 @@ class VpsOperatorTests(unittest.TestCase):
                 config.chmod(0o644)
 
                 with mock.patch.object(VPS, "ROOT_OPERATOR_UID", os.getuid() + 1):
-                    with self.assertRaisesRegex(VPS.OperatorError, "unsafe owner"):
+                    with self.assertRaisesRegex(VPS.OperatorError, "owner.*not permitted"):
                         VPS._root_trusted_file(config, "release lock")
-                    with self.assertRaisesRegex(VPS.OperatorError, "unsafe owner"):
+                    with self.assertRaisesRegex(VPS.OperatorError, "owner.*not permitted"):
                         VPS._root_trusted_directory(
                             str(directory),
                             "backup root",
@@ -371,7 +371,7 @@ class VpsOperatorTests(unittest.TestCase):
                     VPS._compose_command(str(compose), root_trust=True)
                 compose.chmod(0o755)
                 with mock.patch.object(VPS, "ROOT_OPERATOR_UID", os.getuid() + 1):
-                    with self.assertRaisesRegex(VPS.OperatorError, "unsafe owner"):
+                    with self.assertRaisesRegex(VPS.OperatorError, "owner.*not permitted"):
                         VPS._compose_command(str(compose), root_trust=True)
 
                 docker = root / "docker"
@@ -893,7 +893,7 @@ class VpsOperatorTests(unittest.TestCase):
                     "MAINTENANCE_CONTAINER_UID",
                     os.getuid() + 1,
                 ):
-                    with self.assertRaisesRegex(VPS.OperatorError, "unsafe owner"):
+                    with self.assertRaisesRegex(VPS.OperatorError, "owner.*not permitted"):
                         VPS._validate_backup_bundle(
                             bundle,
                             root / "backups",
@@ -902,7 +902,7 @@ class VpsOperatorTests(unittest.TestCase):
                             require_current_lock=True,
                         )
                 with mock.patch.object(VPS, "ROOT_OPERATOR_UID", os.getuid() + 1):
-                    with self.assertRaisesRegex(VPS.OperatorError, "unsafe owner"):
+                    with self.assertRaisesRegex(VPS.OperatorError, "owner.*not permitted"):
                         VPS._validate_backup_bundle(
                             bundle,
                             root / "backups",
@@ -1540,7 +1540,7 @@ class VpsOperatorTests(unittest.TestCase):
         ):
             with self.subTest(option=option, value=value):
                 invalid = VPS._parse_args(["preflight", option, value])
-                with self.assertRaisesRegex(VPS.OperatorError, "outside policy"):
+                with self.assertRaisesRegex(VPS.OperatorError, "not permitted by policy"):
                     VPS._execution_limits_from_args(invalid)
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
@@ -1671,7 +1671,7 @@ class VpsOperatorTests(unittest.TestCase):
             self.assertEqual(maintenance.call_args.args[1][-1], "--apply")
 
     def test_orphan_discovery_result_and_cli_limits_fail_closed(self) -> None:
-        with self.assertRaisesRegex(VPS.OperatorError, "invalid evidence"):
+        with self.assertRaisesRegex(VPS.OperatorError, "incorrect evidence"):
             VPS._validated_orphan_discovery_result(
                 {
                     "candidates": 2,
@@ -1717,7 +1717,7 @@ class VpsOperatorTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(
                 VPS.OperatorError,
-                "create the configured Docker-internal network and attach the private S3 gateway",
+                "Make the configured Docker-internal network. Attach the private S3 gateway",
             ) as raised:
                 VPS._validate_private_storage_network(private_name, os.environ)
         self.assertNotIn(private_name, str(raised.exception))

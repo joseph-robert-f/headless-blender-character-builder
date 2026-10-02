@@ -4,18 +4,21 @@ Status: **Executed v0.1 build plan and authoritative scope record**
 
 Last updated: **August 12, 2026**
 
-> **v0.1 support boundary:** this plan records implemented and tested engineering
-> surfaces; it does not make every surface a supported product. v0.1 supports one
-> trusted user running the local one-shot Docker builder. The loopback Compose
-> service is experimental, and Internet-facing, hostile-input, multi-tenant,
-> public-OCI, and VPS operation are outside v0.1 support.
+> **v0.1 support boundary:** v0.1 supports one trusted local user with the
+> one-shot Docker builder. The loopback Compose service is experimental.
+> Internet-facing, hostile-input, multi-tenant, public-OCI, and VPS operation
+> are outside v0.1 support.
 
-This document is the authoritative scope record for the first public
-implementation. The release-blocking milestones **M0 through M5** and work
-packages **G0 through G9** were executed in order using the defaults in Section
-17, leaving a locally verified v0.1 release candidate. Section 20 preserves the
-completed `/goal` contract for reproducibility. Post-v0.1 work is context, not
-part of that completion target.
+This document records the scope of the first public implementation.
+Sections 1–21 keep the historical plan, decisions, and completed execution contract.
+Their wording is historical evidence, outside this controlled-language revision.
+Use the current user guides for operating procedures.
+
+Milestones **M0 through M5** and work packages **G0 through G9** were completed
+in sequence with the Section 17 defaults.
+That work produced a locally verified v0.1 release candidate.
+Section 20 keeps the completed `/goal` contract for reproducibility.
+Post-v0.1 proposals were not part of that completion target.
 
 ## 1. Proposed project
 

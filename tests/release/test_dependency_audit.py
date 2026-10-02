@@ -21,6 +21,12 @@ FIXTURE_FILES = (
     ".github/workflows/release-candidate.yml",
     ".github/workflows/experimental-modeling-sandbox.yml",
     ".github/workflows/experimental-project-platforms.yml",
+    ".github/workflows/review-preview-packages.yml",
+    "packaging/review-preview-requirements.lock",
+    "packaging/runtime-notices.json",
+    "scripts/build-review-preview",
+    "scripts/test-review-preview",
+    "docs/review-preview.md",
     "THIRD_PARTY_NOTICES.md",
     "compose.yaml",
     "deploy/vps/compose.yaml",
@@ -523,7 +529,7 @@ class DependencyAuditTests(unittest.TestCase):
             document["python_groups"][0]["id"] = "Unsafe_ID"
             path.write_text(json.dumps(document), encoding="utf-8")
             self.assert_input_error(
-                audit_tool.run_audit(root, online=False), "policy identifier is unsafe"
+                audit_tool.run_audit(root, online=False), "policy identifier is not safe"
             )
 
         with self.subTest(surface="duplicate within namespace"), tempfile.TemporaryDirectory() as temporary:

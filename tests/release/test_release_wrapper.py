@@ -66,7 +66,7 @@ class ReleaseWrapperTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(completed.returncode, 1, completed.stdout)
-            self.assertIn("HBCB_RELEASE_RUN_ID is required", completed.stdout)
+            self.assertIn("HBCB_RELEASE_RUN_ID is necessary", completed.stdout)
             self.assertFalse(marker.exists())
 
             completed = subprocess.run(
@@ -399,7 +399,7 @@ class ReleaseWrapperTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("![Facet Bot", readme)
         self.assertIn("docs/assets/manifest.json", readme)
-        self.assertIn("not a generated illustration", readme)
+        self.assertIn("copy of `preview.png` from a Blender build that passed its checks in a container", readme)
 
     def test_relative_markdown_links_resolve(self) -> None:
         link_pattern = re.compile(r"\[[^\]]*\]\(([^)]+)\)")

@@ -1,0 +1,119 @@
+{
+  "name": "Review preview packages",
+  "on": {
+    "workflow_dispatch": {},
+    "pull_request": {
+      "paths": [
+        "experimental_modeling/**",
+        "packaging/**",
+        "scripts/build-review-preview",
+        "scripts/test-review-preview",
+        "tests/experimental_modeling/**",
+        "docs/review-preview.md",
+        ".github/workflows/review-preview-packages.yml"
+      ]
+    },
+    "push": {
+      "branches": [
+        "main"
+      ],
+      "paths": [
+        "experimental_modeling/**",
+        "packaging/**",
+        "scripts/build-review-preview",
+        "scripts/test-review-preview",
+        ".github/workflows/review-preview-packages.yml"
+      ]
+    }
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "concurrency": {
+    "group": "review-preview-${{ github.ref }}",
+    "cancel-in-progress": true
+  },
+  "jobs": {
+    "package": {
+      "name": "Review preview / ${{ matrix.target.name }}",
+      "runs-on": "${{ matrix.target.runner }}",
+      "timeout-minutes": 20,
+      "strategy": {
+        "fail-fast": false,
+        "matrix": {
+          "target": [
+            {
+              "name": "windows-x64",
+              "runner": "windows-2022",
+              "architecture": "x64"
+            },
+            {
+              "name": "macos-arm64",
+              "runner": "macos-15",
+              "architecture": "arm64"
+            }
+          ]
+        }
+      },
+      "env": {
+        "PYTHONUTF8": "1",
+        "PYTHONDONTWRITEBYTECODE": "1"
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+          "with": {
+            "persist-credentials": false,
+            "ref": "${{ github.event.pull_request.head.sha || github.sha }}"
+          }
+        },
+        {
+          "name": "Select pinned native official Python",
+          "uses": "actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c",
+          "with": {
+            "python-version": "3.13.16",
+            "architecture": "${{ matrix.target.architecture }}"
+          }
+        },
+        {
+          "name": "Install hash-locked build tools",
+          "run": "python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r packaging/review-preview-requirements.lock"
+        },
+        {
+          "name": "Run source packaging contracts",
+          "run": "python -m unittest discover -s tests/experimental_modeling -p test_review_preview.py -v"
+        },
+        {
+          "name": "Build native unsigned review-only package",
+          "run": "python scripts/build-review-preview --target ${{ matrix.target.name }} --output build/review-preview"
+        },
+        {
+          "name": "Test a fresh extraction without Python or Node on PATH",
+          "shell": "python {0}",
+          "run": "import subprocess\nimport sys\nfrom pathlib import Path\noutput = Path(\"build/review-preview\")\narchives = list(output.glob(\"hbcb-review-preview-*.zip\")) + list(output.glob(\"hbcb-review-preview-*.tar.gz\"))\nassert len(archives) == 1, \"Expected exactly one native archive\"\nsubprocess.run([sys.executable, \"scripts/test-review-preview\", \"--package\", str(archives[0]), \"--output\", str(output / \"smoke-results.json\"), \"--expected-target\", \"${{ matrix.target.name }}\"], check=True, timeout=180)\n"
+        },
+        {
+          "name": "Retain passing unsigned preview and matching source",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "name": "review-preview-${{ matrix.target.name }}-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "build/review-preview/hbcb-review-preview-*.zip\nbuild/review-preview/hbcb-review-preview-*.tar.gz\nbuild/review-preview/SHA256SUMS\nbuild/review-preview/provenance.json\nbuild/review-preview/smoke-results.json",
+            "retention-days": 14,
+            "if-no-files-found": "error"
+          }
+        },
+        {
+          "name": "Retain bounded build and smoke diagnostics",
+          "if": "${{ always() }}",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "name": "review-preview-evidence-${{ matrix.target.name }}-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "build/review-preview/*.json\nbuild/review-preview/work/hbcb-review-preview/warn-hbcb-review-preview.txt",
+            "retention-days": 14,
+            "if-no-files-found": "warn"
+          }
+        }
+      ]
+    }
+  }
+}

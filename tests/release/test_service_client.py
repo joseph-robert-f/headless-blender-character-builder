@@ -206,7 +206,7 @@ class ServiceClientTests(unittest.TestCase):
             (sentinel / "sentinel").write_text("preserve\n", encoding="utf-8")
             fake.download.reset_mock()
             with mock.patch.object(CLIENT, "Client", return_value=fake):
-                with self.assertRaisesRegex(CLIENT.ClientFailure, "refusing to overwrite"):
+                with self.assertRaisesRegex(CLIENT.ClientFailure, "The program will not replace it"):
                     CLIENT.run(
                         [
                             "--request",
@@ -224,7 +224,7 @@ class ServiceClientTests(unittest.TestCase):
             sentinel_file.write_text("file-sentinel\n", encoding="utf-8")
             fake.submit.return_value = sentinel_file.name
             with mock.patch.object(CLIENT, "Client", return_value=fake):
-                with self.assertRaisesRegex(CLIENT.ClientFailure, "refusing to overwrite"):
+                with self.assertRaisesRegex(CLIENT.ClientFailure, "The program will not replace it"):
                     CLIENT.run(
                         [
                             "--request",
@@ -244,7 +244,7 @@ class ServiceClientTests(unittest.TestCase):
             sentinel_link.symlink_to(sentinel_target, target_is_directory=True)
             fake.submit.return_value = sentinel_link.name
             with mock.patch.object(CLIENT, "Client", return_value=fake):
-                with self.assertRaisesRegex(CLIENT.ClientFailure, "refusing to overwrite"):
+                with self.assertRaisesRegex(CLIENT.ClientFailure, "The program will not replace it"):
                     CLIENT.run(
                         [
                             "--request",
@@ -273,7 +273,7 @@ class ServiceClientTests(unittest.TestCase):
                 return original_open(replacement, flags)
 
             with mock.patch.object(CLIENT.os, "open", side_effect=swapped_open):
-                with self.assertRaisesRegex(CLIENT.ClientFailure, "unavailable or unsafe"):
+                with self.assertRaisesRegex(CLIENT.ClientFailure, "not available or not safe"):
                     CLIENT._regular_private_file(source, 1024)
 
             original_fstat = CLIENT.os.fstat
@@ -292,7 +292,7 @@ class ServiceClientTests(unittest.TestCase):
                 return metadata
 
             with mock.patch.object(CLIENT.os, "fstat", side_effect=changed_fstat):
-                with self.assertRaisesRegex(CLIENT.ClientFailure, "unavailable or unsafe"):
+                with self.assertRaisesRegex(CLIENT.ClientFailure, "not available or not safe"):
                     CLIENT._regular_private_file(source, 1024)
 
             calls = 0
@@ -314,7 +314,7 @@ class ServiceClientTests(unittest.TestCase):
                 return metadata
 
             with mock.patch.object(CLIENT.os, "fstat", side_effect=same_size_mutation):
-                with self.assertRaisesRegex(CLIENT.ClientFailure, "unavailable or unsafe"):
+                with self.assertRaisesRegex(CLIENT.ClientFailure, "not available or not safe"):
                     CLIENT._regular_private_file(source, 1024)
 
     def test_repeated_signals_preserve_first_status_and_finish_cleanup(self) -> None:

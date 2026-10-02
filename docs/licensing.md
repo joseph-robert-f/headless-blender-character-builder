@@ -2,121 +2,114 @@
 
 # Licensing guide
 
-This guide explains the repository's adopted v0.1 licensing structure. It is
-an operational summary, not legal advice and not a replacement for the license
-texts that govern each work.
+This guide explains the v0.1 licensing structure adopted by the repository.
+It is a summary for project operations.
+It is not legal advice and does not replace the license texts that control each work.
 
 ## Project source code
 
-Unless a file says otherwise, repository source, schemas, scripts,
-configuration, tests, and documentation are licensed under the GNU General
-Public License, version 3 or any later version (`GPL-3.0-or-later`). The full
-license text is in [`LICENSE`](../LICENSE); package and OCI metadata use the
-same SPDX identifier.
+Unless a file specifies a different license, repository source, schemas, scripts, configuration, tests, and documentation use the GNU General Public License.
+The version is 3 or any later version (`GPL-3.0-or-later`).
+The full license text is in [`LICENSE`](../LICENSE).
+Package and OCI metadata use the same SPDX identifier.
 
-The GPL permits use, study, modification, redistribution, and commercial use,
-subject to its conditions. A distributor of a covered binary or container must
-provide notices and Corresponding Source in a GPL-compliant way. Running a
-modified service without conveying a copy is treated differently by GPLv3
-from distributing that software; this project is not licensed under the AGPL.
+The GPL permits use, study, changes, redistribution, and commercial use subject to its conditions.
+A distributor of a covered binary or container must supply notices and Corresponding Source as specified by the GPL.
+GPLv3 treats operation of a modified service without conveyance differently from distribution of a software copy.
+This project does not use the AGPL.
 
 ## Blender and containers
 
-Blender is independently distributed under the GPL with compatible bundled
-components. The builder uses the official Blender 4.5.12 LTS Linux x64 binary
-archive and records its checksum and corresponding-source locations in
-[`docker/BLENDER_SOURCE_NOTICE.md`](../docker/BLENDER_SOURCE_NOTICE.md).
+Blender is distributed independently under the GPL with compatible bundled components.
+The builder uses the official Blender 4.5.12 LTS Linux x64 binary archive.
+[`docker/BLENDER_SOURCE_NOTICE.md`](../docker/BLENDER_SOURCE_NOTICE.md) records its checksum and corresponding-source locations.
+The image keeps Blender's copyright and machine-readable license inventory.
 
-The image preserves Blender's copyright and machine-readable license
-inventory. Anyone publishing or redistributing an image containing Blender
-must satisfy the notices and corresponding-source duties for their own
-distribution method; the project's source link does not transfer that
-responsibility to the maintainers.
+A person who publishes or redistributes an image with Blender must meet the notices and corresponding-source duties for that distribution method.
+The project's source link does not give that responsibility to the maintainers.
 
-`make release-check` packages the byte- and SHA-256-pinned Blender 4.5.12 source
-archive beside the exact project source, dependency inventories, SBOMs, and
-notices. Its machine-readable inventory deliberately marks that material as
-`project-and-blender-source-only` and `public_oci_ready: false`. It is useful
-release evidence, but it is not a complete corresponding-source determination
-for every native, base-image, or copyleft component in the final containers.
-Public OCI publication remains blocked until an independent review starts from
-actual final-image SBOMs, identifies every applicable source/delivery duty
-(including LGPL/native and operating-system components), and adds the required
-checksum-bound material and retention plan. The future transaction must also
-inventory, SBOM, sign, publish, and digest-lock the project-derived PostgreSQL
-image; current tooling handles only builder, API, and worker. This guide is not
-legal advice.
+`make release-check` packages the Blender 4.5.12 source archive with its pinned byte count and SHA-256.
+The package also includes the project source for that version, dependency inventories, SBOMs, and notices.
+The machine-readable inventory marks this material as `project-and-blender-source-only` and `public_oci_ready: false`.
+This is useful release evidence.
+It is not a complete corresponding-source decision for each native, base-image, or copyleft component in the completed containers.
 
-Blender's GPL does not automatically apply to normal artwork created with
-Blender. See [`OUTPUT_POLICY.md`](../OUTPUT_POLICY.md) for the project's output
-and no-warranty boundary.
+Public OCI publication stays blocked until reviewers complete these tasks independently:
+
+1. Start from the SBOMs of the actual completed images.
+2. Identify each applicable source and delivery duty.
+   Include LGPL/native and operating-system components.
+3. Add the necessary material with checksum bindings.
+4. Add the retention plan.
+
+The future publication transaction must also include the project-derived PostgreSQL image.
+It must inventory that image, make its SBOM, sign it, publish it, and lock its digest.
+Current tools process only the builder, API, and worker images.
+This guide is not legal advice.
+
+Blender's GPL does not automatically apply to usual artwork made with Blender.
+Read [`OUTPUT_POLICY.md`](../OUTPUT_POLICY.md) for the project's output policy and warranty limits.
 
 ## Sample assets
 
-Project source and sample artwork are deliberately separated. Original sample
-assets created for the project are intended to use `CC0-1.0` unless a per-file
-manifest says otherwise. See [`ASSET_LICENSE.md`](../ASSET_LICENSE.md).
+Project source and sample artwork have different license policies.
+Original sample assets made for this project are intended to use `CC0-1.0` unless a file manifest specifies a different license.
+Read [`ASSET_LICENSE.md`](../ASSET_LICENSE.md).
 
-Before adding a sample model, render, texture, font, reference, or other asset:
+Before you add a sample model, render, texture, font, reference, or other asset, do these tasks:
 
-1. confirm that the contributor created it or has redistribution rights;
-2. use an original, neutral character rather than franchise or brand material;
-3. record creator, source, license, modifications, and checksum;
-4. preserve required attribution and license text; and
-5. keep large generated artifacts in release assets rather than normal source
-   history unless the maintainers approve a small documented preview.
+1. Make sure that the contributor made it or has redistribution rights.
+2. Use an original, neutral character.
+   Do not use franchise or brand material.
+3. Record the creator, source, license, changes, and checksum.
+4. Keep the required attribution and license text.
+5. Keep large generated artifacts in release assets, not in usual source history.
+   Maintainers can approve a small preview with documentation as an exception.
 
-CC0 does not grant permission to use a third party's trademark, personality,
-privacy, publicity, patent, or other rights.
+CC0 gives no permission to use third-party trademark, personality, privacy, publicity, patent, or other rights.
 
 ## User inputs and generated outputs
 
-Users are responsible for rights to submitted names, designs, references,
-logos, and likenesses. The project grants no rights to third-party characters
-or brands and does not automatically determine whether an output is protected
-or cleared for a proposed use.
+Users are responsible for the rights to submitted names, designs, references, logos, and likenesses.
+The project gives no rights to third-party characters or brands.
+It does not automatically decide if an output is protected or cleared for a proposed use.
 
-The maintainers do not claim a user's normal generated output merely because
-the project produced it. Rights and permitted uses can still depend on the
-input, any embedded asset, the generator, human contribution, contracts, and
-local law. Generated geometry QA is not a legal clearance or physical-print
-guarantee.
+Maintainers do not claim a user's usual generated output only because the project made it.
+Rights and permitted uses can depend on the input, embedded assets, generator, human contribution, contracts, and local law.
+Geometry QA does not give legal clearance or a physical-print guarantee.
 
 ## Third-party dependencies
 
-[`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) summarizes direct
-dependencies and separately deployed services. Version locks, upstream
-license files, installed package metadata, image notices, and the release SBOM
-are authoritative for an exact build. Dependency upgrades must review both
-license compatibility and redistribution obligations.
+[`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) summarizes direct dependencies and services deployed independently.
+For a specified build, examine the version locks, upstream license files, installed package metadata, image notices, and release SBOM.
+These records identify the components and licenses for that build.
+For a dependency upgrade, review license compatibility and redistribution obligations.
 
-Project and upstream names identify provenance or compatibility only. No
-trademark license, affiliation, sponsorship, or endorsement is implied.
+Project and upstream names identify only provenance or compatibility.
+They do not imply a trademark license, affiliation, sponsorship, or endorsement.
 
 ## Contributions and DCO
 
-Contributions remain copyrighted by their authors and are submitted under the
-repository's applicable license. The project uses Developer Certificate of
-Origin 1.1 sign-off rather than a Contributor License Agreement. Every commit
-must include a valid `Signed-off-by` trailer as described in
-[`CONTRIBUTING.md`](../CONTRIBUTING.md).
+Contributions stay under their authors' copyright and use the applicable repository license.
+The project uses Developer Certificate of Origin 1.1 sign-off, not a Contributor License Agreement.
+Each commit must contain a valid `Signed-off-by` trailer.
+Read [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
-DCO sign-off is a contributor attestation about the right to submit a change;
-it is not copyright assignment and does not give maintainers unilateral rights
-to relicense a contributor's work. A future license change may therefore need
-permission from the relevant copyright holders.
+DCO sign-off is a contributor attestation about the right to submit a change.
+It does not assign copyright to another person.
+It does not give maintainers unilateral rights to change the license of a contributor's work.
+A future license change can make permission from the applicable copyright holders necessary.
 
 ## SPDX convention
 
-New source files should carry `SPDX-License-Identifier: GPL-3.0-or-later` in a
-language-appropriate comment. Separately licensed sample assets should use
-their actual identifier and manifest entry. Do not add a license identifier to
-a file unless the contributor has authority to apply it.
+For new source files, this license comment is recommended: `SPDX-License-Identifier: GPL-3.0-or-later`.
+Use the comment format for the applicable language.
+For sample assets with a different license, the project recommends their correct identifier and manifest entry.
+Do not add a license identifier unless the contributor has authority to apply it.
 
 ## Optional provider integrations
 
-OpenAI planning and MCP integration are post-v0.1 and optional. They do not
-change the deterministic builder's GPL license. Operators must bring their own
-credentials, comply with applicable provider terms and usage policies, and
-keep secrets out of repository history, browser code, Blender workers, logs,
-manifests, and artifacts.
+OpenAI planning and MCP integration are optional features for work after v0.1.
+They do not change the deterministic builder's GPL license.
+Operators must supply their own credentials and obey the applicable provider terms and use policies.
+Do not put secrets in repository history, browser code, Blender workers, logs, manifests, or artifacts.

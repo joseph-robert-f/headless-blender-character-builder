@@ -242,7 +242,7 @@ class PortableProjectTests(PortableCase):
         before = snapshot(self.root)
         result = self.cli("review", "--project", self.root)
         self.assertEqual(result.returncode, 2, result.stdout)
-        self.assertIn("unverified", result.stdout.lower())
+        self.assertIn("Review backend not available:", result.stdout)
         self.assertEqual(before, snapshot(self.root))
 
     def test_portable_imports_do_not_need_unix_only_modules(self):
@@ -448,7 +448,7 @@ class PortableReviewTests(PortableCase):
         before = snapshot(self.store)
         duplicate = self.cli("review", "--project", self.root, "--experimental-platform-review")
         self.assertEqual(duplicate.returncode, 2, duplicate.stdout)
-        self.assertIn("already running", duplicate.stdout.lower())
+        self.assertIn("session is active for this project", duplicate.stdout.lower())
         self.assertEqual(state_path.read_bytes(), running)
         self.assertEqual(request(origin, "/api/project")[0], 200)
         self.assertEqual(snapshot(self.store), before)

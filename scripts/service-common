@@ -11,7 +11,7 @@ hbcb_service_error() {
 
 hbcb_service_default_project_name() {
   hbcb_service_path=$(pwd -P 2>/dev/null) || {
-    hbcb_service_error 'the checkout path cannot be resolved'
+    hbcb_service_error 'The program cannot get the checkout path.'
     return 1
   }
   hbcb_service_digest=
@@ -30,12 +30,12 @@ hbcb_service_default_project_name() {
   hbcb_service_hash=${hbcb_service_digest%% *}
   case "$hbcb_service_hash" in
     ''|*[!0-9a-f]*)
-      hbcb_service_error 'the checkout identity could not be derived safely'
+      hbcb_service_error 'The program could not calculate a safe checkout identity.'
       return 1
       ;;
   esac
   if [ "${#hbcb_service_hash}" -ne 64 ]; then
-    hbcb_service_error 'the checkout identity could not be derived safely'
+    hbcb_service_error 'The program could not calculate a safe checkout identity.'
     return 1
   fi
   printf 'hbcb-local-%.12s\n' "$hbcb_service_hash"
@@ -99,22 +99,22 @@ hbcb_service_env_private() {
 # persisted values.  A pre-isolation .env intentionally retains hbcb-local.
 hbcb_service_settings() {
   if [ -L .env ] || { [ -e .env ] && [ ! -f .env ]; }; then
-    hbcb_service_error '.env must be a regular non-symlink file'
+    hbcb_service_error '.env must be a regular file. Do not use a symlink.'
     return 1
   fi
   if [ -f .env ]; then
     hbcb_service_env_size=$(wc -c < .env 2>/dev/null | tr -d ' ') || {
-      hbcb_service_error '.env could not be read safely'
+      hbcb_service_error 'The program cannot read .env with the necessary file checks.'
       return 1
     }
     case "$hbcb_service_env_size" in
       ''|*[!0-9]*)
-        hbcb_service_error '.env could not be read safely'
+        hbcb_service_error 'The program cannot read .env with the necessary file checks.'
         return 1
         ;;
     esac
     if [ "$hbcb_service_env_size" -gt 65536 ]; then
-      hbcb_service_error '.env exceeds the local settings size limit'
+      hbcb_service_error '.env is larger than the local settings size limit.'
       return 1
     fi
   fi
@@ -129,7 +129,7 @@ hbcb_service_settings() {
       if [ "$hbcb_service_status" -eq 1 ]; then
         hbcb_service_project=hbcb-local
       else
-        hbcb_service_error '.env contains duplicate checkout project settings'
+        hbcb_service_error '.env has more than one checkout project setting.'
         return 1
       fi
     fi
@@ -137,7 +137,7 @@ hbcb_service_settings() {
     hbcb_service_project=$(hbcb_service_default_project_name) || return 1
   fi
   if ! hbcb_service_valid_project_name "$hbcb_service_project"; then
-    hbcb_service_error 'the Compose project name must be a 1-63 character lowercase safe identifier'
+    hbcb_service_error 'The Compose project name must be a safe lowercase identifier with 1-63 characters.'
     return 1
   fi
 
@@ -151,7 +151,7 @@ hbcb_service_settings() {
       if [ "$hbcb_service_status" -eq 1 ]; then
         hbcb_service_api_port=8080
       else
-        hbcb_service_error '.env contains duplicate API host-port settings'
+        hbcb_service_error '.env has more than one API host-port setting.'
         return 1
       fi
     fi
@@ -169,7 +169,7 @@ hbcb_service_settings() {
       if [ "$hbcb_service_status" -eq 1 ]; then
         hbcb_service_storage_port=9000
       else
-        hbcb_service_error '.env contains duplicate storage host-port settings'
+        hbcb_service_error '.env has more than one storage host-port setting.'
         return 1
       fi
     fi
@@ -178,15 +178,15 @@ hbcb_service_settings() {
   fi
 
   if ! hbcb_service_valid_port "$hbcb_service_api_port"; then
-    hbcb_service_error 'the API host port must be a canonical integer from 1 through 65535'
+    hbcb_service_error 'The API host port must be a canonical integer from 1 to 65535.'
     return 1
   fi
   if ! hbcb_service_valid_port "$hbcb_service_storage_port"; then
-    hbcb_service_error 'the storage host port must be a canonical integer from 1 through 65535'
+    hbcb_service_error 'The storage host port must be a canonical integer from 1 to 65535.'
     return 1
   fi
   if [ "$hbcb_service_api_port" = "$hbcb_service_storage_port" ]; then
-    hbcb_service_error 'the API and storage host ports must be distinct'
+    hbcb_service_error 'The API and storage host ports must be different.'
     return 1
   fi
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Bounded black-box smoke test for an explicitly authorized G8 target.
+"""Do the G8 smoke test only on a target that you have permission to use.
 
-With no target this command is deliberately a successful conditional skip.  A
-live run accepts credentials only through a protected token file, refuses HTTP
-outside an explicitly enabled loopback test mode, and never logs response
+With no target, the command skips the test and returns exit code 0.
+Supply credentials only in a protected token file. HTTP is permitted only in
+loopback test mode with permission. The program does not record response
 bodies or signed download URLs.
 """
 
@@ -956,23 +956,23 @@ def atomic_write_evidence(path: Path, document: Mapping[str, Any]) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the bounded G8 operator smoke against an explicitly authorized target."
+        description="Do the G8 operator smoke test only on a target that you have permission to use."
     )
-    parser.add_argument("--target", help="API root URL; HTTPS is required for non-loopback hosts")
-    parser.add_argument("--token-file", type=Path, help="mode-0600 file containing one service token")
+    parser.add_argument("--target", help='API root URL. HTTPS is necessary for hosts that do not use loopback.')
+    parser.add_argument("--token-file", type=Path, help="Mode-0600 file with one service token.")
     parser.add_argument(
         "--allow-loopback-http",
         action="store_true",
-        help="permit HTTP only when --target uses literal loopback or localhost",
+        help="Let the program use HTTP only if --target is a loopback address or localhost.",
     )
     parser.add_argument(
         "--allow-artifact-host",
         action="append",
         default=[],
         metavar="HOST[:PORT]",
-        help="explicit cross-origin HTTPS artifact authority; repeat as needed",
+        help='Add an HTTPS artifact authority for cross-origin access. You can supply more than one.',
     )
-    parser.add_argument("--evidence", type=Path, help="atomically write sanitized mode-0600 JSON evidence")
+    parser.add_argument("--evidence", type=Path, help="Write sanitized JSON evidence with mode 0600. Use an atomic write.")
     parser.add_argument("--poll-timeout", type=float, default=1200.0)
     parser.add_argument("--poll-interval", type=float, default=2.0)
     parser.add_argument("--request-timeout", type=float, default=30.0)

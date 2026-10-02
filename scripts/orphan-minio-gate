@@ -26,16 +26,16 @@ valid_tool_selector() {
 }
 valid_tool_selector "$docker_bin" || fail 'DOCKER must name one safe executable' 3
 valid_tool_selector "$python_bin" || fail 'PYTHON must name one safe executable' 3
-command -v "$docker_bin" >/dev/null 2>&1 || fail 'Docker is unavailable' 3
-command -v "$python_bin" >/dev/null 2>&1 || fail 'Python is unavailable' 3
-"$docker_bin" info >/dev/null 2>&1 || fail 'Docker daemon is unavailable' 3
+command -v "$docker_bin" >/dev/null 2>&1 || fail 'Docker is not available' 3
+command -v "$python_bin" >/dev/null 2>&1 || fail 'Python is not available' 3
+"$docker_bin" info >/dev/null 2>&1 || fail 'Docker daemon is not available' 3
 
 # Resolve the same image tags used by the local service without sourcing the
 # credential file.  Callers may select different already-built images through
 # the two gate-specific environment variables.
 # shellcheck source=service-common
 . "$script_dir/service-common"
-hbcb_service_settings >/dev/null || fail 'local service settings are invalid' 3
+hbcb_service_settings >/dev/null || fail 'local service settings are incorrect' 3
 service_reference=${HBCB_ORPHAN_SERVICE_IMAGE:-$HBCB_SERVICE_TEST_IMAGE}
 minio_reference=${HBCB_ORPHAN_MINIO_IMAGE:-$HBCB_MINIO_IMAGE}
 postgres_reference=${HBCB_ORPHAN_POSTGRES_IMAGE:-$HBCB_POSTGRES_IMAGE}
@@ -44,18 +44,18 @@ image_id() {
   selected_reference=$1
   selected_label=$2
   case "$selected_reference" in
-    ''|-*|*[![:graph:]]*) fail "$selected_label image reference is invalid" 4 ;;
+    ''|-*|*[![:graph:]]*) fail "$selected_label image reference is incorrect" 4 ;;
   esac
-  [ "${#selected_reference}" -le 512 ] || fail "$selected_label image reference is invalid" 4
+  [ "${#selected_reference}" -le 512 ] || fail "$selected_label image reference is incorrect" 4
   selected_metadata=$("$docker_bin" image inspect \
     --format '{{.Os}}/{{.Architecture}}|{{.Id}}' "$selected_reference" 2>/dev/null) || \
-    fail "$selected_label image is unavailable; run make service-smoke after make service-up" 4
+    fail "$selected_label image is not available. Run make service-smoke after make service-up" 4
   selected_platform=${selected_metadata%%|*}
   selected_id=${selected_metadata#*|}
   [ "$selected_platform" = linux/amd64 ] || fail "$selected_label image must be linux/amd64" 4
   case "$selected_id" in
     sha256:????????????????????????????????????????????????????????????????) ;;
-    *) fail "$selected_label image ID is invalid" 4 ;;
+    *) fail "$selected_label image ID is incorrect" 4 ;;
   esac
   printf '%s\n' "$selected_id"
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch or import the checksum-pinned Blender corresponding-source archive."""
+"""Download or import the Blender corresponding-source archive with a pinned checksum."""
 
 from __future__ import annotations
 
@@ -47,11 +47,11 @@ def _regular_bytes(path: Path, maximum: int) -> bytes:
     try:
         metadata = path.lstat()
     except OSError:
-        raise SourceFailure("input_unavailable", "required source input is unavailable") from None
+        raise SourceFailure("input_unavailable", "required source input is not available") from None
     if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
-        raise SourceFailure("unsafe_input", "required source input must be a regular non-symlink")
+        raise SourceFailure("unsafe_input", "necessary source input must be a regular file, not a symlink")
     if metadata.st_size < 1 or metadata.st_size > maximum:
-        raise SourceFailure("input_size_invalid", "required source input is outside the size policy")
+        raise SourceFailure("input_size_invalid", "necessary source input size does not obey the size policy")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(str(path), flags)
@@ -60,7 +60,7 @@ def _regular_bytes(path: Path, maximum: int) -> bytes:
     except OSError:
         raise SourceFailure("input_unreadable", "required source input cannot be read") from None
     if len(payload) != metadata.st_size:
-        raise SourceFailure("input_changed", "required source input changed while reading")
+        raise SourceFailure("input_changed", "necessary source input changed during the read")
     return payload
 
 
@@ -69,7 +69,7 @@ def load_policy(path: Path) -> Mapping[str, object]:
     try:
         document = json.loads(payload.decode("utf-8", "strict"))
     except (UnicodeDecodeError, ValueError):
-        raise SourceFailure("invalid_policy", "corresponding-source policy is invalid JSON") from None
+        raise SourceFailure("invalid_policy", "corresponding-source policy is incorrect JSON") from None
     if not isinstance(document, dict) or set(document) != {"blender", "format", "publication"}:
         raise SourceFailure("invalid_policy", "corresponding-source policy has unsupported fields")
     if document.get("format") != "hbcb-corresponding-source-policy/v1":
@@ -155,13 +155,13 @@ def _network_stream(url: str, expected_size: int) -> BinaryIO:
     content_length = response.headers.get("Content-Length")
     if status != 200 or final_url != url:
         response.close()
-        raise SourceFailure("download_identity_invalid", "official Blender source response identity is invalid")
+        raise SourceFailure("download_identity_invalid", "official Blender source response identity is incorrect")
     if content_length is not None:
         try:
             announced = int(content_length)
         except ValueError:
             response.close()
-            raise SourceFailure("download_size_invalid", "official Blender source length is invalid") from None
+            raise SourceFailure("download_size_invalid", "official Blender source length is incorrect") from None
         if announced != expected_size:
             response.close()
             raise SourceFailure("download_size_invalid", "official Blender source length does not match policy")
@@ -209,17 +209,17 @@ def fetch(policy_path: Path, output_dir: Path, archive_path: Optional[Path] = No
     assert isinstance(source_url, str)
 
     if output_dir.exists() or output_dir.is_symlink():
-        raise SourceFailure("output_exists", "refusing to overwrite corresponding-source output")
+        raise SourceFailure("output_exists", "cannot overwrite the corresponding-source output")
     try:
         parent = output_dir.parent.resolve(strict=True)
         parent_metadata = parent.lstat()
     except OSError:
-        raise SourceFailure("output_parent_unsafe", "corresponding-source output parent is unavailable") from None
+        raise SourceFailure("output_parent_unsafe", "corresponding-source output parent is not available") from None
     if parent.is_symlink() or not stat.S_ISDIR(parent_metadata.st_mode):
-        raise SourceFailure("output_parent_unsafe", "corresponding-source output parent is unsafe")
+        raise SourceFailure("output_parent_unsafe", "corresponding-source output parent is not safe")
     destination = parent / output_dir.name
     if destination.exists() or destination.is_symlink():
-        raise SourceFailure("output_exists", "refusing to overwrite corresponding-source output")
+        raise SourceFailure("output_exists", "cannot overwrite the corresponding-source output")
 
     staging = Path(tempfile.mkdtemp(prefix=".hbcb-source-", dir=str(parent)))
     staged_archive = staging / archive_name
@@ -232,9 +232,9 @@ def fetch(policy_path: Path, output_dir: Path, archive_path: Optional[Path] = No
             try:
                 metadata = archive_path.lstat()
             except OSError:
-                raise SourceFailure("input_unavailable", "supplied Blender source archive is unavailable") from None
+                raise SourceFailure("input_unavailable", "supplied Blender source archive is not available") from None
             if archive_path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
-                raise SourceFailure("unsafe_input", "supplied Blender source archive must be a regular non-symlink")
+                raise SourceFailure("unsafe_input", "supplied Blender source archive must be a regular file, not a symlink")
             if metadata.st_size != expected_size:
                 raise SourceFailure("archive_size_mismatch", "supplied Blender source archive does not match pinned bytes")
             descriptor = -1
@@ -266,7 +266,7 @@ def fetch(policy_path: Path, output_dir: Path, archive_path: Optional[Path] = No
             os.mkdir(str(destination), 0o700)
             created_output = True
         except FileExistsError:
-            raise SourceFailure("output_exists", "refusing to overwrite corresponding-source output") from None
+            raise SourceFailure("output_exists", "cannot overwrite the corresponding-source output") from None
         except OSError:
             raise SourceFailure("output_create_failed", "corresponding-source output could not be reserved") from None
         os.replace(str(staged_archive), str(destination / archive_name))
@@ -295,7 +295,7 @@ def _arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--archive", type=Path, help="optional already-downloaded archive")
+    parser.add_argument("--archive", type=Path, help="archive from a previous download (optional)")
     return parser.parse_args(argv)
 
 

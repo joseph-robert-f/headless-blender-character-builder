@@ -9,3 +9,5 @@
 *.jpg binary
 *.jpeg binary
 *.mp4 binary
+# Preserve exact, checksum-reviewed upstream notices, including upstream spaces.
+/packaging/notices/* -whitespace

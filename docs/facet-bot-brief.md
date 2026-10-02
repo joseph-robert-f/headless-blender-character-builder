@@ -1,17 +1,34 @@
 # `facet-bot` Example Brief
 
-`facet-bot` is an original geometric desk-toy robot designed to prove the bounded character generator without relying on a franchise, likeness, uploaded asset, font, texture, or network resource.
+`facet-bot` is an original geometric desk-toy robot.
+It demonstrates the character generator with fixed input limits.
+It uses no franchise, likeness, uploaded asset, font, texture, or network resource.
 
-The default version has:
+The default version has these features:
 
-- a rounded-cube head with two inset circular eyes;
-- a compact capsule-like torso;
-- stout cylindrical arms and legs with spherical joints;
-- a circular pedestal integrated into the derived manufacturing-oriented shell;
-- a warm orange and cream palette for presentation renders;
-- a neutral standing pose and friendly proportions;
-- no text, logo, trademark, or external reference.
+- A rounded-cube head with two inset circular eyes
+- A compact capsule-like torso
+- Short cylindrical arms and legs with spherical joints
+- A circular pedestal in the derived manufacturing-oriented shell
+- A warm orange and cream palette for presentation renders
+- A neutral standing pose and friendly proportions
+- No text, logo, trademark, or external reference.
 
-The form remains recognizable from front, side, and back views and compiles entirely from native Blender mesh primitives. Its nominal target height is 95 mm. G3 now proves that its exported STL is one connected, watertight, consistently oriented, positive-volume shell with 316,172 triangles. The independently checked final output measures 94.9845 mm high, with conservative lower bounds of 2.3001 mm for walls and 2.3089 mm for freestanding features, so the success manifest may be published.
+Front, side, and back views show the form.
+The generator uses only native Blender mesh primitives.
+The nominal target height is 95 mm.
 
-The second fixture, `moss-hopper`, uses the same generator but materially changes style, proportions, palette, pose/component selection, topology counts, bounds, and structural fingerprint. Its G2 generation proof passes, while conservative G3 wall evidence remains ambiguous; the runner therefore returns `needs_review` and publishes no success artifacts. This demonstrates the fail-closed QA policy rather than a print guarantee.
+## Recorded fixture measurements
+
+The recorded G3 result has one connected, watertight STL shell with consistent orientation and positive volume.
+It has 316,172 triangles.
+Independent output measurement gives a height of 94.9845 mm.
+Conservative lower bounds are 2.3001 mm for walls and 2.3089 mm for freestanding features.
+These results permit a success manifest for that fixture.
+
+The `moss-hopper` fixture uses the same generator.
+It changes style, proportions, palette, pose, components, topology counts, bounds, and structural fingerprint.
+Its G2 generation test passes.
+Its conservative G3 wall evidence is not conclusive.
+The runner returns `needs_review` and publishes no success artifacts.
+This result demonstrates QA rejection of unknown evidence, not a print guarantee.

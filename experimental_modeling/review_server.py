@@ -35,7 +35,7 @@ def verified_revision(store: Path, revision: str):
     if not directory.is_relative_to(store):raise ValueError("revision escaped project store")
     result=read_json(directory/"result.json")
     if result.get("schema_version")!=1 or result.get("revision")!=revision or result.get("status") not in ("accepted","rejected","needs_review"):
-        raise ValueError("invalid revision result")
+        raise ValueError('incorrect revision result')
     manifest=result.get("artifacts")
     if not isinstance(manifest,dict):raise ValueError("missing artifact manifest")
     actual={p.relative_to(directory).as_posix():digest(p) for p in regular_tree(directory) if p!=directory/"result.json"}
@@ -59,7 +59,7 @@ def accepted_bindings(store):
         path=safe_path(store/"accepted"/revision/"result.json")
         if digest(path)!=expected:raise ValueError("accepted history result hash mismatch")
         value=read_json(path)
-        if value.get("revision")!=revision or value.get("status")!="accepted":raise ValueError("invalid accepted history")
+        if value.get("revision")!=revision or value.get("status")!="accepted":raise ValueError('incorrect accepted history')
         bindings[revision]=expected
         if value.get("parent") is None or value.get("parent_result_hash") is None:return bindings
         revision=identifier(value["parent"]);expected=value["parent_result_hash"]
@@ -74,7 +74,7 @@ class ReviewProject:
         if read_only is not None and type(read_only) is not bool:
             raise ValueError("read_only must be a boolean")
         self.read_only = os.name == "nt" or read_only is True
-        self.read_only_reason = ("Read-only review on Windows: durable decision/request writes are not implemented yet. Existing evidence can be inspected and downloaded." if os.name == "nt" else "Read-only review: recording acceptance and change requests is disabled.") if self.read_only else ""
+        self.read_only_reason = ("Read-only review on Windows. You cannot record decisions or requests. You can examine and download saved evidence." if os.name == "nt" else "Read-only review. You cannot record acceptance or change requests.") if self.read_only else ""
         self.store=safe_path(store)
         if not self.store.is_dir():raise ValueError("review requires an existing local project store")
         self.token=secrets.token_urlsafe(32)
@@ -189,14 +189,14 @@ class ReviewProject:
         # advance the same parent. Causal order survives copying/unzipping stores.
         revisions.sort(key=lambda r:(depth(r),r.get("status")=="accepted",r["id"]))
         return {"schema_version":1,"project_name":self.name or self.store.name,"read_only":self.read_only,"read_only_reason":self.read_only_reason,"csrf_token":self.token,"revisions":revisions,"latest_revision":latest,
-                "execution":"Review only: this program does not execute source code or call a language model","requests":self.requests()}
+                "execution":"Review only. This program does not run source code or call an AI model.","requests":self.requests()}
 
     def requests(self):
         result=[]
         directory=safe_path(self.metadata/"requests")
         for path in sorted(directory.glob("*.json")):
             value=read_json(path)
-            if value.get("schema_version")!=1 or value.get("status")!="queued" or value.get("execution")!="not_started":raise ValueError("unsupported queue record")
+            if value.get("schema_version")!=1 or value.get("status")!="queued" or value.get("execution")!="not_started":raise ValueError('not permitted queue record')
             result.append(value)
         return sorted(result,key=lambda r:r["created_at"])[-50:]
 
@@ -204,11 +204,11 @@ class ReviewProject:
         if self.read_only:raise PermissionError(self.read_only_reason)
         if set(payload)!={"csrf_token","expected_result_hash","notes"}:raise ValueError("unexpected acceptance fields")
         expected=payload["expected_result_hash"];notes=payload["notes"]
-        if not isinstance(expected,str) or not RESULT_HASH.fullmatch(expected):raise ValueError("invalid result hash")
+        if not isinstance(expected,str) or not RESULT_HASH.fullmatch(expected):raise ValueError('incorrect result hash')
         if not isinstance(notes,str) or len(notes)>2000:raise ValueError("review notes must be at most 2000 characters")
         with self._mutex, store_lock(self.store):
             response=self.revision(revision)
-            if response["revision"]["result_hash"]!=expected:raise Conflict("revision changed; reload before accepting")
+            if response["revision"]["result_hash"]!=expected:raise Conflict('revision changed. Reload before accepting')
             if not response["report"]["machine_verified"]:raise Conflict("failed or not-verified requirements cannot be human-accepted")
             state=response["state"]
             if state["human_accepted"]:return state
@@ -222,26 +222,26 @@ class ReviewProject:
         if self.read_only:raise PermissionError(self.read_only_reason)
         if set(payload)!={"csrf_token","revision_id","expected_result_hash","prompt"}:raise ValueError("unexpected revision request fields")
         revision=identifier(payload["revision_id"]);expected=payload["expected_result_hash"];prompt=payload["prompt"]
-        if not isinstance(expected,str) or not RESULT_HASH.fullmatch(expected):raise ValueError("invalid result hash")
+        if not isinstance(expected,str) or not RESULT_HASH.fullmatch(expected):raise ValueError('incorrect result hash')
         if not isinstance(prompt,str) or not 1<=len(prompt.strip())<=8000 or len(prompt)>8000:raise ValueError("revision request must contain 1–8000 characters")
         with self._mutex,store_lock(self.store):
             response=self.revision(revision)
-            if response["revision"]["result_hash"]!=expected:raise Conflict("revision changed; reload before requesting an edit")
+            if response["revision"]["result_hash"]!=expected:raise Conflict('revision changed. Reload before requesting an edit')
             identity=hashlib.sha256((revision+'\0'+expected+'\0'+prompt).encode()).hexdigest()[:24]
             path=safe_path(self.metadata/"requests"/(identity+".json"))
             if not path.exists():
-                if len(list((self.metadata/"requests").glob("*.json")))>=256:raise Conflict("The local request queue is full; inspect queued requests before adding more")
+                if len(list((self.metadata/"requests").glob("*.json")))>=256:raise Conflict('The local request queue is full. Examine queued requests before you add more.')
                 write_json(path,{"schema_version":1,"request_id":identity,"status":"queued","revision_id":revision,"result_hash":expected,"prompt":prompt,"created_at":now(),"execution":"not_started"})
                 sync_directory(self.metadata/"requests")
             else:read_json(path)
-            return {"request_id":identity,"status":"queued","message":"Saved for a coding agent to consume. No model execution has started."}
+            return {"request_id":identity,"status":"queued","message":"A coding agent can read the saved request. No model execution started."}
 
     def artifact(self,revision,role):
         directory,result,_=verified_revision(self.store,revision)
         roles={"glb":("inspection/model.glb","model/gltf-binary"),**{"view-"+view:(f"inspection/views/{view}.png","image/png") for view in ("front","right","top","iso")}}
         if role not in roles:raise ValueError("unknown artifact role")
         rel,mime=roles[role]
-        if rel not in result["artifacts"]:raise ValueError("artifact unavailable")
+        if rel not in result["artifacts"]:raise ValueError('artifact not available')
         path=safe_path(directory/rel)
         if not path.is_relative_to(directory) or digest(path)!=result["artifacts"][rel]:raise ValueError("artifact integrity mismatch")
         return path,mime
@@ -280,15 +280,15 @@ class ReviewHandler(BaseHTTPRequestHandler):
     def json(self,status,value):
         data=json.dumps(value,allow_nan=False).encode();self.send_headers(status,"application/json; charset=utf-8",len(data));self.wfile.write(data)
     def boundary(self,post=False):
-        if self.headers.get("Host")!=self.server.origin.removeprefix("http://"):raise PermissionError("invalid local Host")
+        if self.headers.get("Host")!=self.server.origin.removeprefix("http://"):raise PermissionError('incorrect local Host')
         origin=self.headers.get("Origin")
         if (post and origin!=self.server.origin) or (origin is not None and origin!=self.server.origin):raise PermissionError("cross-origin access denied")
         if self.headers.get("Sec-Fetch-Site") not in (None,"none","same-origin"):raise PermissionError("cross-site access denied")
     def route(self):
         raw=urlsplit(self.path)
-        if raw.scheme or raw.netloc or raw.query or raw.fragment:raise ValueError("invalid route")
+        if raw.scheme or raw.netloc or raw.query or raw.fragment:raise ValueError('incorrect route')
         path=unquote(raw.path)
-        if '\\' in path or '\0' in path or any(p in ('.','..') for p in path.split('/')):raise ValueError("invalid route path")
+        if '\\' in path or '\0' in path or any(p in ('.','..') for p in path.split('/')):raise ValueError('incorrect route path')
         return path
     def do_GET(self):
         try:
@@ -299,7 +299,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
                 revision=path.removeprefix("/api/revisions/");return self.json(200,project.revision(identifier(revision)))
             if path.startswith("/artifacts/"):
                 parts=path.split('/')
-                if len(parts)!=4:raise ValueError("invalid artifact route")
+                if len(parts)!=4:raise ValueError('incorrect artifact route')
                 file,mime=project.artifact(identifier(parts[2]),parts[3])
             else:
                 static={"/":"index.html","/static/app.js":"app.js","/static/style.css":"style.css"}
@@ -313,16 +313,16 @@ class ReviewHandler(BaseHTTPRequestHandler):
             self.boundary(post=True);path=self.route()
             if self.headers.get("Content-Type")!="application/json" or self.headers.get("Transfer-Encoding") is not None:raise ValueError("JSON body required")
             length=self.headers.get("Content-Length","")
-            if not length.isdigit() or not 0<int(length)<=MAX_BODY:raise ValueError("invalid bounded content length")
+            if not length.isdigit() or not 0<int(length)<=MAX_BODY:raise ValueError('incorrect bounded content length')
             payload=json.loads(self.rfile.read(int(length)),parse_constant=lambda value:(_ for _ in ()).throw(ValueError(value)))
-            if not isinstance(payload,dict) or not isinstance(payload.get("csrf_token"),str) or not secrets.compare_digest(payload["csrf_token"],self.server.project.token):raise PermissionError("invalid CSRF token")
+            if not isinstance(payload,dict) or not isinstance(payload.get("csrf_token"),str) or not secrets.compare_digest(payload["csrf_token"],self.server.project.token):raise PermissionError('incorrect CSRF token')
             if path.startswith("/api/revisions/") and path.endswith("/accept"):
                 revision=identifier(path[len("/api/revisions/"):-len("/accept")]);return self.json(200,self.server.project.accept(revision,payload))
             if path=="/api/requests":return self.json(200,self.server.project.request(payload))
             return self.json(404,{"error":"Not found"})
         except PermissionError as exc:self.json(403,{"error":str(exc)})
         except Conflict as exc:self.json(409,{"error":str(exc)})
-        except BlockingIOError:self.json(409,{"error":"Another build or review operation holds the project lock; retry when it finishes"})
+        except BlockingIOError:self.json(409,{"error":"Another build or review operation holds the project lock. Try again when it stops."})
         except (ValueError,OSError,KeyError,TypeError) as exc:self.json(400,{"error":str(exc)[:300]})
 
 
@@ -330,7 +330,7 @@ def serve(store, port=0, read_only=None):
     if not 0<=port<=65535:raise ValueError("port must be 0..65535")
     server=LocalReviewServer(ReviewProject(store,read_only=read_only),port)
     print(f"Local model review: {server.origin}",flush=True)
-    print(server.project.read_only_reason or "Review only. Revision requests are saved, not executed. Press Ctrl-C to stop.",flush=True)
+    print(server.project.read_only_reason or "Review only. The program saves revision requests but does not run them. Push Ctrl-C to stop.",flush=True)
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:server.server_close()
@@ -338,7 +338,7 @@ def serve(store, port=0, read_only=None):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--store',type=Path,required=True);parser.add_argument('--port',type=int,default=0)
-    parser.add_argument('--read-only',action='store_true',help='Inspect evidence without recording decisions or requests')
+    parser.add_argument('--read-only',action='store_true',help='Examine evidence. Do not record decisions or requests.')
     args=parser.parse_args();serve(args.store,args.port,read_only=args.read_only)
 
 

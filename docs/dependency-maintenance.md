@@ -1,166 +1,198 @@
 # Dependency maintenance without Dependabot
 
-This repository contains no configuration that asks Dependabot to rewrite
-dependency files. Maintainers use an offline consistency gate, read-only
-version discovery, and a report-only vulnerability audit for routine work.
-A strict vulnerability decision gate applies before deployment or publication,
-so lock regeneration, licensing, recovery evidence, and migration planning
-stay coordinated without requiring new decisions for each pull request.
+The repository has no configuration that asks Dependabot to change dependency
+files. Maintainers use an offline consistency gate, read-only version
+discovery, and a report-only vulnerability audit for usual work.
+Before deployment or publication, a strict vulnerability decision gate applies.
 
-No provider key, registry credential, GitHub personal access token, or paid
-service is required for the public-repository workflow. GitHub Actions supplies
-its own read-only checkout token. Private registries would require a separately
-reviewed authentication design.
+Thus, lock regeneration, licensing, recovery evidence, and migration plans
+stay coordinated. Each pull request does not make new risk decisions necessary.
 
-## Four levels of checking
+The public-repository workflow uses no provider key, registry credential,
+GitHub personal access token, or paid service. GitHub Actions supplies its own
+read-only checkout token. Private registries can make an independently examined
+authentication design necessary.
 
-| Command | Network | Docker | Purpose |
+<a id="four-levels-of-checking"></a>
+## Four check levels
+
+| Command | Network | Docker | Function |
 |---|---:|---:|---|
-| `make dependency-check` | No | No | Fail when declarations, locks, hashes, notices, provenance, Compose recovery pins, or exact assertions disagree. |
-| `make dependency-audit` | Yes | No | Run the offline gate, then report PyPI candidates, Docker Official Image support status, and tag-to-digest drift. It never edits files. |
-| `./scripts/dependency-scan --report-only --output build/dependency-audit-review --images` | Yes | Yes | Build and scan all release images and Python locks, run the PostgreSQL runtime proof, and retain reports. Vulnerability findings alone do not fail this scan; checked-in dispositions are not loaded or enforced. Use a fresh output directory for each run. |
-| `make dependency-scan DEPENDENCY_OUTPUT=build/dependency-audit-release` | Yes | Yes | Run the same full scan in strict/default mode before deployment or publication. UNRATED/HIGH/CRITICAL findings require exact, active, evidence-backed dispositions; retain and review the reports. |
+| `make dependency-check` | No | No | Stop if declarations, locks, hashes, notices, provenance, Compose recovery pins, or specified assertions disagree. |
+| `make dependency-audit` | Yes | No | Do the offline gate. Report PyPI candidates, Docker Official Image support status, and tag-to-digest changes. Do not change files. |
+| `./scripts/dependency-scan --report-only --output build/dependency-audit-review --images` | Yes | Yes | Make and scan all release images and Python locks. Do the PostgreSQL runtime test and keep reports. Vulnerabilities alone do not cause failure. This mode does not load or apply checked-in dispositions. Use a new output directory each time. |
+| `make dependency-scan DEPENDENCY_OUTPUT=build/dependency-audit-release` | Yes | Yes | Do the same full scan in strict/default mode before deployment or publication. Each UNRATED/HIGH/CRITICAL finding must have a related active disposition with evidence. Keep and examine the reports. |
 
-`make postgres-security-check` reruns only the exact PostgreSQL fresh-volume
-proof. It is useful while diagnosing that fixture, but it does not replace the
-complete dependency scan.
+`make postgres-security-check` does only the specified PostgreSQL
+fresh-volume test again. Use it for fixture diagnosis. It does not replace the
+full dependency scan.
 
-The complete scan requires substantial downloads, disk, and build time. Its
-output directory must not already exist. Choose a new ignored `build/` path for
-each retained local run. Every project and external image is scanned from one
-mode-`0600` temporary Docker archive at a time, with a hard 5 GiB limit; allow
-enough additional temporary disk for the largest selected image.
-Audit, build, and scan commands run in isolated process groups. A deadline or
-operator interrupt applies a bounded `SIGTERM` grace period, escalates surviving
-descendants to `SIGKILL`, and reaps the group leader before returning.
+The full scan uses large downloads, disk space, and build time.
+There must be no output directory before the scan. Select a new ignored `build/` path for
+each stored local operation. The scanner uses one temporary Docker archive
+at a time for each project and external image. Each archive has mode `0600`
+and a strict 5 GiB limit. Keep sufficient more temporary disk space
+for the largest selected image.
 
-The offline check is part of `make check` and the clean-index release gate. It
-is deterministic and makes no vulnerability-database or registry requests.
-Routine pull-request checks do not enforce vulnerability decisions. The online
-commands never select or install an update; the report-only scan can identify
-work without making an expired or missing disposition block a pull request.
+Audit, build, and scan commands use isolated process groups.
+At a deadline or operator interrupt, the process gets a time-limited `SIGTERM`
+grace period. Remaining descendants then get `SIGKILL`.
+The wrapper reaps the group leader before return.
+
+The offline check is part of `make check` and the clean-index release gate.
+It is deterministic. It makes no vulnerability-database or registry requests.
+Usual pull-request checks do not apply vulnerability decisions.
+The online commands do not select or install an update.
+
+The report-only scan can identify necessary work. An expired or missing
+disposition does not stop a pull request in this mode.
 
 ## Hosted audit
 
-`.github/workflows/dependency-audit.yml` runs every Monday and supports manual
-dispatch from the Actions tab. Scheduled runs use the current default branch;
-manual runs use the maintainer-selected ref. The workflow receives
-`contents: read`, persists no checkout credentials, has no issue or pull-request
-write permission, and is never triggered by a contributor pull request.
+`.github/workflows/dependency-audit.yml` operates each Monday.
+You can also start it manually from the Actions tab.
+Scheduled operations use the default branch. Manual operations use the
+maintainer-selected ref.
 
-The scheduled/manual workflow runs `dependency-scan --report-only`. It retains
-the detailed report artifact for seven days and fails if the audit cannot
-complete, the artifact is missing, or a dependency-maintenance or runtime
-security gate fails. It does not load dispositions or check their expiry;
-a vulnerability finding alone does not fail this workflow.
-Review the findings before the next deployment or publication, when the
-strict/default scan applies.
+The workflow gets `contents: read`. It does not keep checkout credentials.
+It has no issue or pull-request write permission. Contributor pull requests
+do not start this workflow.
 
-After adopting this workflow, enable GitHub Actions and manually dispatch
-`Dependency audit` once. Forks start with scheduled workflows disabled, and
-GitHub can disable schedules in a public repository after 60 days without
-repository activity, so maintainers must periodically confirm that scheduled
-runs still occur.
+The scheduled/manual workflow uses `dependency-scan --report-only`.
+It keeps detailed report artifacts for seven days. It fails if the audit is
+incomplete, the artifact is missing, or a dependency-maintenance/runtime
+security gate fails. It does not load dispositions or evaluate their expiry.
+Vulnerabilities alone do not cause workflow failure.
 
-The workflow:
+Before the next deployment or publication, examine the findings with the
+strict/default scan.
 
-1. validates every synchronized dependency surface;
-2. checks PyPI and maintained Docker Official Image metadata;
-3. downloads OSV-Scanner 2.3.8 from its official release and verifies the
-   platform-specific SHA-256 recorded in `scripts/dependency-scan`;
-4. executes the trusted Dockerfile build steps under random per-run tags, but
-   never starts the resulting project-built service containers, then scans each
-   final image.
-   Each project tag is inspected once, exported by the resulting immutable
-   image ID, and accepted only when the archive is `linux/amd64` and its config
-   digest and complete label set match that inspection. Its policy identity
-   hashes every runtime layer member's bytes, path, type, mode, ownership,
-   link/device metadata, and non-time PAX metadata plus the complete runtime
-   config and labels. Wall-clock config/history and tar timestamps are excluded
-   so two otherwise identical clean BuildKit rebuilds have one identity. The
-   strict-mode disposition identity additionally hashes the exact repository
-   runtime controls used by that target's review. API and worker bind the base/VPS
-   Compose models and Caddyfile; MinIO binds those models, both disposable
-   integration models, and its runtime security gate; PostgreSQL binds its
-   Dockerfile, every Compose model that can start it, and its fresh-volume
-   runtime gate; and Caddy
-   binds its VPS Compose model and Caddyfile. A relevant configuration or gate
-   change therefore cannot reuse an earlier disposition. The per-run tags are removed in reverse build order
-   even after a build or scan failure. For every external image, the scanner
-   verifies the pinned registry index bytes,
-   requires exactly one `linux/amd64` child, verifies that child's manifest and
-   config digests, and pulls and inspects that exact child. OSV-Scanner receives
-   only validated, size-capped private archives—not mutable local tags or
-   multi-architecture registry references. The official PostgreSQL base is
-   checked for maintenance and digest drift as provenance, but it is not the
-   runtime scan target: the scanner builds, exports by immutable image ID, and
-   scans the repository's derived image after deleting `gosu`. After that exact
-   derivative is scanned, one random owner-labelled, network-disabled fixture
-   proves that `gosu` is absent and a fresh volume initializes as UID/GID 70.
-   Cleanup removes only the exact labelled container and
-   volume, including after failure or interruption;
-5. retains per-file and aggregate size-capped JSON and Markdown reports for
-   seven days; and
-6. normalizes aliases into advisory families and reports every severity.
-   Complete scans with vulnerability findings still succeed in report-only
-   mode. An incomplete build, scan, report, or PostgreSQL runtime proof fails
-   the workflow; strict/default mode additionally enforces exact vulnerability
-   dispositions before deployment or publication.
+After adoption, enable GitHub Actions and manually start `Dependency audit`
+one time. Scheduled workflows are disabled on new forks.
+GitHub can disable schedules after 60 days without public-repository activity.
+At regular intervals, make sure that scheduled operations occur.
 
-Every family remains counted in `scan-summary.md`, and the complete OSV JSON
-remains in the artifact. A report-only success means the scan completed, not
-that the images are free of vulnerabilities or approved for deployment.
-Inspect the summary first and then the named raw report. In strict/default
-mode, UNRATED fails closed because absence of a score is not evidence of
-absence of impact.
+The workflow does this sequence:
+
+1. Validate all synchronized dependency files and records.
+2. Do checks of PyPI and maintained Docker Official Image metadata.
+3. Download OSV-Scanner 2.3.8 from its official release. Verify the
+   platform-specific SHA-256 in `scripts/dependency-scan`.
+4. Do the trusted Dockerfile build steps with random per-run tags.
+   Do not start the resulting project-built service containers.
+   Then scan each final image with the image controls in the next section.
+5. Keep JSON and Markdown reports for seven days. Apply per-file and aggregate
+   size limits.
+6. Normalize aliases into advisory families and report each severity.
+
+A full report-only scan succeeds even with vulnerabilities.
+An incomplete build, scan, report, or PostgreSQL runtime test causes failure.
+Strict/default mode also applies the specified vulnerability dispositions
+before deployment or publication.
+
+### Image scan controls
+
+The scanner examines each project tag one time. It exports the resulting
+immutable image ID. It accepts an archive only with `linux/amd64`, the same
+config digest, and the same full label set as that inspection.
+
+The policy identity hashes each runtime-layer member's bytes, path, type,
+mode, ownership, link/device metadata, and non-time PAX metadata.
+It also hashes the full runtime config and labels. It excludes wall-clock
+config/history and tar timestamps. Thus, clean BuildKit
+builds with no other differences have the same identity.
+
+Strict-mode disposition identity also hashes the repository runtime controls
+used for that target's inspection:
+
+- API and worker: The base/VPS Compose models and Caddyfile
+- MinIO: Those models, the two disposable integration models, and its runtime
+  security gate
+- PostgreSQL: Its Dockerfile, each Compose model that can start it, and its
+  fresh-volume runtime gate
+- Caddy: Its VPS Compose model and Caddyfile.
+
+A related configuration or gate change cannot use an earlier disposition.
+The scanner removes per-run tags in reverse build order, including after
+build or scan failure.
+
+For each external image, the scanner verifies the specified registry index
+bytes. The index must have only one `linux/amd64` child.
+The scanner verifies that child's manifest and config digests.
+It pulls and examines that child.
+
+OSV-Scanner gets only validated, size-limited private archives.
+It does not get mutable local tags or multi-architecture registry references.
+The scanner evaluates the official PostgreSQL base for maintenance and digest
+changes as provenance. That base is not the runtime scan target.
+
+The scanner makes the repository's derived image after `gosu` deletion.
+It exports by immutable image ID and scans that image.
+Then one random owner-labelled fixture does a runtime test of the same derivative.
+The fixture has no network. It makes sure that there is no `gosu` and a new
+volume initializes as UID/GID 70.
+
+Cleanup removes only the specified labelled container and volume.
+This also applies after failure or interruption.
+
+Each advisory family stays counted in `scan-summary.md`.
+The full OSV JSON stays in the artifact.
+Report-only success means that the scanner completed the scan. It does not mean
+vulnerability-free images or deployment approval.
+
+First, examine the summary. Then examine the named raw report.
+In strict/default mode, UNRATED stops the gate. A missing score does not
+show an absence of impact.
 
 The workflow pins `actions/checkout` v6.0.2 at
 `de0fac2e4500dabe0009e67214ff5f5447ce83dd` and `actions/upload-artifact`
-v7.0.1 at `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a`. Treat any future action pin as
-an executable supply-chain update and verify its release mapping before merge.
+v7.0.1 at `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a`.
+Treat a new action pin as an executable supply-chain update.
+Before merge, verify its release mapping.
 
 ### Disable automatic Dependabot pull requests
 
-Deleting `.github/dependabot.yml` disables configured Dependabot version-update
-pull requests; it does not disable repository-level Dependabot security-update
-pull requests. If the repository owner wants this audit to be the only PR-free
-dependency workflow, open **Settings → Security → Advanced Security** and
-disable **Dependabot security updates**. Keep **Dependabot alerts** enabled if
-you want GitHub's read-only alerting in addition to this workflow. An
-organization policy may enforce security updates; when the control is locked,
-the repository cannot promise that Dependabot will create no PRs.
+Removal of `.github/dependabot.yml` disables configured Dependabot
+version-update pull requests. It does not disable repository-level Dependabot
+security-update pull requests.
+
+If the owner wants only this PR-free audit, open
+**Settings → Security → Advanced Security**.
+Disable **Dependabot security updates**. Keep **Dependabot alerts** enabled
+if you want more read-only GitHub alerts.
+An organization policy can enforce security updates. If the control is
+locked, the repository cannot guarantee an absence of Dependabot PRs.
 
 ## Coordinated update procedure
 
-Create one focused maintainer branch per dependency family. Do not copy a
-version from an automated report directly into one file.
+Make one maintainer branch per dependency family.
+Do not put a reported version directly into one file without the related changes.
 
 ### Python packages
 
-1. Update the exact direct requirement in `pyproject.toml` or
+1. Update the specified direct requirement in `pyproject.toml` or
    `service/pyproject.toml`.
-2. Resolve wheels for CPython 3.11 on `linux/amd64`, verify them, and regenerate
-   the applicable hash lock under `docker/`.
-3. For service runtime packages, update
-   `release/service-dependency-licenses.json`, including the lock SHA-256 and
-   reviewed license/source metadata.
+2. Resolve and verify wheels for CPython 3.11 on `linux/amd64`.
+   Generate the applicable hash lock under `docker/` again.
+3. For service runtime packages, update `release/service-dependency-licenses.json`.
+   Include the lock SHA-256 and examined license/source metadata.
 4. Update the direct-dependency table in `THIRD_PARTY_NOTICES.md`.
-5. Before a normal pull-request merge, run `make dependency-check`, `make check`,
-   the service smoke gate when applicable, and `make release-check`. A
-   report-only scan can show new findings, but neither that scan nor disposition
-   renewal is a PR merge requirement. Run strict `make dependency-scan` before
-   deployment or publication.
+5. Before a usual pull-request merge, do `make dependency-check`, `make check`,
+   applicable service smoke tests, and `make release-check`.
+   A report-only scan can show new findings. Neither that scan nor disposition
+   renewal is a PR merge requirement. Before deployment or publication,
+   use strict `make dependency-scan`.
 
-`psycopg[binary]` deliberately binds both the `psycopg` and
-`psycopg-binary` distributions to the same version. Test-only locks remain
-separate from production images.
+`psycopg[binary]` binds `psycopg` and `psycopg-binary` distributions to the
+same version. Test-only locks stay separate from production images.
 
-To create reproducible lock candidates, first update the direct versions in the
-appropriate TOML file, build the reviewed `linux/amd64` test stage, and download
-the resolver's selected CPython 3.11 wheels into a new directory. The test stage
-deliberately retains `pip` for offline test and maintenance tooling; the final
-builder strips `pip` and must not be used as a networked resolver. The arguments
-below must exactly match the TOML declarations after your edit:
+To make reproducible lock candidates, first update direct versions in the
+applicable TOML file. Make the examined `linux/amd64` test stage.
+Download the resolver-selected CPython 3.11 wheels into a new directory.
+
+The test stage keeps `pip` for offline tests and maintenance tools.
+The final builder removes `pip`. Do not use it as a networked resolver.
+After your change, the arguments in the next command block must agree with the TOML declarations:
 
 ```sh
 make test-image
@@ -205,151 +237,188 @@ download_wheels "$lock_work/service-test-wheels" 'httpx2==2.12.0'
   --output "$lock_work/service-test-requirements.candidate"
 ```
 
-The helper is offline: it reads only the downloaded wheels, validates their
-metadata identity and bounds, hashes their exact bytes, sorts normalized names,
-and refuses to overwrite an existing candidate. Review the resolver diff and
-wheel licenses before copying a candidate to `docker/`. For the runtime lock,
-update every dependency and the new lock hash in
-`release/service-dependency-licenses.json`; `make dependency-check` rejects an
-incomplete or stale inventory.
+The offline helper reads only the downloaded wheels.
+It validates their metadata identity and limits. It hashes their bytes and
+sorts normalized names. It does not overwrite an existing candidate.
+
+Examine the resolver diff and wheel licenses before you copy a candidate to
+`docker/`. For the runtime lock, update each dependency and the new lock
+hash in `release/service-dependency-licenses.json`.
+`make dependency-check` rejects an incomplete or stale inventory.
 
 ### Debian base image
 
-Update all literal Debian `FROM` references together across the builder,
-service, and MinIO Dockerfiles. In the same change, update the snapshot
-arguments, builder OCI base labels, embedded SPDX base package checksum, and
-Debian notice. Rebuild the affected final images and inspect a report-only scan
-when available. Do not require vulnerability decisions or a full scan for a
-normal pull-request merge; run strict `make dependency-scan` before deployment
-or publication.
+Update all literal Debian `FROM` references together in the builder, service,
+and MinIO Dockerfiles. In the same change, update snapshot arguments, builder
+OCI base labels, the embedded SPDX base-package checksum, and Debian notice.
+
+Make the affected final images again. Examine a report-only scan if available.
+A usual pull-request merge does not make vulnerability decisions or a full
+scan necessary. Before deployment or publication, use strict `make dependency-scan`.
 
 ### Dockerfile frontend
 
-The service, MinIO, and PostgreSQL Dockerfiles use one exact-version,
-manifest-digest-pinned `docker/dockerfile` frontend. Update all three first-line directives and the reviewed
-reference in `release/dependency-policy.json` together. Confirm the digest from
-Docker's verified-publisher registry metadata, review the required BuildKit
-version and release notes, then run the offline gate and rebuild every affected
-target. The build engine itself remains a manually reviewed tool boundary.
+The service, MinIO, and PostgreSQL Dockerfiles use the same specified
+`docker/dockerfile` frontend version and manifest digest.
+Update their three first-line directives and the examined reference in
+`release/dependency-policy.json` together.
+
+Verify the digest with Docker verified-publisher registry metadata.
+Examine the necessary BuildKit version and release notes.
+Then do the offline gate and make each affected target again.
+The build engine stays a manually examined tool boundary.
 
 ### PostgreSQL or Redis
 
-For PostgreSQL, update the exact official base in `docker/postgres.Dockerfile`,
-its provenance labels, `release/dependency-policy.json`, every local/recovery
-Compose image expression, the digest-pinned VPS lock example, the runtime gate,
-and `THIRD_PARTY_NOTICES.md` together. Redis remains a direct external image;
-update its Compose pins and recovery assertions together. Before a normal
-pull-request merge, run the service and G8 recovery gates. Inspect a report-only
-scan when available, but do not require vulnerability decisions or a full scan
-for the merge. Run strict `make dependency-scan` before deployment or
-publication.
+For PostgreSQL, update these items together:
 
-Do not treat a PostgreSQL major release as an image update. It requires a
-separately designed backup, migration, rollback, and existing-volume rehearsal.
-The same rehearsal is required for any change to the base OS or runtime UID
-(for example a Debian-to-Alpine or gosu-removal swap) even without a major
-version bump: `make service-up` fails closed on an incompatible existing
-`postgres-data` volume, and operators must follow the documented dump/restore
-path in [Troubleshooting](troubleshooting.md#postgresql-image-upgrade-and-existing-volumes)
-rather than reuse data in place.
-For Redis, review persistence format, UID, configuration, and the documented
-empty-queue reconstruction path even though PostgreSQL remains authoritative.
+- The specified official base in `docker/postgres.Dockerfile`
+- Its provenance labels
+- `release/dependency-policy.json`
+- Each local/recovery Compose image expression
+- The digest-pinned VPS lock example
+- The runtime gate
+- `THIRD_PARTY_NOTICES.md`.
+
+Redis stays a direct external image. Update its Compose pins and recovery
+assertions together. Before a usual pull-request merge, do the service and
+G8 recovery gates. Examine a report-only scan if available.
+Vulnerability decisions and a full scan are not merge requirements.
+Before deployment or publication, use strict `make dependency-scan`.
+
+A PostgreSQL major release is not a simple image update.
+Make a separate backup, migration, rollback, and existing-volume test plan.
+Do the same tests for a base OS or runtime UID change, even without a
+major-version change. Examples include Debian-to-Alpine and gosu removal.
+
+If an existing `postgres-data` volume is not compatible, `make service-up` stops.
+Operators must use the documented dump/restore procedure in
+[Troubleshooting](troubleshooting.md#postgresql-image-upgrade-and-existing-volumes).
+Do not attach the existing data volume to the new image.
+For Redis, examine the persistence format, UID, configuration, and documented
+empty-queue reconstruction. PostgreSQL stays authoritative.
 
 ### Caddy
 
-The exact upstream Caddy tag and digest in `tests/deployment/g8_caddy_gate.py`
-are build inputs, not the release image. `docker/caddy.Dockerfile` builds a
-custom Caddy binary and copies it into that pinned runtime base. The dependency
-scan builds and scans the resulting image; `make g8-caddy` checks both the
-upstream base identity and the custom binary and validates the Caddyfile with
-the custom image. The recipe vendors the verified Go modules and applies one
-bounded compatibility change to Caddy's two CEL `NewCall` argument slices so
-the pinned release source builds with the patched CEL module. The recipe checks
-that both original call sites exist before it changes them and builds only the
-updated vendor tree. Update the source, Go modules, build recipe, runtime base,
-notice, and both checks together. The build stage records the binary SHA-256.
-The final image and G8 gate both compare the installed binary to that record,
-so a missing binary copy cannot pass the gate on version text alone.
+The upstream Caddy tag and digest in `tests/deployment/g8_caddy_gate.py`
+are build inputs. They are not the release image.
+`docker/caddy.Dockerfile` makes a custom Caddy binary and copies it into
+that specified runtime base.
 
-The `HBCB_CADDY_IMAGE` entry in `deploy/vps/release.lock.env.example` is a
-placeholder for a future published digest of the custom image. It is not a
-working deployment reference. This project is local-only for now. Do not
-replace the placeholder with the official Caddy digest or deploy the VPS stack
-until the custom image has a reviewed, published digest and a strict
-`make dependency-scan` has passed on the exact release commit. A blocking
-finding at that gate requires a documented, evidence-backed disposition; a
-source rebuild does not approve a risk decision.
+The dependency scan makes and scans the resulting image.
+`make g8-caddy` does checks of the upstream base identity and custom binary.
+It validates the Caddyfile with the custom image.
+
+The recipe vendors verified Go modules. It applies one specified compatibility
+change to the two Caddy CEL `NewCall` argument slices.
+Thus, the specified release source can compile with the patched CEL module.
+Before the change, the recipe makes sure that the two initial call sites are in the source.
+It compiles only the updated vendor tree.
+
+Update the source, Go modules, build recipe, runtime base, notice, and the two
+checks together. The build stage records the binary SHA-256.
+The final image and G8 gate compare the installed binary with that record.
+Thus, version text alone cannot hide a missing binary copy.
+
+`HBCB_CADDY_IMAGE` in `deploy/vps/release.lock.env.example` is a placeholder
+for a future published digest of the custom image.
+Do not use it as a deployment reference. The project stays local-only.
+Do not replace the placeholder with the official Caddy digest.
+
+Do not deploy the VPS stack before the custom image has an examined,
+published digest. Strict `make dependency-scan` must pass on the same release
+commit. A blocking finding must have a documented disposition with evidence.
+A source rebuild does not give approval for a risk decision.
 
 ### Manually reviewed inputs
 
-Blender archives and corresponding source, the source-built MinIO/Go/mc
-fixture, the BuildKit engine, GitHub Action commits, hosted runners,
-OSV-Scanner release assets, and the ranged Python build backend are
-intentionally listed under
-`manual_review` in `release/dependency-policy.json`. Version services cannot
-safely decide their
-compatibility, licensing, provenance, or migration policy.
+`manual_review` in `release/dependency-policy.json` lists these inputs:
 
-The MinIO image recipe label is the SHA-256 emitted by
-`scripts/minio-recipe-id`. It binds the Dockerfile plus both MinIO and `mc`
-`go.mod`/`go.sum` overlays. Service builds, release validation, and dependency
-scan builds must all use that helper. A dependency-scan run computes the value
-once, passes that exact value into the build, and verifies it again in the
-archived config; hashing only the Dockerfile would permit a changed module
-graph to reuse stale scan/release identity.
+- Blender archives and corresponding source
+- The source-built MinIO/Go/mc fixture
+- The BuildKit engine
+- GitHub Action commits and hosted runners
+- OSV-Scanner release assets
+- The ranged Python build backend.
+
+Version services cannot safely select compatibility, licensing, provenance,
+or migration policy for these inputs.
+
+The MinIO recipe label is the SHA-256 from `scripts/minio-recipe-id`.
+It binds the Dockerfile and the two MinIO and `mc` `go.mod`/`go.sum` overlays.
+Service builds, release validation, and dependency scans must use that helper.
+
+A dependency scan calculates the value one time. It gives that value to the
+build and verifies it again in the archived config.
+A Dockerfile-only hash can let changed module graphs use stale scan/release identity.
 
 ## Vulnerability decision policy
 
-`release/vulnerability-policy.json` is deliberately separate from the
-dependency inventory. Only the strict/default scan loads and reconciles this
-policy. Before deployment or publication, UNRATED, HIGH, and CRITICAL block
-by default, and the policy cannot weaken that threshold. LOW, MODERATE, and
-NONE remain counted in each target's summary and detailed OSV report. The
-checked-in policy has an immutable `"default_action": "deny"`; do not add or
-renew dispositions merely to make routine pull-request or scheduled scans
-green. Report-only scans ignore the checked-in decisions and expiry dates.
+`release/vulnerability-policy.json` is separate from the dependency inventory.
+Only the strict/default scan loads and reconciles this policy.
+Before deployment or publication, UNRATED, HIGH, and CRITICAL findings stop
+the gate by default. The policy cannot decrease that threshold.
 
-OSV can publish the same issue under ecosystem, CVE, GHSA, and language IDs.
-The evaluator uses OSV-Scanner's package groups, validates their coverage, and
-canonicalizes every ID and alias into one sorted advisory family. A disposition
-therefore applies to one exact tuple only:
+LOW, MODERATE, and NONE stay counted in each target's summary and detailed
+OSV report. The checked-in policy has immutable `"default_action": "deny"`.
+Do not add dispositions or extend their expiry only to get usual pull-request
+or scheduled scans to pass. Report-only scans ignore checked-in decisions and expiry dates.
 
-- scan target, such as `osv-image-minio`;
-- exact target `image_identity.policy_digest` for every image scan (source
-  dispositions use JSON `null`);
-- ecosystem, package name, installed version, and package source revision (or
-  explicit JSON `null` when the report has none);
-- complete canonical advisory family; and
-- exact scanner score (or `null` when unrated), matching-ecosystem fixed-version
+OSV can publish one issue under ecosystem, CVE, GHSA, and language IDs.
+The evaluator uses OSV-Scanner package groups and validates their coverage.
+It normalizes each ID and alias into one sorted advisory family.
+A disposition applies only to one specified tuple with these components:
+
+- The scan target, for example `osv-image-minio`
+- The target `image_identity.policy_digest` for each image scan.
+  Source dispositions use JSON `null`.
+- The ecosystem, package name, installed version, and package source revision.
+  Use explicit JSON `null` if the report has no source revision.
+- The full canonical advisory family
+- The scanner score, or `null` if unrated, matching-ecosystem fixed-version
   union, and normalized UNRATED, HIGH, or CRITICAL severity.
 
-The fixed-version union includes both ordinary OSV ranges and
-`ecosystem_specific.custom_ranges`. This matters for release-named or
-pseudo-version projects such as MinIO; omitting a custom bound would make two
-different advisory states look identical.
+The fixed-version union includes ordinary OSV ranges and
+`ecosystem_specific.custom_ranges`. Release-named or pseudo-version projects,
+for example MinIO, use these custom ranges. Without a custom limit, two
+different advisory states could look the same.
 
-Severity precedence is deliberately conservative. Normally the evaluator takes
-the maximum of OSV-Scanner's group CVSS score, database severity labels, and
-ecosystem urgency labels. There is one narrowly scoped vendor override: an
-official `DEBIAN-*` advisory whose affected entry exactly matches the reported
-`Debian:<release>` package and says `urgency: unimportant` is reported as LOW.
-Debian uses that state for issues its security team has determined do not
-warrant a security update for that exact distribution package. The override
-does not apply to missing or conflicting metadata, generic advisories, other
-ecosystems, or Debian `not yet assigned`, `low`, `none`, or `not affected`
-states. Those continue to use the maximum severity; a distro backport or
-not-affected determination requires an exact evidence-backed disposition.
+Severity precedence is conservative. Usually, the evaluator takes the
+maximum of the OSV-Scanner group CVSS score, database severity labels,
+and ecosystem urgency labels.
 
-There are no target globs, package prefixes, advisory prefixes, severity-wide
-exceptions, or permanent exceptions. Each disposition also requires a
-decision (`accepted-risk`, `mitigated`, or `not-affected`), a substantive
-rationale, review and expiry dates, and at least one repository-relative
-evidence file with its exact SHA-256. Evidence cannot point back to the policy
-itself. Review cannot be future-dated, an entry is invalid beginning on its
-expiry date, and the review window cannot exceed 90 days.
+There is one specified vendor override. An official `DEBIAN-*` advisory must
+have an affected entry for the same reported `Debian:<release>` package.
+If that entry says `urgency: unimportant`, the evaluator reports LOW.
+Debian uses this state when its security team decides that a security update
+is not necessary for that distribution package.
 
-Example shape (illustrative hashes and identifiers must never be copied into a
-real decision):
+The override does not apply to missing or conflicting metadata, general
+advisories, other ecosystems, or these Debian states:
+
+- `not yet assigned`
+- `low`
+- `none`
+- `not affected`.
+
+These cases use maximum severity. A distribution backport or
+not-affected decision must have a related disposition with evidence.
+
+The policy has no target globs, package prefixes, advisory prefixes,
+severity-wide exceptions, or permanent exceptions.
+Each disposition must include these items:
+
+- A decision: `accepted-risk`, `mitigated`, or `not-affected`
+- A substantive rationale
+- Review and expiry dates
+- A minimum of one repository-relative evidence file and its SHA-256.
+
+Evidence cannot point to the policy itself. The review date cannot be in the
+future. An entry becomes invalid on its expiry date.
+The maximum review period is 90 days.
+
+The next example shows the format. Do not copy its example hashes or
+identifiers into a release decision:
 
 ```json
 {
@@ -383,62 +452,78 @@ real decision):
 }
 ```
 
-Add the object to the policy's `dispositions` array only after reviewing a new
-scan from the exact candidate revision. Alias, severity, package, version,
-source-revision, target-image-identity, evidence-digest, or date drift makes
-the disposition stop matching or makes the scan incomplete. An active disposition which no longer
-matches anything on an evaluated target is itself a policy finding, so resolved
-exceptions cannot silently accumulate. Do not seed dispositions from an older
-artifact: rebuilt images can change the installed package inventory even when
-their Dockerfile text is unchanged.
+Before you add the object to `dispositions`, examine a new scan from the
+same candidate revision. Changes to aliases, severity, package, version,
+source revision, target image identity, evidence digest, or dates can invalidate
+the disposition. It then no longer matches, or makes the scan incomplete.
 
-The target identity is not a substitute for the evidence file. It is a
-canonical digest over stable image provenance shown in `scan-summary.json`.
-For project-built images it includes the normalized runtime-layer content
-digest, normalized runtime-config digest, complete-label digest,
-`linux/amd64`, and verified OCI source revision. The source-built MinIO fixture
-also includes the composite `io.hbcb.recipe-id`. Raw image config/descriptor
-digests and private archive hashes remain visible operational evidence but are
-excluded from the policy digest because BuildKit timestamps and Docker archive
-layout are not runtime identities. Any file bytes, path, type, mode, ownership,
-link/device metadata, non-time PAX metadata, runtime config, label, revision, or
-MinIO recipe change produces a different image identity. For API, worker,
-MinIO, PostgreSQL, and Caddy, that image identity is then combined with the
-exact disposition-context digest described above. Changing any reviewed
-runtime control produces a different final policy identity even when the image
-bytes are unchanged.
+An active disposition without a related finding on an evaluated target is
+itself a policy finding. Thus, resolved exceptions cannot stay unnoticed.
+Do not make dispositions from an older artifact. A rebuilt image can have
+a different installed-package inventory with unchanged Dockerfile text.
 
-The raw scanner exit remains recorded. Exit `1` from OSV-Scanner only means it
-found at least one family. Report-only mode records those families and succeeds
-when the complete scan finishes. Strict/default mode evaluates each target:
-it can pass with findings only when every UNRATED/HIGH/CRITICAL family has an
-exact active disposition and all remaining families are lower. A
-scanner/report disagreement or malformed inner report is incomplete in both
-modes; missing policy, bad evidence digest, or expired disposition is
-incomplete in strict/default mode—not clean.
+The target identity does not replace the evidence file.
+It is a canonical digest of stable image provenance in `scan-summary.json`.
+For project-built images, it includes these items:
+
+- The normalized runtime-layer content digest
+- The normalized runtime-config digest
+- The full label digest
+- `linux/amd64`
+- The verified OCI source revision.
+
+The source-built MinIO fixture also includes the composite `io.hbcb.recipe-id`.
+Raw image config/descriptor digests and private archive hashes stay visible
+runtime evidence. They are outside the policy digest.
+BuildKit timestamps and Docker archive layout are not runtime identities.
+
+A change to any file bytes, path, type, mode, ownership, or link/device
+metadata changes the image identity. So do changes to non-time PAX metadata,
+runtime config, labels, revision, or the MinIO recipe.
+
+For API, worker, MinIO, PostgreSQL, and Caddy, the combined policy identity also
+includes the specified disposition-context digest from the Image scan controls section.
+A changed runtime control gives a different combined identity, even with unchanged
+image bytes.
+
+The raw scanner exit stays recorded. OSV-Scanner exit `1` means only that it
+found a minimum of one advisory family. Report-only mode records these
+families and succeeds when the full scan finishes.
+
+Strict/default mode evaluates each target. It can pass with findings only
+if each UNRATED/HIGH/CRITICAL family has a related active disposition.
+All remaining families must have lower severity.
+
+Scanner/report disagreement or a malformed inner report makes either mode
+incomplete. In strict/default mode, missing policy, an incorrect evidence
+digest, or an expired disposition also makes the scan incomplete.
+Do not interpret an incomplete scan as clean.
 
 ## Exit meanings
 
 | Exit | Meaning |
 |---:|---|
-| `0` | Report-only: the scan completed, even if vulnerabilities were found. Strict/default: the scan completed with no blocking findings. Review the reports in either case. |
-| `1` | Strict/default: a consistency/maintenance finding or undispositioned UNRATED/HIGH/CRITICAL advisory family needs review. |
-| `2` | The audit was incomplete because an input, network request, build, scanner, or report failed. In strict/default mode an invalid disposition also causes this result. Do not interpret this as clean. |
+| `0` | Report-only: The scanner completed the scan, possibly with vulnerabilities. Strict/default: The scanner completed the scan without blocking findings. Examine the reports in either mode. |
+| `1` | Strict/default: A consistency/maintenance finding or UNRATED/HIGH/CRITICAL family without a disposition makes inspection necessary. |
+| `2` | An input, network request, build, scanner, or report failure made the audit incomplete. In strict/default mode, an invalid disposition also gives this result. Do not interpret it as clean. |
 
-OSV-Scanner's detailed reports remain authoritative for package findings. The
-repository summary records bounded per-severity counts; strict/default mode
-also records policy-decision counts. It does not paste untrusted upstream
-vulnerability descriptions into the rendered GitHub summary.
+Detailed OSV-Scanner reports stay authoritative for package findings.
+The repository summary records size-limited per-severity counts.
+Strict/default mode also records policy-decision counts.
+The rendered GitHub summary does not include untrusted upstream vulnerability descriptions.
 
-## Adding another dependency surface
+<a id="adding-another-dependency-surface"></a>
+## Add a different dependency input
 
-Update `release/dependency-policy.json`, extend `scripts/dependency-audit`, and
-add a mutation test under `tests/release/` in the same pull request. If the new
-surface introduces network access, credentials, parsing, execution, or CI
-permissions, update the threat model before enabling it.
+Update `release/dependency-policy.json` and extend `scripts/dependency-audit`.
+Add a mutation test under `tests/release/` in the same pull request.
+Before new network access, credentials, parsing, execution, or CI permissions,
+update the threat model. Do this before you enable the new input.
 
-References: [OSV-Scanner supported inputs](https://google.github.io/osv-scanner/supported-languages-and-lockfiles/),
-[container image scanning](https://google.github.io/osv-scanner/usage/scan-image),
-[GitHub Actions workflow permissions](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax),
-[scheduled workflow behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule),
-and [Dependabot security-update settings](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/configure-security-updates).
+Refer to these sources:
+
+- [OSV-Scanner supported inputs](https://google.github.io/osv-scanner/supported-languages-and-lockfiles/)
+- [Container image scanning](https://google.github.io/osv-scanner/usage/scan-image)
+- [GitHub Actions workflow permissions](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)
+- [Scheduled workflow behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
+- [Dependabot security-update settings](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/configure-security-updates).

@@ -19,42 +19,47 @@ OUTPUT_NAME ?= demo
 DEMO_OUTPUT := $(BUILD_PARENT)/demo
 export REQUEST BUILD_PARENT OUTPUT_NAME
 
-.PHONY: help image ensure-image test-image service-test-image worker-boundary-image worker-boundary-check minio-security-check postgres-security-check orphan-minio-check validate build verify inspect demo verify-demo demo-native verify-demo-native _validate-output-name init-env service-client service-up service-smoke service-down service-config service-ps service-logs service-images service-image-cleanup g8-static g8-caddy g8-recovery g8-gate operator-smoke lint test-unit test-blender dependency-check dependency-audit dependency-scan security-check release-static release-check check
+.PHONY: help image ensure-image test-image service-test-image worker-boundary-image worker-boundary-check minio-security-check postgres-security-check orphan-minio-check validate build verify inspect demo verify-demo demo-native verify-demo-native _validate-output-name init-env service-client service-up service-smoke service-down service-config service-ps service-logs service-images service-image-cleanup g8-static g8-caddy g8-recovery g8-gate operator-smoke lint test-unit test-blender dependency-check dependency-audit dependency-scan security-check release-static release-check check docs-check
 
 help:
 	@echo "Headless Blender Character Builder"
-	@echo "  make validate      Validate REQUEST without starting Blender"
-	@echo "  make build         Build REQUEST under build/OUTPUT_NAME"
-	@echo "  make verify        Reopen and verify build/OUTPUT_NAME"
-	@echo "  make inspect       Print a safe summary of build/OUTPUT_NAME/manifest.json"
-	@echo "  make demo          Build the keyless Docker demo"
-	@echo "  make verify-demo   Reopen and verify the published artifacts"
-	@echo "  make init-env      Generate ignored local-service credentials"
-	@echo "  make service-client Submit REQUEST and save one verified service result"
-	@echo "  make service-config Validate the local service configuration"
-	@echo "  make service-up    Start the local asynchronous Compose service"
-	@echo "  make service-ps    Show this checkout's local service status"
-	@echo "  make service-logs  Show bounded API and worker diagnostic logs"
-	@echo "  make service-images List the selected service project's exact image tags"
-	@echo "  make service-image-cleanup Remove only those exact tags; keep volumes/cache"
-	@echo "  make service-smoke Run the maintainer service integration gate"
-	@echo "  make orphan-minio-check Prove orphan cleanup in disposable storage"
-	@echo "  make service-down  Stop services while preserving durable volumes"
-	@echo "  make g8-gate       Validate VPS config and run the local recovery drill"
-	@echo "  make operator-smoke Conditionally test an authorized public HTTPS target"
-	@echo "  make test-unit     Run unit/contract/security tests in Docker"
-	@echo "  make worker-boundary-check Test child credential isolation in the worker image"
-	@echo "  make minio-security-check Prove the local storage fixture identity and disabled auth features"
-	@echo "  make postgres-security-check Prove fresh-volume startup at UID 70 without gosu"
-	@echo "  make test-blender  Run Blender integration gates in Docker"
-	@echo "  make dependency-check Validate synchronized dependency pins offline"
-	@echo "  make dependency-audit Report upstream version/tag status without mutation"
-	@echo "  make dependency-scan Build and vulnerability-scan all release images"
-	@echo "  make security-check Run the offline publication/security audit"
-	@echo "  make release-static Audit indexed source, policies, SBOM inputs, docs, and CI"
-	@echo "  make release-check Run the complete release gate from a clean indexed export"
-	@echo "  make check         Run static, unit, security, and Blender tests"
+	@echo "  make validate      Do the REQUEST checks. Do not start Blender."
+	@echo "  make build         Build REQUEST in build/OUTPUT_NAME."
+	@echo "  make verify        Open build/OUTPUT_NAME again and do its verification checks."
+	@echo "  make inspect       Show the permitted data from build/OUTPUT_NAME/manifest.json."
+	@echo "  make demo          Build the Docker demo. Credentials are not necessary."
+	@echo "  make verify-demo   Open the published artifacts again and do their verification checks."
+	@echo "  make init-env      Make local-service credentials in ignored files."
+	@echo "  make service-client Send REQUEST and save one service result after verification."
+	@echo "  make service-config Do the local service configuration checks."
+	@echo "  make service-up    Start the local asynchronous Compose service."
+	@echo "  make service-ps    Show the local service status for this checkout."
+	@echo "  make service-logs  Show API and worker diagnostic logs with output limits."
+	@echo "  make service-images Show the image tags for the selected service project."
+	@echo "  make service-image-cleanup Remove only those image tags. Keep volumes and cache data."
+	@echo "  make service-smoke Do the maintainer service integration gate checks."
+	@echo "  make orphan-minio-check Do the orphan cleanup test in disposable storage."
+	@echo "  make service-down  Stop services. Keep durable volumes."
+	@echo "  make g8-gate       Do the VPS configuration checks and the local recovery drill."
+	@echo "  make operator-smoke Do the test on a public HTTPS target only with permission."
+	@echo "  make test-unit     Do unit, contract, and security tests in Docker."
+	@echo "  make worker-boundary-check Do the child credential isolation test in the worker image."
+	@echo "  make minio-security-check Do local storage fixture identity checks. Make sure that the specified authentication features are disabled."
+	@echo "  make postgres-security-check Do the new-volume startup test at UID 70 without gosu."
+	@echo "  make test-blender  Do Blender integration gate checks in Docker."
+	@echo "  make dependency-check Do the dependency pin checks without a network connection."
+	@echo "  make dependency-audit Show upstream version and tag status. Do not change data."
+	@echo "  make dependency-scan Build all release images and do their vulnerability scans."
+	@echo "  make security-check Do the publication and security audit without a network connection."
+	@echo "  make release-static Do the audit of indexed source, policies, SBOM inputs, documentation, and CI."
+	@echo "  make release-check Do the complete release gate checks from a clean indexed export."
+	@echo "  make check         Do static, unit, security, and Blender tests."
+	@echo "  make docs-check    Examine documentation language and coverage"
 	@echo "  make demo-native BLENDER=/absolute/path/to/blender"
+
+docs-check:
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) ./scripts/check-documentation-language
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m unittest discover -s tests/documentation -v
 
 image:
 	$(DOCKER) build --file docker/builder.Dockerfile --target builder --build-arg "HBCB_DISTRIBUTION_VERSION=$${HBCB_DISTRIBUTION_VERSION:-0.1.0-local}" --build-arg "HBCB_SOURCE_REVISION=$${HBCB_SOURCE_REVISION:-uncommitted}" --tag "$(BUILDER_IMAGE)" --platform "$(PLATFORM)" .
@@ -128,11 +133,11 @@ verify-demo: verify
 demo-native:
 	@set -eu; \
 	  if ! test -f "$(REQUEST)"; then \
-	    echo "HBCB_MAKE: FAIL[request_missing]: set REQUEST to an existing regular JSON file" >&2; \
+	    echo "HBCB_MAKE: FAIL[request_missing]: Set REQUEST to a regular JSON file that is available." >&2; \
 	    exit 2; \
 	  fi; \
 	  if test -e "$(DEMO_OUTPUT)" || test -L "$(DEMO_OUTPUT)"; then \
-	    echo "HBCB_MAKE: FAIL[output_exists]: build/demo already exists; move the existing output aside" >&2; \
+	    echo "HBCB_MAKE: FAIL[output_exists]: There is output in build/demo. Move that output to a different location." >&2; \
 	    exit 2; \
 	  fi; \
 	  mkdir -p "$(BUILD_PARENT)"; \
@@ -142,11 +147,11 @@ demo-native:
 verify-demo-native:
 	@set -eu; \
 	  if ! test -f "$(REQUEST)"; then \
-	    echo "HBCB_MAKE: FAIL[request_missing]: set REQUEST to an existing regular JSON file" >&2; \
+	    echo "HBCB_MAKE: FAIL[request_missing]: Set REQUEST to a regular JSON file that is available." >&2; \
 	    exit 2; \
 	  fi; \
 	  if test -L "$(DEMO_OUTPUT)" || ! test -d "$(DEMO_OUTPUT)"; then \
-	    echo "HBCB_MAKE: FAIL[output_missing]: build/demo is not an existing non-symlink directory; run make demo-native first" >&2; \
+	    echo "HBCB_MAKE: FAIL[output_missing]: The build/demo folder is not available or is a symlink. Run make demo-native first." >&2; \
 	    exit 2; \
 	  fi; \
 	  HBCB_BLENDER_BINARY="$(BLENDER)" "$(PYTHON)" -m builder_cli \

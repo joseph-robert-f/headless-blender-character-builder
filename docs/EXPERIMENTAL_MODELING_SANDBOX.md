@@ -1,52 +1,76 @@
 # Experimental modeling container backend
 
-**Status: implemented; live Docker boundary probes and both complete model
-benchmarks passed on commit `cb452850a05238ddde155666cad7fe11476b10be` in
-[CI run 36864042600](https://github.com/joseph-robert-f/headless-blender-character-builder/actions/runs/36864042600).** This is an experimental boundary, not an audited
-security guarantee. Recheck CI on the current PR head after changes. The native reviewed-source mode remains explicitly unsafe
-for arbitrary generated Python. No Docker failure falls back to native execution.
+**Status: implemented.** Live Docker boundary tests and the two complete model benchmarks passed on commit `cb452850a05238ddde155666cad7fe11476b10be`.
+Read [CI run 36864042600](https://github.com/joseph-robert-f/headless-blender-character-builder/actions/runs/36864042600).
+This historical result applies to that commit only.
+The experimental boundary is not a security assurance from an audit done independently.
+After changes, make sure that CI passes on the current PR head.
 
-The backend requires local Linux Docker, default seccomp, cgroup memory/PID/CPU
-support, and an exact existing `sha256:` image ID. Build the existing pinned
-`docker/builder.Dockerfile` target `builder`, then resolve its image ID. Tags and
-remote image pulls are rejected. The operator must trust the image and daemon;
-immutable identity alone does not establish image trust. Unexpected image ENV
-keys and declared image volumes are rejected; allowed ENV keys are overridden
-with fixed nonsensitive values, including for container PID 1.
+**CAUTION:** Do not execute arbitrary generated Python in native reviewed-source mode.
+That mode can change files with the authority of your OS account.
+A Docker failure never causes automatic native execution.
 
-Every author, inspector, GLB roundtrip and saved Blend reopen stage gets a fresh
-container with a read-only root, no network, no capabilities, no new privileges,
-non-root UID/GID 65532, bounded RAM/swap, CPU, process count, file size, log bytes,
-and wall time. Source and parameters are narrow read-only mounts. Inspector
-containers receive only the trusted inspector script, candidate input, and when
-needed the observation reference. They receive neither generated source nor
-policy, controller, last-good state, Docker socket, host environment, or user
-credentials. The existing image contains read-only stable builder code; this is
-not writable policy or acceptance authority.
+The backend uses local Linux Docker with default seccomp and cgroup memory, PID, and CPU controls.
+An exact existing `sha256:` image ID is mandatory.
+Build the `builder` target from the pinned `docker/builder.Dockerfile`.
+Then get its image ID.
+The backend rejects tags and remote image pulls.
 
-Only `/output` is application-writable, as a per-run size/inode-bounded tmpfs-backed Docker local volume. It is not a
-host bind mount. Standard runtime devices still exist; IPC shared memory is off.
-After Blender exits, the entire container is paused to freeze surviving children.
-A separate locked-down exporter container mounts that volume read-only and streams
-a bounded tar archive. (Docker cp cannot reliably copy tmpfs.) The archive is parsed without tar extraction helpers,
-and copied to fresh host files. Links, devices, sparse files, duplicate entries,
-absolute/traversal paths and budget excesses fail closed. A failed stage may retain
-bounded safe diagnostics, but cannot become accepted. The parent alone evaluates
-acceptance. Forced removal of both containers and the temporary volume is attempted in `finally`; failure is fatal.
-If the daemon itself becomes unreachable, the operator must verify removal of
-`modeling-*` containers and volumes before resuming work.
+Use only an image and daemon that you trust.
+An immutable ID alone does not show image trust.
+The backend rejects unexpected image ENV keys and declared image volumes.
+It replaces permitted ENV values with fixed values that contain no sensitive data.
+This replacement also applies to container PID 1.
 
-A standalone PR/manual workflow builds the existing image and runs container
-smoke tests (read-only paths, network, UID, timeout/descendant cleanup, bounded
-output and failed-attempt diagnostics) plus the complete robot revision benchmark. It does not publish or
-deploy anything. Run the opt-in smoke locally with:
+Each author, inspector, GLB roundtrip, and saved-Blend reopening stage uses a new container.
+Each container has these controls:
+
+- A read-only root filesystem
+- No network, capabilities, or new privileges
+- Non-root UID and GID 65532
+- Fixed limits for RAM, swap, CPU, process count, file size, log bytes, and wall time.
+
+Source and parameters use read-only mounts with a small scope.
+Inspector containers get only the trusted inspector script, candidate input, and an observation reference when necessary.
+They do not get generated source, policy, controller, last-good state, Docker socket, host environment, or user credentials.
+The existing image contains read-only stable builder code.
+This code does not give write access to policy or acceptance authority.
+
+The application can write only to `/output`.
+This directory uses a Docker local volume with tmpfs backing and per-run size and inode limits.
+It is not a host bind mount.
+Standard runtime devices remain available.
+IPC shared memory is off.
+
+After Blender exits, the backend pauses the complete container to stop children that remain.
+An isolated exporter container mounts the volume read-only and streams a tar archive with fixed limits.
+Docker cp cannot reliably copy tmpfs.
+The controller parses the archive without tar extraction helpers and copies its content to new host files.
+It rejects links, devices, sparse files, duplicate entries, absolute paths, parent-traversal paths, and content above the limits.
+
+A failed stage can keep safe diagnostic files with fixed size limits.
+It cannot become accepted.
+Only the parent controller evaluates acceptance.
+
+The `finally` block tries to remove the two containers and the temporary volume.
+A removal failure stops the operation.
+If the daemon becomes unreachable, examine the `modeling-*` containers and volumes.
+Before more work, make sure that cleanup removed the resources from the failed operation.
+
+The dedicated PR and manual workflow builds the existing image.
+It runs container smoke tests and the complete robot revision benchmark.
+Smoke tests examine read-only paths, network access, UID, timeout and child cleanup, output limits, and failed-attempt diagnostics.
+The workflow does not publish or deploy artifacts.
+For the optional local smoke test, enter these commands:
 
 ```sh
 export MODELING_SANDBOX_IMAGE="$(docker image inspect --format '{{.Id}}' modeling-sandbox-test)"
 python3 -m unittest discover -s tests/experimental_modeling -p test_sandbox.py -v
 ```
 
-The opt-in smoke must actually run rather than skip before claiming runtime
-verification. Passing it establishes tested conditions only, not resistance to
-unknown Docker/Linux kernel or Blender vulnerabilities. Hostile production use
-needs independent review and a hardened, patched, disposable Docker host.
+A skipped smoke test is not runtime-verification evidence.
+Make sure that the test actually runs before you report runtime verification.
+A pass shows only the tested conditions.
+It does not prove resistance to unknown Docker, Linux kernel, or Blender vulnerabilities.
+Before hostile production use, get an assessment done independently.
+Use a hardened disposable Docker host with current security updates.

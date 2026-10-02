@@ -2,69 +2,115 @@
 
 ## Current status
 
-This repository is a v0.1 pre-release candidate. The deterministic builder has
-passed strict input rejection, private staging, atomic success publication,
-disabled embedded-script auto-execution, offline Blender, artifact hashing,
-fresh reload/re-import, and a pinned non-root one-shot runtime with no network,
-a read-only root, dropped capabilities, fixed mounts, and resource limits.
-The experimental local service adds auth-first bounded HTTP handling, HMAC
-idempotency, fenced PostgreSQL leases, transactional outbox plus stale Redis recovery,
-cancellation-wins publication locking, nested-process termination, immutable
-versioned artifacts, secret-free logs, distinct runtime/maintenance identities,
-and tested least-privilege denials. The out-of-scope VPS reference exercises
-HTTPS configuration, digest locks, bounded resources/logs, external-S3
-guidance, retention, quiesced backup/restore, and forward-only recovery.
+This repository is a v0.1 pre-release candidate.
+Tests of the deterministic builder show these controls:
 
-The first release (v0.1) supports one trusted user building their own model locally with the one-shot
-Docker builder. A trusted user controls the machine and creates or reviews the
-bounded JSON request. The Compose service is experimental and local-only;
-Internet-facing, multi-tenant, hostile-input, and VPS operation are outside v0.1
-support. There is no supported hosted service, security SLA, or automatic patch
-service. Local validation does not prove a live operator's DNS, TLS issuance,
-firewall, S3-provider IAM, off-host backup, or incident process. Do not expose
-the local development stack beyond its loopback bindings or to untrusted users.
+- Strict input rejection and private staging
+- Atomic publication of results that pass the tests
+- Disabled automatic execution of embedded scripts
+- Blender without network access
+- Artifact hashes and new reload/re-import tests
+- A pinned, non-root, one-shot runtime
+- No network connection and a read-only root filesystem
+- Dropped capabilities, fixed mounts, and resource limits.
 
-## Reporting a vulnerability
+The experimental local service adds these controls:
 
-Use GitHub's **Security → Report a vulnerability** flow or the direct [private
-report form](https://github.com/joseph-robert-f/headless-blender-character-builder/security/advisories/new).
-Private vulnerability reporting is enabled for this repository. It remains a
-remote repository setting and is not controlled by local build or release
-commands.
+- Authentication before HTTP request processing with specified limits
+- HMAC idempotency and fenced PostgreSQL leases
+- Transactional outbox and recovery from stale Redis data
+- Publication locks that give cancellation priority
+- Termination of nested processes
+- Immutable artifact versions and logs without secrets
+- Different runtime and maintenance identities
+- Tests for least-privilege denials.
 
-If that private portal is temporarily unavailable, open only a minimal public
-issue requesting private maintainer contact. Do not include exploit details,
-credentials, personal data, private references, internal endpoints, logs, or
-signed artifact URLs. Current maintainer roles are listed in `MAINTAINERS.md`.
+The VPS reference is not in the supported scope.
+Its tests include HTTPS configuration, digest locks, resource and log limits, and external-S3 guidance.
+They also include retention, backup/restore with operations stopped, and forward-only recovery.
 
-After receiving a private report, maintainers should acknowledge it, reproduce
-and assess it privately, coordinate a fix and advisory, credit the reporter
-when requested, and publish details only after an appropriate remediation is
-available. Response and remediation are best effort; there is no security SLA
-for the pre-release project.
+The first release, v0.1, supports one trusted user who makes a local model with the one-shot Docker builder.
+This user controls the machine and makes or examines the JSON request before use.
+The request must obey the specified limits.
+The Compose service is experimental and local-only.
+Internet-facing, multi-tenant, hostile-input, and VPS operation are not in v0.1 support.
+There is no supported hosted service, security service-level agreement (SLA), or automatic patch service.
+
+Local validation does not prove the configuration or procedures of a live operator.
+This includes DNS, TLS issuance, firewall, S3-provider IAM, off-host backup, and incident procedures.
+Do not give access to the local development stack through a connection other than its loopback bindings.
+Do not give untrusted users access to it.
+
+<a id="reporting-a-vulnerability"></a>
+## Report a vulnerability
+
+Use GitHub's **Security → Report a vulnerability** procedure or the direct [private report form](https://github.com/joseph-robert-f/headless-blender-character-builder/security/advisories/new).
+Private vulnerability reporting is enabled for this repository.
+This is a remote repository setting.
+Local build and release commands do not control it.
+
+If the private portal is not available, open only a minimal public issue to request private maintainer contact.
+Do not include exploit details, credentials, personal data, private references, internal endpoints, logs, or signed artifact URLs.
+`MAINTAINERS.md` identifies the current maintainer roles.
+
+After a private report, these tasks are recommended for maintainers:
+
+1. Acknowledge the report.
+2. Reproduce the problem privately.
+   Examine its effects.
+3. Manage a correction and a security advisory together.
+4. If the reporter requests credit, identify the reporter in the advisory.
+5. Publish details only after an applicable correction is available.
+
+Maintainers try to reply to reports and correct problems.
+There is no security SLA for the pre-release project.
 
 ## Security boundary
 
-The supported one-shot builder and experimental local worker accept strict
-declarative JSON only. Customer- or model-authored Python, arbitrary Blender
-commands, add-ons, uploaded `.blend` files, remote URLs, and host paths are
-outside the normal v0.1 boundary. See `docs/threat-model.md` for the maintained
-threat model and `PLAN.md` for release gates.
+The supported one-shot builder and experimental local worker accept only strict declarative JSON.
+The usual v0.1 boundary excludes these inputs:
+
+- Python written by a customer or model
+- Arbitrary Blender commands or add-ons
+- Uploaded `.blend` files
+- Remote URLs or host paths.
+
+Read `docs/threat-model.md` for the maintained threat model.
+Read `PLAN.md` for release gates.
 
 ## Local Compose boundary
 
-- The API and object-download endpoints bind only to `127.0.0.1`; PostgreSQL and Redis have no host-published port.
-- The worker is attached only to an internal Docker network, has no public-internet route, runs non-root with a read-only root and dropped capabilities, and receives no Docker socket or provider key.
-- The API image contains neither Blender nor the builder entrypoint. The worker receives only its database/storage role and launches Blender with a scrubbed child environment.
-- Database initialization revokes accumulated memberships, public/current privileges, and API/worker defaults for future migrator-owned tables and sequences before applying explicit API, worker, and migrator grants. Storage initialization inventories and removes the exact `hbcb_api` / `hbcb_worker` identities plus their reserved `hbcb_api_*` / `hbcb_worker_*` legacy families, recreates only the configured pair, and attaches fixed read-only/API and read-write-without-delete/worker policies without deleting object data or versions.
-- The release gate actively proves ten forbidden PostgreSQL operations fail
-  with `42501` and three forbidden object-storage operations fail with
-  `AccessDenied`, including artifact-digest mutation and unversioned deletion.
-- The test-profile container intentionally receives both runtime identities solely to execute negative permission probes. It is one-shot, non-core, and should never be enabled as an application service.
+- The API and object-download endpoints bind only to `127.0.0.1`.
+  PostgreSQL and Redis do not publish a host port.
+- The worker connects only to an internal Docker network.
+  It has no route to the public Internet.
+  It operates as a non-root user with a read-only root filesystem and dropped capabilities.
+  It receives no Docker socket or provider key.
+- The API image contains no Blender program or builder entrypoint.
+  The worker receives only its database/storage role.
+  It starts Blender with a child environment from which other values are removed.
+- Database initialization removes accumulated memberships and public/current privileges.
+  It also removes API/worker defaults for future tables and sequences owned by the migrator.
+  It then applies explicit grants for the API, worker, and migrator.
+- Storage initialization inventories and removes the specified `hbcb_api` / `hbcb_worker` identities.
+  It also removes their reserved `hbcb_api_*` / `hbcb_worker_*` legacy families.
+  It creates only the configured pair again.
+  It applies a fixed read-only policy for the API and a read-write-without-delete policy for the worker.
+  It does not delete object data or versions.
+- The release gate proves that ten prohibited PostgreSQL operations fail with `42501`.
+  It proves that three prohibited object-storage operations fail with `AccessDenied`.
+  These tests include artifact-digest changes and unversioned deletion.
+- The test-profile container receives the two runtime identities only to test permission denials.
+  This container is one-shot and non-core.
+  Do not enable it as an application service.
 
-The source-built MinIO Community image is a zero-account local compatibility
-fixture pinned to its final security release. Cache reuse requires the exact
-local Dockerfile recipe identifier as well as pinned upstream version/revision
-and a live binary check. Its upstream project is no longer a supported
-production distribution. It must not be used as production storage; production
-storage and VPS operation are outside v0.1 support.
+The source-built MinIO Community image is a local compatibility test fixture.
+An account is not necessary.
+It is pinned to the last MinIO Community security release.
+To use the cache again, the local Dockerfile recipe identifier must be the same.
+The pinned upstream version/revision must also be the same.
+The live binary check must pass.
+
+The upstream project is no longer a supported production distribution.
+Do not use this image as production storage.
+Production storage and VPS operation are not in v0.1 support.

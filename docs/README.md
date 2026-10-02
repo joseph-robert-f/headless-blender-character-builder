@@ -1,86 +1,67 @@
 # Documentation
 
-New here? Read the root [README](../README.md), then follow
-[Installation](installation.md) from prerequisites through a verified first
-model. You do not need to understand the service or release machinery to use
-the one-shot builder.
+Read the root [README](../README.md) first.
+Then use [Installation](installation.md) for the prerequisites and first model verification.
+Service and release procedures are not necessary for the one-shot builder.
 
 ## I want to build a model
 
-- [Installation](installation.md) — macOS without Homebrew, Linux,
-  experimental WSL2, first build and verification, opening artifacts, cleanup,
-  updates, direct Docker, and native Blender
-- [Examples and ideas](../examples/README.md) — passing and fail-closed
-  requests, copy-paste commands, and original character-project themes
-- [Configuration](configuration.md) — Make variables, safe output names, local
-  service credentials, and the VPS/release boundary
-- [Character and request contract](character-spec.md) — every supported JSON
-  field, generator behavior, hashes, QA, and manifest contracts
-- [Troubleshooting](troubleshooting.md) — success markers and common Docker,
-  output-directory, native, service, and release-check failures
-- [Compatibility](compatibility.md) — platform status, pinned versions, and
-  resource expectations
-- [Facet Bot brief](facet-bot-brief.md) — intent and constraints for the
-  original bundled example
+- [Installation](installation.md): macOS without Homebrew, Linux, experimental WSL2, first build, verification, artifacts, cleanup, updates, direct Docker, and native Blender
+- [Examples and ideas](../examples/README.md): requests, QA rejection examples, commands, and original character ideas
+- [Configuration](configuration.md): Make variables, output names, local service credentials, and VPS and release limits
+- [Character and request contract](character-spec.md): JSON fields, generator behavior, hashes, QA, and manifests
+- [Troubleshooting](troubleshooting.md): success markers and Docker, output-directory, native, service, and release-check failures
+- [Compatibility](compatibility.md): platforms, pinned versions, and resources
+- [Facet Bot brief](facet-bot-brief.md): purpose and limits for the supplied example.
 
 ## I want to integrate or understand it
 
-The HTTP material describes an experimental, loopback-only evaluation path
-for one trusted operator; it is not an Internet-facing v0.1 service contract.
+The HTTP documents describe an experimental evaluation workflow.
+It uses loopback only and one trusted operator.
+It is not an Internet-facing v0.1 service contract.
 
-- [HTTP API v1](api.md) — authenticated asynchronous submission, status,
-  cancellation, and artifact retrieval
-- [Architecture](architecture.md) — execution lanes, components, network and
-  trust boundaries, persistence, recovery, and repository map
-- [Threat model](threat-model.md) — assets, actors, threats, controls, and
-  review triggers
-- [Vulnerability review](security/vulnerability-review-2026-08-12.md) —
-  finding-by-finding record supporting the checked-in vulnerability policy's
-  temporary dispositions
-- [Licensing guide](licensing.md) — project, Blender, asset, output,
-  dependency, and contribution licensing boundaries
+- [HTTP API v1](api.md): authentication, asynchronous requests, status, cancellation, and artifact downloads
+- [Architecture](architecture.md): execution, components, networks, trust boundaries, storage, recovery, and repository structure
+- [Threat model](threat-model.md): assets, actors, threats, controls, and conditions for a new assessment
+- [Vulnerability review](security/vulnerability-review-2026-08-12.md): historical evidence for temporary vulnerability-policy decisions
+- [Licensing guide](licensing.md): licenses for project code, Blender, assets, outputs, dependencies, and contributions.
 
 ## I want to operate or release it
 
-The VPS material is a future design and validation reference outside v0.1
-support, not a currently published deployment product. There is no release
-archive, release lock, or published image set yet.
+The VPS documents give a future design and validation reference.
+VPS operation is outside v0.1 support.
+The project does not yet publish a release archive, release lock, or image set.
 
-- [VPS deployment and recovery](deployment.md) — availability, topology,
-  verified source installation, TLS, external S3, permissions, lifecycle,
-  backup, restore, and upgrades
-- [Release process](release-process.md) — local release proof, the source-only
-  release transaction, corresponding source, and the release-day checklist
-- [Conditional OCI image publication](oci-publication.md) — the blocked,
-  fully specified future image-publication transaction, its clean-room
-  verification, and its recovery procedures
-- [Dependency maintenance](dependency-maintenance.md) — offline consistency,
-  scheduled vulnerability reports, and coordinated manual updates
-- [v0.1.0-rc.1 release notes](release-notes/v0.1.0-rc.1.md) — candidate scope
-  and limitations
+- [VPS deployment and recovery](deployment.md): availability, topology, source installation, TLS, external S3, permissions, lifecycle, backup, restore, and upgrades
+- [Release process](release-process.md): local evidence, source-only publication, corresponding source, and release checklist
+- [Conditional OCI image publication](oci-publication.md): the blocked future publication procedure, verification done independently, and recovery
+- [Dependency maintenance](dependency-maintenance.md): offline consistency checks, scheduled vulnerability reports, and coordinated manual updates
+- [v0.1.0-rc.1 release notes](release-notes/v0.1.0-rc.1.md): historical candidate scope and limits.
 
 ## I want to contribute or audit decisions
 
-- [Contributing](../CONTRIBUTING.md), [governance](../GOVERNANCE.md), and
-  [maintainers](../MAINTAINERS.md)
-- [Implementation plan](../PLAN.md) and [test plan](../TEST_PLAN.md) — binding
-  v0.1 scope and verification protocol
-- [Progress log](progress.md) — exact gate evidence, deviations, and
-  conditional checks
-- [Decision ledger](decisions.md) — adopted technical and product decisions
-- [Backlog](backlog.md) — post-v0.1 extensions and starter issue outlines
-- [Workspace inventory](inventory.md) — preserved pre-project baseline and
-  migration constraints
+- [Contributing](../CONTRIBUTING.md), [governance](../GOVERNANCE.md), and [maintainers](../MAINTAINERS.md)
+- [Implementation plan](../PLAN.md): historical v0.1 scope and decisions
+- [Test plan](../TEST_PLAN.md): verification procedures
+- [Progress log](progress.md): historical test evidence, deviations, and conditional checks
+- [Decision ledger](decisions.md): historical technical and product decisions
+- [Backlog](backlog.md): possible work after v0.1
+- [Workspace inventory](inventory.md): original project evidence and preservation rules
+- [Documentation language](documentation-language.md): writing rules, scope, technical terms, and review limits.
 
 ## Experimental project tooling
 
-- [Local project/runtime launcher](local-project-launcher.md) — portable project
-  metadata, explicit runtime readiness and Linux-only development integration;
-  Windows/Mac installation remains future work
+The experimental tools are not part of the stable v0.1 generator.
+Read the applicable guide before use:
+
+- [Source-directed modeling](experimental-source-modeling.md): source inputs, trust boundaries, constraints, evidence, and benchmark reproduction
+- [Docker backend](EXPERIMENTAL_MODELING_SANDBOX.md): container controls, limits, and cleanup
+- [Local model review](local-model-review.md): geometry inspection, requirements, decisions, and change requests
+- [Local project launcher](local-project-launcher.md): portable project metadata, runtime readiness, and Linux-only generation
+- [HBCB REVIEW PREVIEW](review-preview.md): the unsigned, read-only Windows x64 and Mac arm64 packages.
 
 ## Policies
 
 - [Security policy](../SECURITY.md) and [support policy](../SUPPORT.md)
 - [Generated output policy](../OUTPUT_POLICY.md)
-- [Source license](../LICENSE), [asset license](../ASSET_LICENSE.md), and
-  [third-party notices](../THIRD_PARTY_NOTICES.md)
+- [Source license](../LICENSE), [asset license](../ASSET_LICENSE.md), and [third-party notices](../THIRD_PARTY_NOTICES.md).

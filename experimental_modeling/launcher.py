@@ -1,4 +1,4 @@
-"""Local project launcher scaffold. No runtime install, provider login or desktop shell."""
+"""Make a local project. Examine runtime status or open project evidence."""
 from __future__ import annotations
 
 import argparse
@@ -25,7 +25,7 @@ def operation_lock(project: Project, operation: str):
         try:
             stack.enter_context(exclusive_lock(path))
         except BlockingIOError as exc:
-            raise RuntimeError(f"A {operation} session is already running for this project; use its existing terminal or stop it before retrying") from exc
+            raise RuntimeError(f"A {operation} session is active for this project. Use its terminal, or stop the session before you try again.") from exc
         yield
 
 
@@ -50,7 +50,7 @@ def interruptible():
 def review_project(project: Project, port: int = 0, *, allow_unverified_platform: bool = False) -> None:
     report = doctor(project, RuntimeSelection())
     if not report["review_ready"] and not (allow_unverified_platform and report["review_candidate"]):
-        raise RuntimeError("Review backend unavailable: finish setup on a validated platform, or explicitly opt into --experimental-platform-review for unverified Windows/Mac review; this does not enable builds")
+        raise RuntimeError('Review backend not available: Complete setup on a permitted platform. For experimental Windows/Mac review, select --experimental-platform-review. This option does not give permission for builds.')
     if not 0 <= port <= 65535:
         raise ValueError("Port must be 0..65535")
     state = local_path(project.root / ".launcher-review.json")
@@ -62,7 +62,7 @@ def review_project(project: Project, port: int = 0, *, allow_unverified_platform
             server.daemon_threads = False
             atomic_json(state, {"schema_version": 1, "status": "running", "started_at": now()})
             print(f"Local project review: {server.origin}", flush=True)
-            print(server.project.read_only_reason or "Review only. Queued prompts are not executed. Ctrl-C stops this session.", flush=True)
+            print(server.project.read_only_reason or "Review only. The program does not run queued prompts. Push Ctrl-C to stop this session.", flush=True)
             server.serve_forever()
         finally:
             server.server_close()
@@ -88,12 +88,12 @@ def build_project(project: Project, selection: RuntimeSelection, *, revision: st
         if state.exists():
             prior = read_object(state)
             if prior.get("schema_version") != 1 or prior.get("status") not in {"running", "finished", "recovery_required"}:
-                raise ValueError("Invalid build recovery record; inspect it before continuing")
+                raise ValueError('Incorrect build recovery record. Examine this record before you continue.')
             if prior["status"] != "finished" and not acknowledge_interrupted:
-                raise RuntimeError("Interrupted build requires inspection of retained evidence, last_good.json and owned Docker resources. Confirm cleanup, choose a new revision ID, then use --acknowledge-interrupted-build; no process or artifact was removed")
+                raise RuntimeError("Build recovery is necessary. Examine saved evidence, last_good.json, and Docker resources that this project owns. Make sure that cleanup is complete. Select a new revision ID. Then use --acknowledge-interrupted-build. This command did not remove a process or artifact.")
         # Never overwrite an existing controller revision or its crash evidence.
         if any((project.folder(role) / revision).exists() for role in ("candidates", "accepted")):
-            raise ValueError("Revision ID already exists; inspect retained evidence and choose a new ID")
+            raise ValueError("Revision ID is in use. Examine saved evidence and select a new ID.")
         record = {"schema_version": 1, "status": "running", "revision": revision,
                   "mode": selection.mode, "started_at": now()}
         atomic_json(state, record)
@@ -120,36 +120,36 @@ def build_project(project: Project, selection: RuntimeSelection, *, revision: st
 
 def _runtime_arguments(parser):
     parser.add_argument("--trusted-reviewed-source", action="store_true",
-                        help="Explicitly trust all source; native execution is NOT a sandbox")
-    parser.add_argument("--blender", type=Path, help="Absolute trusted Blender executable, native mode only")
-    parser.add_argument("--docker", type=Path, help="Absolute trusted Docker executable; no PATH lookup")
-    parser.add_argument("--docker-socket", type=Path, help="Explicit local Unix socket; no Docker context/environment discovery")
-    parser.add_argument("--sandbox-image", help="Reviewed existing image ID sha256:...; never pulled")
+                        help="Give permission to run all source after you examine it. Native execution has no sandbox.")
+    parser.add_argument("--blender", type=Path, help="Absolute path of a trusted Blender executable. For native mode only.")
+    parser.add_argument("--docker", type=Path, help="Absolute path of a trusted Docker executable. The program does not search PATH.")
+    parser.add_argument("--docker-socket", type=Path, help="Set a local Unix socket. The program does not read Docker contexts or Docker environment settings.")
+    parser.add_argument("--sandbox-image", help="Use an installed image with ID sha256:... after source review. The program does not download images.")
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    init = commands.add_parser("init", help="Create or resume a portable project layout without a runtime")
+    init = commands.add_parser("init", help="Make a project folder, or complete its setup. A runtime is not necessary.")
     init.add_argument("--project", type=Path, required=True)
     init.add_argument("--name")
-    check = commands.add_parser("doctor", help="Report prerequisites without executing programs unless --probe is given")
+    check = commands.add_parser("doctor", help="Show prerequisites. The program runs no executable unless you select --probe.")
     check.add_argument("--project", type=Path, required=True)
-    check.add_argument("--probe", action="store_true", help="Authorize read-only checks using explicitly selected trusted programs")
+    check.add_argument("--probe", action="store_true", help="Give permission for read-only checks with the trusted programs that you select.")
     _runtime_arguments(check)
-    review = commands.add_parser("review", help="Review evidence using the existing loopback-only program")
+    review = commands.add_parser("review", help="Examine evidence with the program on the loopback address.")
     review.add_argument("--project", type=Path, required=True)
     review.add_argument("--port", type=int, default=0)
     review.add_argument("--experimental-platform-review", action="store_true",
-                        help="Opt into candidate Windows/Mac review only; Windows decisions/requests are read-only")
-    build = commands.add_parser("build", help="Build reviewed inputs through the existing fail-closed controller")
+                        help="Select experimental Windows/Mac review only. Windows mode cannot record decisions or requests.")
+    build = commands.add_parser("build", help="Build inputs after source review. The controller stops if a mandatory check fails.")
     build.add_argument("--project", type=Path, required=True)
     build.add_argument("--revision", required=True)
     build.add_argument("--parent")
     build.add_argument("--intent", default="")
     build.add_argument("--skip-renders", action="store_true")
     build.add_argument("--acknowledge-interrupted-build", action="store_true",
-                       help="Confirm you inspected evidence and cleaned any owned runtime leftovers; does not delete anything")
+                       help="Make sure that you examined evidence and completed cleanup of runtime resources that this project owns. This option erases nothing.")
     _runtime_arguments(build)
     args = parser.parse_args(argv)
     try:
@@ -173,7 +173,7 @@ def main(argv=None) -> int:
         print(json.dumps({key: result[key] for key in ("status", "revision", "failures")}, indent=2))
         return 0 if result["status"] == "accepted" else 1
     except KeyboardInterrupt:
-        print("Stopped. Build interruptions may require recovery inspection; no evidence was deleted.")
+        print("Stopped. If a build stopped before it was complete, examine its recovery state. This command did not remove evidence.")
         return 130
     except (ValueError, RuntimeError, OSError) as exc:
         print(str(exc))

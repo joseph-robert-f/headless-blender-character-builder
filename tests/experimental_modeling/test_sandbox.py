@@ -24,7 +24,7 @@ class SandboxTests(unittest.TestCase):
 
     def test_absent_docker_fails_closed(self):
         with patch('experimental_modeling.sandbox.shutil.which', return_value=None):
-            with self.assertRaisesRegex(SandboxError, 'no native fallback'):
+            with self.assertRaisesRegex(SandboxError, 'No native fallback'):
                 DockerSandbox(IMAGE).verify_runtime()
 
     def test_command_security_and_no_host_output(self):

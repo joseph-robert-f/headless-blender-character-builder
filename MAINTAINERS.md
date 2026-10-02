@@ -2,9 +2,10 @@
 
 # Maintainers
 
-The project is maintainer-led. This file is the public source of truth for
-project roles; `.github/CODEOWNERS` routes review but does not grant or remove
-maintainer authority by itself.
+Maintainers control the project.
+This file is the public record of project roles.
+`.github/CODEOWNERS` identifies the reviewers.
+That file does not give or remove maintainer authority.
 
 ## Current maintainers
 
@@ -12,32 +13,31 @@ maintainer authority by itself.
 |---|---|---|
 | `@joseph-robert-f` | Lead maintainer, release manager, and initial security responder | Project scope, public contracts, worker boundary, deployment, licensing, governance, and releases |
 
-This initial assignment matches the repository owner. GitHub permissions and
-branch-protection settings remain the authoritative enforcement layer and must
-be verified separately from this local file.
+This initial role assignment uses the repository owner.
+GitHub permissions and branch-protection settings control access and enforcement.
+Examine those settings independently.
+This local file does not prove their current values.
 
 ## Contact boundaries
 
-- Reproducible non-sensitive bugs and proposals may use public issues.
-- Suspected vulnerabilities must follow `SECURITY.md`. GitHub private
-  vulnerability reporting is a remote repository setting and must be verified
-  before reporters are directed to it.
-- Never put credentials, private reference material, personal data, exploit
-  details, or signed artifact URLs in a public issue.
-- There is no guaranteed response time, production support, or emergency SLA.
+- Use public issues for problems that can be reproduced and proposals without sensitive data.
+- For a suspected vulnerability, use the procedure in `SECURITY.md`.
+- Before you recommend GitHub private vulnerability reporting to a reporter, make sure that the remote repository setting is enabled.
+- Do not put credentials, private references, personal data, exploit details, or signed artifact URLs in a public issue.
+
+There is no guaranteed response time, production support, or emergency service-level agreement (SLA).
 
 ## Maintainer expectations
 
-Maintainers should:
+These tasks are recommended for maintainers:
 
-- review DCO sign-off, tests, documentation, licensing, and provenance;
-- protect the declarative-input and isolated-worker security boundary;
-- distinguish v0.1 commitments from proposed post-v0.1 work;
-- disclose conflicts relevant to a decision;
-- use coordinated disclosure for vulnerabilities; and
-- keep this file, `GOVERNANCE.md`, and CODEOWNERS aligned when roles change.
+- Examine DCO sign-off, tests, documentation, licensing, and provenance
+- Prevent changes that weaken the security boundary for declarative input and the isolated worker
+- Identify v0.1 commitments independently from proposed work after v0.1
+- Declare conflicts that have an effect on a decision
+- Use coordinated disclosure for vulnerabilities
+- Keep this file, `GOVERNANCE.md`, and CODEOWNERS in agreement when roles change.
 
-Adding or removing a maintainer requires a governance pull request approved by
-the lead maintainer. Before the project has multiple maintainers, succession
-or inactivity must be handled by an explicit public governance change rather
-than inferred from repository activity.
+To add or remove a maintainer, use a governance pull request with lead-maintainer approval.
+While there is only one maintainer, use an explicit public governance change to manage succession or inactivity.
+Do not infer these changes from repository operations.

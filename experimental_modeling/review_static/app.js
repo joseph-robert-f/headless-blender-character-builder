@@ -6,12 +6,12 @@
   const el = (tag, className, text) => { const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node; };
   const text = (id, value) => { $(id).textContent = value; };
   const humanize = value => String(value ?? '').replace(/[_-]+/g, ' ');
-  const format = value => value === null || value === undefined ? 'Not provided' : typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
+  const format = value => value === null || value === undefined ? 'Not supplied' : typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
   const date = value => { if (!value) return ''; const d = new Date(value); return Number.isNaN(d.valueOf()) ? String(value) : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }); };
   function notice(message = '') { text('notice', message); $('notice').hidden = !message; }
   async function api(path, options = {}) {
     const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', ...options });
-    let data; try { data = await response.json(); } catch (_) { throw new Error(`The server returned an unreadable response (${response.status}).`); }
+    let data; try { data = await response.json(); } catch (_) { throw new Error(`The server response is not readable (${response.status}).`); }
     if (!response.ok) throw new Error(data.message || data.error || `Request failed (${response.status})`);
     return data;
   }
@@ -23,12 +23,12 @@
   function renderHistory() {
     const list = $('revision-list'); list.replaceChildren();
     const revisions = [...(state.project?.revisions || [])].reverse(); text('revision-count', revisions.length);
-    if (!revisions.length) { list.append(el('p', 'empty', 'No local revisions found. Build a candidate to begin a review.')); return; }
+    if (!revisions.length) { list.append(el('p', 'empty', 'No local revisions are available. Build a candidate to start a review.')); return; }
     for (const revision of revisions) {
       const button = el('button', 'revision-item'); button.type = 'button'; button.setAttribute('aria-current', String(revision.id === state.revisionId));
       const failed = revision.status === 'rejected'; button.append(el('span', 'revision-dot' + (revision.machine_verified && !revision.evidence_unavailable ? ' pass' : failed ? ' fail' : '')));
       const label = el('span', 'revision-text'); label.append(el('strong', '', revision.id));
-      label.append(el('small', '', revision.evidence_unavailable ? 'Evidence unavailable' : revision.human_accepted ? 'Human accepted' : revision.machine_verified ? 'Machine verified' : failed ? 'Checks failed' : 'Needs review'));
+      label.append(el('small', '', revision.evidence_unavailable ? 'Evidence unavailable' : revision.human_accepted ? 'Human accepted' : revision.machine_verified ? 'Machine verified' : failed ? 'Checks failed' : 'Review necessary'));
       button.append(label); button.addEventListener('click', () => loadRevision(revision.id)); list.append(button);
     }
   }
@@ -36,7 +36,7 @@
     const list = $('request-queue'); list.replaceChildren();
     const requests = state.project?.requests; text('queue-count', Array.isArray(requests) ? requests.length : '—');
     if (!Array.isArray(requests)) { list.append(el('p', 'empty', 'Request history is not available from this server.')); return; }
-    if (!requests.length) { list.append(el('p', 'empty', 'No saved requests yet.')); return; }
+    if (!requests.length) { list.append(el('p', 'empty', 'No saved requests.')); return; }
     for (const request of [...requests].reverse()) {
       const item = el('details', 'queue-item'); const heading = el('summary');
       heading.append(el('span', '', `Revision ${request.revision_id}`), el('span', 'status-pill', humanize(request.status || 'Unknown status')));
@@ -62,12 +62,12 @@
   function measurementSummary(row) {
     const m = row.measured || {}, e = row.expected || {};
     const number = value => Number.isFinite(value) ? new Intl.NumberFormat(undefined, { maximumSignificantDigits: 5 }).format(value) : 'not measured';
-    if (row.applicable === false) return 'Not applicable to this initial model; no earlier revision exists to compare.';
-    if (row.status === 'unknown') return row.evidence?.reason || 'This requirement has not been verified.';
-    if (row.kind === 'connected_path') return `${m.connected ? 'A path connects' : 'No path connects'} the selected regions. ${number(m.reachable_vertices || 0)} vertices are reachable; a connected path is required.`;
-    if (row.kind === 'clearance_path') return `Smallest sampled clearance: ${number(m.minimum_sampled_clearance)} m; required at least ${number(e.min_clearance)} m. ${m.blocked_segments?.length || 0} of ${number(m.segments)} path segments are blocked.`;
-    if (row.kind === 'preserved_region') return `Largest vertex movement: ${number(m.max_vertex_displacement)} m; allowed at most ${number(e.tolerance)} m. Protected surface and material comparison: ${m.contained_triangle_topology_equal && m.part_materials_equal ? 'unchanged' : 'changed'}.`;
-    if (row.kind === 'preserved_rays') return `Largest sampled surface movement: ${number(m.maximum_first_hit_displacement)} m; allowed at most ${number(e.tolerance)} m. ${m.missing_hit_rays?.length || 0} missing hits across ${number(m.rays)} rays.`;
+    if (row.applicable === false) return 'Not applicable to this initial model. No previous revision exists for comparison.';
+    if (row.status === 'unknown') return 'The verification result is unknown. Read the recorded evidence for the reason.';
+    if (row.kind === 'connected_path') return `${m.connected ? 'A path connects' : 'No path connects'} the selected regions. ${number(m.reachable_vertices || 0)} vertices are reachable. A connected path is necessary.`;
+    if (row.kind === 'clearance_path') return `Smallest sampled clearance: ${number(m.minimum_sampled_clearance)} m. Minimum permitted clearance: ${number(e.min_clearance)} m. ${m.blocked_segments?.length || 0} of ${number(m.segments)} path segments are blocked.`;
+    if (row.kind === 'preserved_region') return `Largest vertex movement: ${number(m.max_vertex_displacement)} m. Maximum permitted movement: ${number(e.tolerance)} m. Protected surface and material comparison: ${m.contained_triangle_topology_equal && m.part_materials_equal ? 'unchanged' : 'changed'}.`;
+    if (row.kind === 'preserved_rays') return `Largest sampled surface movement: ${number(m.maximum_first_hit_displacement)} m. Maximum permitted movement: ${number(e.tolerance)} m. ${m.missing_hit_rays?.length || 0} missing hits across ${number(m.rays)} rays.`;
     if (row.kind === 'preserved_part') return `Geometry, transform and materials ${Object.values(m).every(Boolean) ? 'match' : 'do not all match'} the accepted parent.`;
     return '';
   }
@@ -77,7 +77,7 @@
     const counts = { pass: 0, fail: 0, unknown: 0 }; rows.forEach(row => counts[['pass', 'fail'].includes(row.status) ? row.status : 'unknown']++);
     const summary = $('requirement-summary'); summary.replaceChildren();
     for (const [status, label] of [['pass', 'passed'], ['fail', 'failed'], ['unknown', 'unknown']]) if (counts[status]) summary.append(el('span', `status-pill ${status}`, `${counts[status]} ${label}`));
-    if (!rows.length) list.append(el('p', 'empty', 'No requirement evidence is available. This does not establish a pass.'));
+    if (!rows.length) list.append(el('p', 'empty', 'No requirement evidence is available. This does not show a pass.'));
     for (const row of rows) {
       const status = ['pass', 'fail'].includes(row.status) ? row.status : 'unknown';
       const details = el('details', 'requirement'); const heading = el('summary');
@@ -89,8 +89,8 @@
         if (value === undefined || value === null) continue;
         const line = el('div', 'evidence-row'); line.append(el('strong', '', label), el(typeof value === 'object' ? 'pre' : 'span', '', format(value))); content.append(line);
       }
-      if (!content.childNodes.length) content.append(el('p', '', 'No additional evidence was recorded.'));
-      if (row.applicable === false) content.append(el('p', '', 'Not applicable to this revision; excluded from required checks.'));
+      if (!content.childNodes.length) content.append(el('p', '', 'The record has no additional evidence.'));
+      if (row.applicable === false) content.append(el('p', '', 'Not applicable to this revision. The mandatory checks exclude this requirement.'));
       if (row.hard === false) content.append(el('p', '', 'Advisory check'));
       details.append(content); if (status !== 'pass') details.open = true; list.append(details);
     }
@@ -101,10 +101,10 @@
     text('revision-title', `Revision ${revision.id || state.revisionId}`);
     text('revision-description', revision.parent ? `Compared with ${revision.parent} · Inspection-backed model review` : 'Initial model · Inspection-backed model review');
     text('built-status', built ? 'Inspected geometry available' : 'No inspected geometry'); statusIcon('built-icon', built);
-    text('verified-status', verified ? 'Required checks passed' : revision.status === 'rejected' ? 'One or more checks failed' : 'Not established'); statusIcon('verified-icon', verified, revision.status === 'rejected');
-    text('accepted-status', accepted ? 'Human decision recorded' : 'Awaiting your decision'); statusIcon('accepted-icon', accepted);
+    text('verified-status', verified ? 'Required checks passed' : revision.status === 'rejected' ? 'One or more checks failed' : 'Not verified'); statusIcon('verified-icon', verified, revision.status === 'rejected');
+    text('accepted-status', accepted ? 'Human decision recorded' : 'No human decision recorded'); statusIcon('accepted-icon', accepted);
     text('decision-title', accepted ? 'Acceptance recorded' : 'Ready for your review');
-    text('decision-copy', state.project?.read_only ? state.project.read_only_reason : accepted ? `Accepted${data.state.accepted_at ? ' ' + date(data.state.accepted_at) : ''}. This record is separate from machine verification.` : !verified || !hardPass ? 'Human acceptance is unavailable until machine verification is established and all required checks pass.' : 'Inspect the model and its evidence before recording your acceptance.');
+    text('decision-copy', state.project?.read_only ? state.project.read_only_reason : accepted ? `Accepted${data.state.accepted_at ? ' ' + date(data.state.accepted_at) : ''}. The program records this decision independently of machine verification.` : !verified || !hardPass ? 'Human acceptance is not available. Machine verification and all mandatory checks must pass first.' : 'Before acceptance, examine the model and its evidence.');
     $('accept-notes').value = data.state?.notes || ''; updateControls();
   }
   function renderProvenance(data) {
@@ -127,7 +127,7 @@
   }
   async function loadRevision(id) {
     const request = ++state.request; state.loading = true; state.revisionId = id; state.data = null; updateControls(); renderHistory(); notice(''); renderState({}); renderRequirements(null); renderProvenance({}); renderArtifacts({}); setGeometry({});
-    text('revision-title', `Revision ${id}`); text('revision-description', 'Loading inspection evidence…');
+    text('revision-title', `Revision ${id}`); text('revision-description', 'Inspection evidence loading…');
     try {
       const data = await api(`/api/revisions/${encodeURIComponent(id)}`); if (request !== state.request) return;
       state.data = data; state.loading = false;
@@ -139,7 +139,7 @@
     } catch (error) { if (request !== state.request) return; state.loading = false; state.data = null;
       const cached = state.project?.revisions?.find(revision => revision.id === id);
       if (cached) cached.evidence_unavailable = true;
-      renderHistory(); updateControls(); notice(error.message); text('revision-description', 'Revision evidence could not be loaded'); setGeometry({}); }
+      renderHistory(); updateControls(); notice(error.message); text('revision-description', 'Revision evidence is not available'); setGeometry({}); }
   }
   function prepare(observation) {
     const parts = []; let totalTriangles = 0, totalVertices = 0, simplified = false;
@@ -171,7 +171,7 @@
       const button = el('button', 'part-chip'); button.type = 'button'; button.setAttribute('aria-pressed', 'false'); const swatch = el('span', 'part-swatch'); swatch.style.backgroundColor = colorString(part.color, 1);
       button.append(swatch, document.createTextNode(humanize(part.name))); button.addEventListener('click', () => { state.selected = state.selected === part.name ? null : part.name; for (const other of list.children) other.setAttribute('aria-pressed', String(other === button && state.selected !== null)); redraw(); }); list.append(button);
     }
-    if (!list.childNodes.length) list.append(el('p', 'empty', 'Parts appear after a successful inspection.'));
+    if (!list.childNodes.length) list.append(el('p', 'empty', 'Parts appear after an inspection that passes.'));
     setCompare(state.compare); resetCamera();
   }
   function colorString(color, light) { return `rgb(${color.slice(0, 3).map(v => Math.round(255 * Math.pow(Math.max(0, Math.min(1, v)), 1 / 2.2) * light)).join(',')})`; }
@@ -223,28 +223,28 @@
   $('accept-form').addEventListener('submit', async event => {
     event.preventDefault(); if ($('accept-submit').disabled) return;
     const revisionId = state.revisionId; const payload = { csrf_token: state.project.csrf_token, expected_result_hash: state.data.revision.result_hash, notes: $('accept-notes').value.trim() };
-    $('accept-submit').disabled = true; text('accept-status', 'Recording your decision…');
+    $('accept-submit').disabled = true; text('accept-status', 'Decision recording…');
     try {
       const result = await api(`/api/revisions/${encodeURIComponent(revisionId)}/accept`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (revisionId !== state.revisionId) return; state.data.state = { ...state.data.state, ...result }; renderState(state.data); const revision = state.project.revisions.find(item => item.id === revisionId); if (revision) revision.human_accepted = result.human_accepted === true; renderHistory(); text('accept-status', 'Your acceptance is saved against this exact result.');
+      if (revisionId !== state.revisionId) return; state.data.state = { ...state.data.state, ...result }; renderState(state.data); const revision = state.project.revisions.find(item => item.id === revisionId); if (revision) revision.human_accepted = result.human_accepted === true; renderHistory(); text('accept-status', 'The program saved your acceptance for this result.');
     } catch (error) { if (revisionId === state.revisionId) { updateControls(); text('accept-status', error.message); } }
   });
   $('request-form').addEventListener('submit', async event => {
     event.preventDefault(); if ($('request-submit').disabled) return;
     const prompt = $('request-prompt').value.trim(); if (!prompt) { $('request-prompt').focus(); return; }
     const revisionId = state.revisionId; const payload = { csrf_token: state.project.csrf_token, revision_id: revisionId, expected_result_hash: state.data.revision.result_hash, prompt };
-    $('request-submit').disabled = true; text('request-status', 'Saving request…');
+    $('request-submit').disabled = true; text('request-status', 'Request storage…');
     try {
       const result = await api('/api/requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (revisionId !== state.revisionId) return; $('request-prompt').value = ''; text('request-status', result.message || `Request ${result.request_id || ''} saved (${result.status || 'queued'}).`);
       try { state.project = await api('/api/project'); renderQueue(); renderHistory(); }
-      catch (_) { text('request-status', 'Request saved. The queue could not refresh; reload to see its persisted record.'); }
+      catch (_) { text('request-status', 'Request saved. The queue display did not update. Reload the page to see the saved record.'); }
     } catch (error) { if (revisionId === state.revisionId) text('request-status', error.message); }
     finally { if (revisionId === state.revisionId) updateControls(); }
   });
   async function start() {
-    try { state.project = await api('/api/project'); text('project-name', state.project.project_name || 'Source modeling'); text('review-mode', state.project.read_only_reason || ''); $('review-mode').hidden = !state.project.read_only; renderHistory(); renderQueue(); const id = state.project.latest_revision || state.project.revisions?.[0]?.id; if (id) await loadRevision(id); else { text('revision-title', 'Your model workspace'); text('revision-description', 'No revisions are available to review yet'); setGeometry({}); } }
-    catch (error) { notice(error.message); text('revision-title', 'Workspace unavailable'); text('revision-description', 'Check the local server, then reload this page'); $('revision-list').replaceChildren(el('p', 'empty', 'Could not read revision history.')); }
+    try { state.project = await api('/api/project'); text('project-name', state.project.project_name || 'Source modeling'); text('review-mode', state.project.read_only_reason || ''); $('review-mode').hidden = !state.project.read_only; renderHistory(); renderQueue(); const id = state.project.latest_revision || state.project.revisions?.[0]?.id; if (id) await loadRevision(id); else { text('revision-title', 'Your model workspace'); text('revision-description', 'No revisions are available for review'); setGeometry({}); } }
+    catch (error) { notice(error.message); text('revision-title', 'Workspace unavailable'); text('revision-description', 'Examine the local server. Then reload this page'); $('revision-list').replaceChildren(el('p', 'empty', 'Revision history is not readable.')); }
   }
   start();
 })();

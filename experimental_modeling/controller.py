@@ -41,7 +41,7 @@ def regular_tree(root: Path, max_bytes: int = MAX_ATTEMPT) -> list[Path]:
     for directory, dirs, names in os.walk(root, followlinks=False):
         for name in dirs + names:
             path = Path(directory) / name
-            if is_redirected(path): raise ValueError("symlinks/reparse points are forbidden in bundles/artifacts")
+            if is_redirected(path): raise ValueError("Symlinks and reparse points are not permitted in bundles or artifacts.")
             if path.is_dir(): continue
             if not path.is_file(): raise ValueError("nonregular artifact")
             size += path.stat().st_size
@@ -129,7 +129,7 @@ def snapshot(source: Path, target: Path) -> dict[str, str]:
         if "__pycache__" in rel.parts:
             continue
         if path.suffix not in {".py", ".json", ".png", ".jpg", ".jpeg", ".txt", ".md"}:
-            raise ValueError("unsupported source/asset type")
+            raise ValueError('not permitted source/asset type')
         dest = target / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, dest)
@@ -172,7 +172,7 @@ def run_job(command: list[str], cwd: Path, log: Path, timeout: int = 120, budget
         with log.open("r+b") as stream: stream.truncate(MAX_LOG)
     result = {"exit_code": process.returncode, "elapsed_seconds": round(time.monotonic() - started, 3)}
     if failure or process.returncode:
-        raise RuntimeError(f"job failed: {failure or process.returncode}; see {log.name}")
+        raise RuntimeError(f'job failed: {failure or process.returncode}. See {log.name}')
     return result
 
 
@@ -189,11 +189,11 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
           docker_executable: Path | None = None, docker_socket: Path = Path("/var/run/docker.sock")) -> dict:
     # Fail before reading/importing/executing author code. No implicit native fallback.
     if os.name == "nt":
-        raise RuntimeError("SOURCE_EXECUTION_UNAVAILABLE: Windows builds are not implemented; review is read-only")
+        raise RuntimeError('SOURCE_EXECUTION_UNAVAILABLE: Windows builds are not implemented. Review is read-only')
     if trusted_reviewed_source and sandbox_image:
-        raise ValueError("choose native reviewed mode OR sandbox image, not both")
+        raise ValueError("Select native mode with source review, or select a sandbox image. Do not select both.")
     if not trusted_reviewed_source and sandbox_image is None:
-        raise RuntimeError("UNTRUSTED_EXECUTION_UNAVAILABLE: no audited sandbox backend; review source and explicitly opt into trusted development only")
+        raise RuntimeError('UNTRUSTED_EXECUTION_UNAVAILABLE: no audited sandbox backend. Review source and explicitly opt into trusted development only')
     if not isinstance(intent, str) or len(intent) > 2000:
         raise ValueError("revision intent must be at most 2000 characters")
     identifier(revision)
@@ -206,7 +206,7 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
     raw_policy, raw_params = read_json(policy_path), read_json(params)
     policy = Policy.parse(raw_policy)
     if policy.profile == "print":
-        raise ValueError("PRINT_ACCEPTANCE_UNAVAILABLE: scene profile only; physical print gates are not implemented")
+        raise ValueError('PRINT_ACCEPTANCE_UNAVAILABLE: scene profile only. Physical print gates are not implemented')
     if not isinstance(raw_params, dict): raise ValueError("parameters must be an object")
     backend = None
     if sandbox_image is not None:
@@ -216,7 +216,7 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
         binary = backend.blender
     else:
         binary = shutil.which(blender)
-        if binary is None: raise ValueError("Blender unavailable")
+        if binary is None: raise ValueError('Blender not available')
         binary = str(Path(binary).resolve())
     store.mkdir(parents=True, exist_ok=True)
     with store_lock(store):
@@ -228,13 +228,13 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
             recorded=read_json(safe_path(result_path)).get("requirements_lock_hash")
             if recorded is not None:prior_rule_hashes.add(recorded)
         if prior_rule_hashes and not requirements_lock.exists():
-            raise ValueError("established project requirements are missing; restore the exact recorded rules before building")
+            raise ValueError('The saved project requirements are missing. Restore the recorded rules before you start a build.')
         if requirements_lock.exists() or requirements_lock.is_symlink():
             requirements = RequirementSet.parse(read_json(requirements_lock))
             if prior_rule_hashes and prior_rule_hashes != {canonical_hash(requirements.raw)}:
                 raise ValueError("established project requirements were changed")
             if provided_requirements is not None and canonical_hash(provided_requirements.raw) != canonical_hash(requirements.raw):
-                raise ValueError("project requirements are locked; build cannot replace or weaken them")
+                raise ValueError('project requirements are locked. Build cannot replace or weaken them')
         else:
             requirements = provided_requirements or RequirementSet.parse({"schema_version":1,"requirements":[]})
             if provided_requirements is not None:
@@ -246,7 +246,7 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
             path.mkdir(exist_ok=True)
         for root in (store / "attempts", store / "accepted"):
             if (root / revision).exists() or (root / revision).is_symlink():
-                raise ValueError("revision already exists; revisions are immutable")
+                raise ValueError('This revision ID is in use. Revisions are immutable.')
         pointer = store / "last_good.json"
         previous = None
         if pointer.exists() or pointer.is_symlink():
@@ -296,7 +296,7 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
                 {"source": attempt / "source", "params": attempt / "params.json"}, authored, attempt / "author.log")
             regular_tree(authored)
             scene = authored / "scene.blend"
-            if scene.is_symlink() or not scene.is_file(): raise ValueError("author did not produce a regular scene")
+            if scene.is_symlink() or not scene.is_file(): raise ValueError("The author job did not write a regular scene file.")
             inspection = attempt / "inspection"
             inspection.mkdir()
             inspector = str(Path(__file__).with_name("inspect_scene.py"))

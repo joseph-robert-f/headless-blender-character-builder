@@ -526,7 +526,7 @@ class ServiceComposeTests(unittest.TestCase):
             selected["BUILDER_IMAGE"] = "--DoNotEchoBuilderImage"
             completed = self.invoke(root, selected, "up")
             self.assertEqual(completed.returncode, 4, completed.stdout)
-            self.assertIn("builder image reference is invalid", completed.stdout)
+            self.assertIn("builder image reference is incorrect", completed.stdout)
             self.assertNotIn("DoNotEchoBuilderImage", completed.stdout)
             self.assertFalse(docker_log.exists())
             self.assertFalse(compose_log.exists())
@@ -612,7 +612,7 @@ class ServiceComposeTests(unittest.TestCase):
             blocked_environment["FAKE_PORT_STATUS"] = "1"
             blocked = self.invoke(root, blocked_environment, "up")
             self.assertEqual(blocked.returncode, 5, blocked.stdout)
-            self.assertIn("API loopback port is unavailable", blocked.stdout)
+            self.assertIn("API loopback port is not available", blocked.stdout)
             self.assertFalse(docker_log.exists())
             self.assertIn(" port api 8080", compose_log.read_text(encoding="utf-8"))
 

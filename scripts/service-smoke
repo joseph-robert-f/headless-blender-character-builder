@@ -17,14 +17,14 @@ if ! valid_tool_selector "$python_bin" || ! valid_tool_selector "$docker_bin"; t
   exit 3
 fi
 if ! command -v "$python_bin" >/dev/null 2>&1; then
-  printf '%s\n' "SERVICE_SMOKE: Python 3.11+ is unavailable ($python_bin)" >&2
+  printf '%s\n' "SERVICE_SMOKE: Python 3.11+ is not available ($python_bin)" >&2
   exit 3
 fi
 python_version=$("$python_bin" --version 2>&1 | sed -n '1p' || true)
 if ! "$python_bin" -c \
   'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
   >/dev/null 2>&1; then
-  printf '%s\n' "SERVICE_SMOKE: Python 3.11+ is required (found: ${python_version:-unknown})" >&2
+  printf '%s\n' "SERVICE_SMOKE: Python 3.11+ is necessary (found: ${python_version:-unknown})" >&2
   exit 3
 fi
 
@@ -36,7 +36,7 @@ fi
 . ./scripts/service-common
 
 if [ ! -f .env ]; then
-  printf '%s\n' 'SERVICE_SMOKE: .env is missing; run make init-env' >&2
+  printf '%s\n' 'SERVICE_SMOKE: .env is missing. Run make init-env' >&2
   exit 3
 fi
 if ! hbcb_service_env_private; then
@@ -44,7 +44,7 @@ if ! hbcb_service_env_private; then
   exit 3
 fi
 if ! hbcb_service_settings; then
-  printf '%s\n' 'SERVICE_SMOKE: local-service project or loopback-port settings are invalid' >&2
+  printf '%s\n' 'SERVICE_SMOKE: local-service project or loopback-port settings are incorrect' >&2
   exit 3
 fi
 hbcb_service_identity
@@ -69,12 +69,12 @@ case "${BUILDER_IMAGE:-}" in
 esac
 case "$builder_image" in
   -*|*[![:graph:]]*)
-    printf '%s\n' 'SERVICE_SMOKE: builder image reference is invalid' >&2
+    printf '%s\n' 'SERVICE_SMOKE: builder image reference is incorrect' >&2
     exit 4
     ;;
 esac
 if [ "${#builder_image}" -gt 512 ]; then
-  printf '%s\n' 'SERVICE_SMOKE: builder image reference is invalid' >&2
+  printf '%s\n' 'SERVICE_SMOKE: builder image reference is incorrect' >&2
   exit 4
 fi
 builder_metadata=$("$docker_bin" image inspect \
@@ -88,7 +88,7 @@ fi
 case "$builder_id" in
   sha256:????????????????????????????????????????????????????????????????) ;;
   *)
-    printf '%s\n' 'SERVICE_SMOKE: builder image ID is invalid' >&2
+    printf '%s\n' 'SERVICE_SMOKE: builder image ID is incorrect' >&2
     exit 4
     ;;
 esac

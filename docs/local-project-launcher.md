@@ -1,21 +1,22 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Local project and runtime launcher scaffold
 
-This opt-in development increment builds on the [local review program](local-model-review.md)
-and [source controller](experimental-source-modeling.md). It is **not an installable
-Windows/Mac app**, runtime manager, signed distribution, or expanded v0.1 support.
-Windows x64 and Mac Apple Silicon are the first intended distribution targets.
-Their candidate review adapters require explicit `--experimental-platform-review`
-until native CI establishes the tested support level. Windows review is an
-intermediate **read-only** mode: inspection/downloads work, while acceptance and
-change-request writes are visibly disabled. Mac uses the existing POSIX review
-write path. Generation remains Linux x64 only. None of these modes is a packaged
-Windows/Mac application or the final intended Windows feature set.
+This optional development feature uses the [local review program](local-model-review.md) and [source controller](experimental-source-modeling.md).
+It is **not an installable Windows/Mac application**, runtime manager, signed distribution, or extension of v0.1 support.
+Windows x64 and Mac Apple Silicon are the first planned distribution targets.
+The candidate review adapters use `--experimental-platform-review` until native CI shows their tested support level.
+
+Windows review is **read-only** at this stage.
+Inspection and downloads operate, but the UI disables acceptance and change-request writes.
+Mac uses the existing POSIX review-write implementation.
+Generation is Linux x64 only.
+These modes are not packaged Windows/Mac applications or the full planned Windows features.
+Read [HBCB REVIEW PREVIEW](review-preview.md) for the independently packaged read-only program.
 
 ## Create a portable project
 
-Run from a source checkout with Python 3.11+. On Windows, use your installed
-`python` or `py -3.13` in place of `python3` in the examples:
+Use a source checkout with Python 3.11+.
+On Windows, replace `python3` in the examples with your installed `python` or `py -3.13`:
 
 ```sh
 python3 -m experimental_modeling.launcher init \
@@ -24,77 +25,85 @@ python3 -m experimental_modeling.launcher doctor \
   --project "/absolute/path/Projects/My model 雪"
 ```
 
-`init` creates `modeling-project.json` (schema 1) and fixed relative folders:
+`init` makes `modeling-project.json` (schema 1) and these fixed relative directories:
 
-- source: `source/`, with the existing `builder.py` entry point
-- assets: `source/assets/`, included in the same bounded source snapshot
-- constraints: `constraints/params.json`, `constraints/policy.json`, and optional
-  `constraints/requirements.json`
-- candidates: `evidence/attempts/`
-- accepted: `evidence/accepted/`
-- evidence: `evidence/`, including the controller-owned `last_good.json`, locked
-  requirements, immutable revision artifacts, and separate review decisions
+- Source: `source/`, with the existing `builder.py` entry point
+- Assets: `source/assets/`, part of the same source snapshot with fixed limits
+- Constraints: `constraints/params.json`, `constraints/policy.json`, and optional `constraints/requirements.json`
+- Candidates: `evidence/attempts/`
+- Accepted results: `evidence/accepted/`
+- Evidence: `evidence/`, with controller-owned `last_good.json`, locked requirements, immutable revision artifacts, and independently recorded review decisions.
 
-The candidate and accepted paths intentionally retain the existing controller
-layout. There is no duplicate accepted model or second last-good pointer. The
-source/asset file types and budgets are unchanged. Creating a project does not
-create source, a policy, requirements, or a model.
+Candidate and accepted paths use the existing controller layout.
+There is no duplicate accepted model or second last-good pointer.
+Source and asset file types and size limits do not change.
+Project initialization does not make source, a policy, requirements, or a model.
 
-The descriptor contains only schema, display name, fixed folders and runtime
-policy ID. It has no credentials, machine-specific executable paths, native-trust
-consent, provider settings or account identifiers. Keep all credentials outside
-project folders. This does not scan arbitrary source/assets/evidence for secrets,
-and no archive/export feature is implemented. Do not assume an arbitrary project
-is safe to share merely because its descriptor is portable.
+The descriptor contains only the schema, display name, fixed directories, and runtime policy ID.
+It has no credentials, machine-specific executable paths, native-trust consent, provider settings, or account identifiers.
+Keep all credentials out of project directories.
+The launcher does not scan source, assets, or evidence for secrets.
+It has no archive or export feature.
+A portable descriptor does not make an arbitrary project safe to share.
 
-Copy the entire project to another local folder to preserve relative references.
-The descriptor cannot redirect a role to an absolute or parent path. Unknown
-fields/versions, duplicate keys, symlinks, junctions and parent-traversal paths
-fail closed. Windows detection checks `lstat` reparse-point attributes even on
-Python 3.11, not only the newer `Path.is_junction` helper. Network/device paths
-are outside this local-filesystem contract. Names and roots can contain spaces and Unicode. `init` does not
-adopt nonempty unrelated folders or overwrite a project name. Its descriptor is
-published without clobbering another initializer, then missing fixed folders can
-be resumed with the same command. This requires a local filesystem supporting
-hard-link publication; an unsupported filesystem fails without a fallback that
-could overwrite data. Existing files and evidence are never deleted by init.
+To keep relative references, copy the full project to a different local directory.
+The descriptor cannot redirect a role to an absolute path or parent path.
+The launcher rejects unknown fields or versions, duplicate keys, symlinks, junctions, and parent-traversal paths.
+Windows detection examines `lstat` reparse-point attributes on Python 3.11.
+It does not use only the newer `Path.is_junction` helper.
+Network and device paths are not in this local-filesystem contract.
+
+Names and roots can contain spaces and Unicode.
+`init` does not adopt unrelated nonempty directories or overwrite a project name.
+Descriptor publication cannot overwrite a descriptor from a concurrent initializer.
+The same command can then make missing fixed directories.
+This operation uses a local filesystem with hard-link publication.
+If the filesystem lacks this function, initialization stops without an overwrite fallback.
+
+Initialization does not delete existing files or evidence.
 
 ## Inspect readiness without executing a program
 
-Default `doctor` only reads project/runtime metadata and filesystem state. It
-never searches PATH, opens a review server, executes a discovered binary, calls
-a model, modifies runtime settings, pulls an image or downloads Blender.
+The default `doctor` command reads only project metadata, runtime metadata, and filesystem state.
+It does not search PATH, open a review server, execute a discovered binary, or call a model.
+It does not change runtime settings, pull an image, or download Blender.
 
-It reports separate readiness for review, build prerequisites, the build recovery
-state, and model authoring. `authoring_ready` is always false: model-provider
-integration and an automatic queue consumer are not implemented. Source and
-policy must still be supplied by a trusted coding agent/operator.
+The report gives different readiness results for review, build prerequisites, build recovery state, and model authoring.
+`authoring_ready` is always false.
+Model-provider integration and an automatic queue consumer are not implemented.
+A trusted coding agent or operator must supply source and policy.
 
-JSON contract checks do not certify source safety, history integrity or geometry.
-The existing controller performs those build-time checks. Doctor exit 0 means the
-selected build prerequisites were probed and passed with no recovery marker; exit
-1 means not ready. Malformed project/selection/CLI inputs use exit 2. A missing
-model connection does not prevent reviewing existing evidence or explicitly
-building already supplied source.
+JSON contract checks do not certify source safety, history integrity, or geometry.
+The existing controller does those checks during a build.
+Doctor exit 0 means that the selected build-prerequisite probes passed and there is no recovery marker.
+Exit 1 means not ready.
+Malformed project, selection, or CLI inputs use exit 2.
+
+A missing model connection does not prevent review of existing evidence.
+It does not prevent an explicit build from supplied source.
 
 ## Explicit runtime policy and build
 
-The current policy ID is `blender-4.5.12-linux-amd64-v1`. It pins the repository's
-existing Blender 4.5.12 release and official Linux archive checksum. It does not
-upgrade an installed 4.5 runtime. Other patch/minor versions are not silently
-accepted; a future runtime policy needs explicit review and reproducibility tests.
+The current policy ID is `blender-4.5.12-linux-amd64-v1`.
+It pins the repository's Blender 4.5.12 release and official Linux archive checksum.
+It does not upgrade an installed 4.5 runtime.
+The launcher does not silently accept other patch or minor versions.
+A future runtime policy must have explicit review and reproducibility tests.
 
-Runtime selection is supplied for each invocation, outside the project descriptor.
-Select only a trusted installation and a reviewed image. `--probe` explicitly
-runs the chosen version/capability checks; `build` always repeats those checks
-before controller dispatch. Native version output is bounded to 8 KiB/10 seconds.
-Validated absolute paths are used consistently for probing and execution; project
-runtime files, PATH discovery and ambiguous symlink/parent paths are rejected.
+Supply runtime selection for each invocation, not in the project descriptor.
+Select only a trusted installation and a reviewed image.
+`--probe` runs the selected version and capability checks.
+`build` repeats those checks before it starts the controller.
+Native version output has limits of 8 KiB and 10 seconds.
 
-The isolated path uses the same experimental Docker backend and immutable local
-image ID. Supply the exact local Unix socket rather than inheriting a Docker
-context or environment setting. Use its actual non-symlink path (commonly
-`/run/docker.sock` on Linux; `/var/run` can be a symlink):
+Probes and execution use the same validated absolute paths.
+The launcher rejects project runtime files, PATH discovery, and ambiguous symlink or parent paths.
+
+The isolated workflow uses the existing experimental Docker backend and immutable local image ID.
+Supply the local Unix socket explicitly.
+Do not depend on a Docker context or environment setting.
+Use the socket path without symlinks (usually `/run/docker.sock` on Linux).
+`/var/run` can be a symlink.
 
 ```sh
 python3 -m experimental_modeling.launcher doctor \
@@ -107,15 +116,18 @@ python3 -m experimental_modeling.launcher build \
   --sandbox-image sha256:YOUR_REVIEWED_LOCAL_IMAGE_ID
 ```
 
-Replace the example image placeholder with a complete 64-hex local image ID.
-The preflight requires Linux/amd64 image architecture, matching Blender version
-and archive metadata, and all existing daemon/image boundary checks. Image labels
-alone do not prove trustworthy contents: the operator must review/build the image
-from the pinned repository Dockerfile. No image is pulled and no container is
-started by doctor. Docker failure **never** falls back to native execution.
-A daemon capability check is not a live build or independent security audit.
+Replace `YOUR_REVIEWED_LOCAL_IMAGE_ID` with 64 hexadecimal digits.
+Keep the `sha256:` prefix.
+Preflight examines Linux/amd64 image architecture, Blender version, archive metadata, and existing daemon and image boundary controls.
+Image labels alone do not show trust in the contents.
+Examine the image build from the pinned repository Dockerfile.
 
-The separate trusted-development option is explicit on every call:
+Doctor does not pull images or start containers.
+A Docker failure **never** causes native execution.
+
+A daemon capability check is not a live build or a security audit done independently.
+
+The trusted-development option is explicit on each invocation:
 
 ```sh
 python3 -m experimental_modeling.launcher build \
@@ -123,12 +135,16 @@ python3 -m experimental_modeling.launcher build \
   --trusted-reviewed-source --blender /absolute/path/to/trusted/blender
 ```
 
-This executes arbitrary source with the OS user's authority and is **not a
-sandbox**, including when Blender eventually ships inside an application bundle.
-Use it only after reviewing all source and assets. A subsequent revision must use
-`--parent` equal to current last-good and a new `--revision`; accepted, rejected
-and interrupted revision IDs are never overwritten. Requirement locking and
-machine/human acceptance remain owned by the original controller/reviewer.
+**CAUTION:** Examine all source and assets before native execution.
+This mode executes arbitrary source with the authority of your OS account.
+It is **not a sandbox**.
+This also applies if a future application package contains Blender.
+Host files and acceptance evidence can change.
+
+For a subsequent revision, set `--parent` to the current last-good revision.
+Use a new `--revision`.
+The controller does not overwrite accepted, rejected, or interrupted revision IDs.
+The original controller and review program control requirement locking and machine and human acceptance.
 
 ## Review, interruption and recovery
 
@@ -137,96 +153,114 @@ python3 -m experimental_modeling.launcher review \
   --project "/absolute/path/Projects/My model 雪"
 ```
 
-Review uses the existing loopback-only server/APIs and the descriptor's display
-name. Open the printed local URL on the same computer. It does not require Blender,
-Docker or a model connection. No external browser launch or remote hosting occurs.
+Review uses the existing loopback-only server and APIs with the descriptor's display name.
+Open the displayed local URL on the same computer.
+Blender, Docker, and a model connection are not necessary.
+The launcher does not open an external browser or host the program remotely.
 
-A separate kernel lease permits one launcher review session per project without
-holding the controller's build/review-write lock. POSIX retains `flock`; Windows
-uses a nonblocking byte-zero `msvcrt.locking` lease. Existing lock-file names and
-POSIX semantics are preserved; files are not deleted to force takeover. A repeated startup reports that
-the existing session must be stopped. On POSIX, Ctrl-C/SIGTERM closes the listener, drains bounded active requests and
-releases the lease. Windows console Ctrl-C/Ctrl-Break unwinds the same session;
-Windows `TerminateProcess` is a forced exit, handled by subsequent lease recovery,
-not described as graceful cleanup. A crashed process loses its lease
-automatically; a new review may start without deleting locks or killing a stored
-PID. Persisted URLs/PIDs are not used as process authority. Launcher metadata
-`.launcher-review.json` and `.launcher-build.json` contains no authentication data.
+A different kernel lease permits one launcher review session for each project.
+It does not hold the controller's build and review-write lock.
+POSIX uses `flock`.
+Windows uses a nonblocking byte-zero `msvcrt.locking` lease.
+Lock-file names and POSIX semantics do not change.
+The launcher does not delete files to force ownership of a lease.
 
-Before a build, its running journal is atomically written and synced on Linux.
-An interrupted build or controller-retained execution/cleanup error leaves
-recovery required, including when Docker cleanup fails but the controller returns
-a `needs_review` result. Inspect the retained attempt, current `last_good.json`,
-and any owned `modeling-*` Docker resources using the existing
-[backend recovery guidance](EXPERIMENTAL_MODELING_SANDBOX.md). After confirming
-cleanup, explicitly pass `--acknowledge-interrupted-build` with a fresh revision
-ID. This flag does not delete artifacts, roll back accepted state, kill processes
-or remove Docker resources. Ordinary geometric rejection remains a finished run.
-A hard kill or unreachable daemon can still leave resources requiring operator
-cleanup; this scaffold makes no physical power-loss or automatic-recovery claim.
+A repeated startup tells the operator to stop the existing session.
+On POSIX, Ctrl-C or SIGTERM closes the listener, finishes active requests with fixed limits, and releases the lease.
+Windows console Ctrl-C or Ctrl-Break closes the same session.
+Windows `TerminateProcess` forces an exit.
+Subsequent lease recovery handles that exit.
+It is not a controlled cleanup.
+
+A process crash automatically releases its lease.
+A new review session can start without lock deletion or termination of a stored PID.
+Saved URLs and PIDs do not give process authority.
+Launcher metadata `.launcher-review.json` and `.launcher-build.json` contains no authentication data.
+
+Before a Linux build, the launcher atomically writes and syncs its running journal.
+An interrupted build or saved execution or cleanup error causes a recovery requirement.
+This includes Docker cleanup failure when the controller returns `needs_review`.
+Examine the saved attempt, current `last_good.json`, and owned `modeling-*` Docker resources.
+Use the [backend recovery guide](EXPERIMENTAL_MODELING_SANDBOX.md).
+
+After cleanup verification, supply `--acknowledge-interrupted-build` with a new revision ID.
+This flag does not delete artifacts, restore accepted state, terminate processes, or remove Docker resources.
+An ordinary geometry rejection is a completed operation.
+A forced exit or unreachable daemon can leave resources for manual cleanup.
+This feature does not claim physical power-loss recovery or automatic recovery.
 
 ## Verification and remaining portability work
 
-Run the focused tests, then the complete experimental suite:
+First, run the focused tests.
+Then run the full experimental test suite:
 
 ```sh
 python3 -m unittest discover -s tests/experimental_modeling -p test_launcher.py -v
 python3 -m unittest discover -s tests/experimental_modeling -v
 ```
 
-Runtime fixtures are inert and probes are injected. Lifecycle tests execute only
-the known Python interpreter and local review server, covering repeated launch,
-SIGTERM cleanup, SIGKILL/restart, separate store locks and Unicode/spaced paths.
-Passing mocked platform gates is not Windows/macOS execution evidence. A separate
-`Experimental project native platforms` workflow runs the dedicated portable suite on
-actual Windows x64, Mac arm64 and Linux runners, with observed architecture checks,
-Python 3.11/3.13, real kernel-lock/process lifecycle tests, and retained logs. Windows
-runs a real junction test and read-only HTTP denial tests; POSIX runs persistent
-review-write tests. The browser gate also checks read-only mutation controls and
-desktop/mobile screenshots. A configured workflow is not a passing result; inspect
-its exact-commit outcome before updating support claims. Actual Docker/native-
-Blender tests retain their separate opt-in gates.
+Runtime fixtures do not execute, and tests inject their probes.
+Lifecycle tests execute only the known Python interpreter and local review server.
+They include repeated startup, SIGTERM cleanup, SIGKILL and restart, different store locks, and paths with Unicode and spaces.
+Mocked platform tests do not show Windows or macOS execution evidence.
 
-Before a Windows x64/Mac Apple Silicon distribution can be called supported:
+The `Experimental project native platforms` workflow runs the portable suite on Windows x64, Mac arm64, and Linux runners.
+It examines the observed architecture and uses Python 3.11 and 3.13.
+It tests kernel locks and process lifecycle and keeps logs.
+Windows tests include a junction and read-only HTTP rejection.
+POSIX tests include persistent review writes.
 
-1. **Windows durable review writes:** kernel leases and junction-aware path checks
-   are implemented, but Windows review decisions remain read-only. The next adapter
-   needs no-clobber/atomic publication using appropriate Windows file APIs, explicit
-   file-identity checks and durable journal/recovery semantics. Test concurrent
-   writers, sharing violations, interrupted replacement, reopen/recovery and
-   unchanged accepted-model pointers on real NTFS. Windows can support durable
-   writes; this increment deliberately does not pretend its current POSIX directory
-   fsync routine is that adapter
-2. **Owned source-process lifecycle:** `controller.run_job` still uses POSIX
-   rlimits, `preexec_fn`, `start_new_session` and `os.killpg`; source execution is
-   explicitly refused on Windows before input reads. Windows needs an owned-process
-   tree/Job Object implementation. Mac needs validated build/resource behavior.
-   Candidate review runs only the trusted in-process server; its console-signal and
-   forced-exit tests do not validate a generated-code runtime. Test cancellation,
-   descendants, timeouts and cleanup failures before enabling source execution
-3. **Docker transport/mount architecture:** `sandbox.DockerSandbox` currently uses
-   a Unix socket, Linux path/mount syntax, selector-readable process pipes and a
-   fixed Linux filesystem environment. Validate Docker Desktop socket/path sharing
-   and native Windows transport before enabling those adapters. The current
-   `docker/builder.Dockerfile` is deliberately `linux/amd64`; Mac Apple Silicon
-   must either explicitly test that emulated path or introduce a separately
-   checksum-pinned Linux arm64 image and rerun all containment/evidence gates.
-   Do not silently substitute a native bundled Blender for failed Docker isolation
-4. **Runtime/package manifest:** resolve official Windows x64 and macOS arm64
-   4.5.12 archives/checksums, redistribution/license/source obligations, managed
-   install locations, interrupted download/extraction and rollback. No runtime
-   archives, downloads, install code, credentials or signing identities are part
-   of this increment
-5. **Installable app:** package the experimental Python modules and review assets
-   explicitly (the stable `pyproject.toml` does not include this experiment), add
-   the desktop shell, platform CI, native clean-machine install/uninstall tests,
-   signed release/notarization process and provider connection UI. Only actual
-   resulting platform tests can change the current readiness gates
+The browser test also examines read-only write controls and desktop and mobile screenshots.
+A configured workflow is not a passing result.
+Before a support-status change, examine the result for the applicable commit.
+Docker and native-Blender tests keep their own optional test gates.
 
-Implementation references: Python's [Windows byte-range locking](https://docs.python.org/3/library/msvcrt.html#msvcrt.locking),
-[Windows file attributes](https://docs.python.org/3/library/os.html#os.stat_result.st_file_attributes),
-and [subprocess signal behavior](https://docs.python.org/3/library/subprocess.html#subprocess.Popen.send_signal).
+Before a supported Windows x64 or Mac Apple Silicon distribution, complete these areas:
 
-The existing version is a local source-checkout integration scaffold based on the
-merged source-modeling and review changes; it does not reclassify them as a
-released end-user product.
+1. **Windows durable review writes.** Kernel leases and junction-aware path checks exist.
+   Windows review decisions are read-only.
+   The next adapter must use no-clobber and atomic publication through applicable Windows file APIs.
+   It must have explicit file-identity checks and durable journal and recovery semantics.
+
+   Test concurrent writers, sharing violations, interrupted replacement, reopening, recovery, and unchanged accepted-model pointers on NTFS.
+   Windows can give durable writes.
+   The current POSIX directory `fsync` routine is not that Windows adapter.
+
+2. **Owned source-process lifecycle.** `controller.run_job` uses POSIX rlimits, `preexec_fn`, `start_new_session`, and `os.killpg`.
+   The controller rejects source execution on Windows before input access.
+   An owned process tree and Job Object implementation are necessary on Windows.
+   Mac build and resource behavior must pass validation.
+
+   Candidate review runs only the trusted in-process server.
+   Its console-signal and forced-exit tests do not validate a generated-code runtime.
+   Before source execution, test cancellation, child processes, timeouts, and cleanup failures.
+
+3. **Docker transport and mounts.** `sandbox.DockerSandbox` uses a Unix socket, Linux path and mount syntax, selector-readable process pipes, and fixed Linux filesystem settings.
+   Before new adapters, validate Docker Desktop socket and path sharing and native Windows transport.
+   The current `docker/builder.Dockerfile` uses `linux/amd64`.
+
+   On Mac Apple Silicon, explicitly test that emulated workflow.
+   As an alternative, introduce a Linux arm64 image with its own checksum pin.
+   Then repeat all isolation and evidence tests.
+   Do not substitute native packaged Blender after Docker isolation failure.
+
+4. **Runtime and package manifest.** Identify the official Windows x64 and macOS arm64 Blender 4.5.12 archives and checksums.
+   Resolve redistribution, license, and source obligations.
+   Define managed installation locations, interrupted-download recovery, extraction recovery, and rollback.
+   This feature contains no runtime archives, downloads, installation code, credentials, or signature identities.
+
+5. **Installable application.** Package the experimental Python modules and review assets explicitly.
+   The stable `pyproject.toml` does not include this experiment.
+   Add the desktop shell, platform CI, and native installation and removal tests on systems without development tools.
+   Add the signed-release and notarization process and provider-connection UI.
+   Only the resulting platform test evidence can change readiness status.
+
+Implementation references:
+
+- [Windows byte-range locking](https://docs.python.org/3/library/msvcrt.html#msvcrt.locking)
+- [Windows file attributes](https://docs.python.org/3/library/os.html#os.stat_result.st_file_attributes)
+- [Subprocess signal behavior](https://docs.python.org/3/library/subprocess.html#subprocess.Popen.send_signal).
+
+This version is a local source-checkout integration feature.
+It uses the merged source-modeling and review changes.
+It does not make those changes a released end-user product.

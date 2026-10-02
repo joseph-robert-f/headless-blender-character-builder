@@ -1,25 +1,25 @@
 # Backlog
 
-This backlog records extension ideas after the v0.1 release boundary. It is
-not a promise of implementation, compatibility, hosted availability, or a
-physical-print outcome.
+This backlog records ideas for extensions after v0.1.
+It does not promise implementation, compatibility, a hosted service, or a physical-print result.
 
 ## v0.1 release boundary
 
-- **Supported:** one trusted user building their own models locally with the
-  one-shot Docker builder. A trusted user controls the machine and creates or
-  reviews the bounded JSON request.
+- **Supported:** one trusted local user with the one-shot Docker builder.
+  The user has control of the machine and writes or reviews each JSON request.
+  Requests have limits.
 - **Experimental:** the optional Compose service on loopback for one trusted
   operator.
 - **Out of scope:** Internet-facing, hostile-input, multi-tenant, public OCI,
   and VPS operation.
 
-Testing an experimental or future path does not make it part of v0.1 support.
+Tests for an experimental or future mode do not increase v0.1 support.
 
 ## Good first issues
 
-No unclaimed good-first issues remain from the initial v0.1 review.
+The initial v0.1 review has no unclaimed good-first issues.
 
+<!-- ste-preserve:start historical completed v0.1 changes -->
 ### Completed in this change
 
 - added and gate-covered the Tidepool `facet-bot` palette example;
@@ -61,71 +61,72 @@ The maintainer/security pass also:
   candidate scans and a final exact-policy scan passed with 155/155 matches,
   no unused dispositions, no unresolved blockers, and no scan errors.
 
-Future starter issues are created manually. Maintainers should copy a reviewed
-proposal into the repository issue template and apply the maintained labels
-below.
+<!-- ste-preserve:end -->
+
+Maintainers create future starter issues manually.
+Copy a reviewed proposal into the repository issue template.
+Apply the maintained labels below.
 
 ## Maintainer and security issues
 
-- Before any future VPS/public-OCI release, add the derived PostgreSQL image to
-  release inventory, SBOM, signing, push, corresponding-source/notices, and
-  digest-lock generation. Current publication tooling covers only builder,
-  API, and worker, so `public_oci_ready` must remain false.
+- Before a VPS/public-OCI release, add the derived PostgreSQL image to the release inventory.
+  Include its SBOM, signing, push, corresponding-source/notices, and digest-lock generation.
+  Current publication tools cover only builder, API, and worker.
+  Thus, `public_oci_ready` must stay false.
 
 ## Candidate extensions
 
 ### Generator and artifact work
 
-- additional original geometric generator families;
-- optional trusted turntable output after a bounded animation profile exists;
-- 3MF export with explicit unit/material contracts;
-- better structural regression summaries that remain renderer-independent;
+- more original geometric generator families.
+- optional trusted turntable output after a bounded animation profile exists.
+- 3MF export with explicit unit/material contracts.
+- better structural regression summaries that are renderer-independent.
 - configurable but bounded preview composition and lighting.
 
 ### Print workflow
 
-- explicit printer/material profiles;
-- minimum wall and feature policies by process;
-- pinned open-source slicer integration in a separate release gate;
-- overhang/support and bed-contact evidence;
+- explicit printer/material profiles.
+- minimum wall and feature policies by process.
+- pinned open-source slicer integration in a different release gate.
+- overhang/support and bed-contact evidence.
 - a physical-print review protocol.
 
-None of these would turn automated checks into a manufacturing, safety, or
-fitness warranty.
+These features cannot make automatic checks a manufacturing, safety, or fitness warranty.
 
 ### Optional planning and integrations
 
 - an opt-in OpenAI prompt-to-spec planner with strict structured output and
-  user confirmation before a paid or mutating build;
-- a thin MCP adapter exposing create/get/cancel over the versioned service API;
-- rights-cleared reference ingestion in a separately isolated pipeline;
+  user confirmation before a paid or mutating build.
+- a thin MCP adapter exposing create/get/cancel over the versioned service API.
+- rights-cleared reference ingestion in a independently isolated pipeline.
 - signed webhooks, quotas, and tenant-aware authorization.
 
-OpenAI and MCP adapters must remain optional. Provider keys must never enter the
-Blender child, artifacts, or logs.
+OpenAI and MCP adapters must stay optional.
+Do not put provider keys in the Blender child, artifacts, or logs.
 
 ### Operations and cloud
 
 - propagate a reviewed candidate identity into production release locks after
-  registry publication supplies immutable image digests;
-- one maintained managed-cloud reference target;
-- per-build worker jobs and independent API scaling;
-- metrics, budgets, abuse controls, and deletion workflows;
-- multi-architecture images after equivalent Blender provenance exists;
-- automated validation that a draft public Release contains every locally
-  generated corresponding-source asset before any associated OCI package is
-  made public;
+  registry publication supplies immutable image digests.
+- one maintained managed-cloud reference target.
+- per-build worker jobs and independent API scaling.
+- metrics, budgets, abuse controls, and deletion workflows.
+- multi-architecture images after equivalent Blender provenance exists.
+- automated validation that a draft public Release contains each locally
+  generated corresponding-source asset before an associated OCI package is
+  made public.
 - signed OCI images, provenance attestations, and automated GHCR publication.
 
 ## Explicit non-goals
 
-- arbitrary customer- or model-authored Python;
-- unrestricted uploaded `.blend` files, add-ons, or drivers;
-- protected-character packs or automatic IP clearance;
-- general organic sculpting or exact-likeness generation;
-- a public unauthenticated demo;
-- Internet-facing, hostile-input, or multi-tenant service operation in v0.1;
-- production VPS deployment in v0.1;
+- arbitrary customer- or model-authored Python.
+- unrestricted uploaded `.blend` files, add-ons, or drivers.
+- protected-character packs or automatic IP clearance.
+- general organic sculpting or exact-likeness generation.
+- a public unauthenticated demo.
+- Internet-facing, hostile-input, or multi-tenant service operation in v0.1.
+- production VPS deployment in v0.1.
 - production billing or marketplace behavior in this repository.
 
 ## Issue label catalog

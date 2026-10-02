@@ -139,7 +139,7 @@ class _TerminationGuard:
                 signal.signal(installed, self.previous[installed])
             raise BuilderCliFailure(
                 int(ExitCode.INTERNAL),
-                "could not establish signal-safe Blender execution",
+                "The launcher could not start Blender with signal safety.",
             ) from exc
         return self
 
@@ -221,7 +221,7 @@ def inspect_manifest(manifest_path: str) -> None:
             raise OSError("manifest is not a regular file")
         if metadata.st_size <= 0:
             raise BuilderCliFailure(
-                int(ExitCode.VERIFICATION), "success manifest is invalid"
+                int(ExitCode.VERIFICATION), 'success manifest is incorrect'
             )
         if metadata.st_size > MAX_MANIFEST_BYTES:
             raise BuilderCliFailure(
@@ -248,7 +248,7 @@ def inspect_manifest(manifest_path: str) -> None:
                 )
                 or len(payload) != metadata.st_size
             ):
-                raise OSError("manifest changed while being read")
+                raise OSError('manifest changed during the read')
     except OSError as exc:
         raise BuilderCliFailure(
             int(ExitCode.FILESYSTEM), "could not read success manifest"
@@ -263,7 +263,7 @@ def inspect_manifest(manifest_path: str) -> None:
         manifest = BuildManifest.from_json(payload)
     except (ContractValidationError, TypeError, ValueError) as exc:
         raise BuilderCliFailure(
-            int(ExitCode.VERIFICATION), "success manifest is invalid"
+            int(ExitCode.VERIFICATION), 'success manifest is incorrect'
         ) from exc
     if payload != manifest.canonical_bytes + b"\n":
         raise BuilderCliFailure(
@@ -298,7 +298,7 @@ def _new_output(raw_path: str) -> Path:
         supplied = Path(raw_path).expanduser()
         if supplied.is_symlink():
             raise BuilderCliFailure(
-                int(ExitCode.FILESYSTEM), "output must not already exist"
+                int(ExitCode.FILESYSTEM), "Use a new output path."
             )
         output = supplied.resolve(strict=False)
     except BuilderCliFailure:
@@ -306,9 +306,9 @@ def _new_output(raw_path: str) -> Path:
     except (OSError, RuntimeError, ValueError) as exc:
         raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "output path could not be resolved") from exc
     if output.is_symlink() or output.exists():
-        raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "output must not already exist")
+        raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "Use a new output path.")
     if not output.parent.is_dir():
-        raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "output parent does not exist")
+        raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "The output parent folder is not available.")
     return output
 
 
@@ -333,7 +333,7 @@ def _private_stage(output: Path) -> Path:
         stage.chmod(0o700)
         return stage
     except OSError as exc:
-        raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "could not create launcher staging") from exc
+        raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "The launcher could not make its staging folder.") from exc
 
 
 def _execution_context() -> dict[str, str]:
@@ -341,17 +341,17 @@ def _execution_context() -> dict[str, str]:
     values = {key: os.environ[key] for key in PROVENANCE_ENV if key in os.environ}
     if mode is None:
         if values:
-            raise BuilderCliFailure(int(ExitCode.INTERNAL), "partial execution provenance")
+            raise BuilderCliFailure(int(ExitCode.INTERNAL), "Execution provenance is not complete.")
         return {}
     if mode != "container":
-        raise BuilderCliFailure(int(ExitCode.INTERNAL), "unsupported execution mode")
+        raise BuilderCliFailure(int(ExitCode.INTERNAL), 'not permitted execution mode')
     reference = values.get("HBCB_WORKER_IMAGE_REFERENCE")
     if reference is None or IMAGE_REFERENCE.fullmatch(reference) is None:
-        raise BuilderCliFailure(int(ExitCode.INTERNAL), "invalid container image reference")
+        raise BuilderCliFailure(int(ExitCode.INTERNAL), 'incorrect container image reference')
     for field in ("HBCB_WORKER_IMAGE_DIGEST", "HBCB_WORKER_IMAGE_ID"):
         candidate = values.get(field)
         if candidate is not None and IMAGE_DIGEST.fullmatch(candidate) is None:
-            raise BuilderCliFailure(int(ExitCode.INTERNAL), "invalid container image digest")
+            raise BuilderCliFailure(int(ExitCode.INTERNAL), 'incorrect container image digest')
     return values
 
 
@@ -359,14 +359,14 @@ def _provenance_text(name: str, maximum_bytes: int = 512) -> str:
     path = PROVENANCE_ROOT / name
     try:
         if path.is_symlink() or not path.is_file():
-            raise OSError("unsafe provenance file")
+            raise OSError('not safe provenance file')
         with path.open("rb") as stream:
             payload = stream.read(maximum_bytes + 1)
         if len(payload) > maximum_bytes:
             raise OSError("oversized provenance file")
         return payload.decode("utf-8", "strict").strip()
     except (OSError, UnicodeDecodeError) as exc:
-        raise BuilderCliFailure(int(ExitCode.INTERNAL), "container provenance is unavailable") from exc
+        raise BuilderCliFailure(int(ExitCode.INTERNAL), 'container provenance is not available') from exc
 
 
 def _ensure_runtime_directories(environment: Mapping[str, str]) -> None:
@@ -412,9 +412,9 @@ def _blender_binary() -> Path:
     try:
         resolved = candidate.expanduser().resolve(strict=True)
     except (OSError, RuntimeError, ValueError) as exc:
-        raise BuilderCliFailure(int(ExitCode.BLENDER), "Blender executable is unavailable") from exc
+        raise BuilderCliFailure(int(ExitCode.BLENDER), 'Blender executable is not available') from exc
     if not resolved.is_file() or not os.access(resolved, os.X_OK):
-        raise BuilderCliFailure(int(ExitCode.BLENDER), "Blender executable is unavailable")
+        raise BuilderCliFailure(int(ExitCode.BLENDER), 'Blender executable is not available')
     return resolved
 
 
@@ -576,7 +576,7 @@ def _validate_tree(output: Path, request: BuildRequest, blender: Path) -> BuildM
             else:
                 raise BuilderCliFailure(int(ExitCode.VERIFICATION), "artifact tree contains a special file")
     except OSError as exc:
-        raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "could not inspect artifact tree") from exc
+        raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "The program could not examine the artifact tree.") from exc
     if files != EXACT_FILES or directories != EXACT_DIRECTORIES:
         raise BuilderCliFailure(int(ExitCode.VERIFICATION), "artifact tree differs from complete-v1")
     try:
@@ -589,7 +589,7 @@ def _validate_tree(output: Path, request: BuildRequest, blender: Path) -> BuildM
     try:
         manifest = BuildManifest.from_json(manifest_payload)
     except (ContractValidationError, TypeError, ValueError) as exc:
-        raise BuilderCliFailure(int(ExitCode.VERIFICATION), "success manifest is invalid") from exc
+        raise BuilderCliFailure(int(ExitCode.VERIFICATION), 'success manifest is incorrect') from exc
     if manifest_payload != manifest.canonical_bytes + b"\n":
         raise BuilderCliFailure(int(ExitCode.VERIFICATION), "success manifest is not canonical")
     if manifest.request_sha256 != request.request_sha256 or manifest.spec_sha256 != request.spec_sha256:
@@ -635,7 +635,7 @@ def _validate_tree(output: Path, request: BuildRequest, blender: Path) -> BuildM
         try:
             revision = source_revision(ROOT, include_launcher=False)
         except OSError as exc:
-            raise BuilderCliFailure(int(ExitCode.INTERNAL), "native source provenance is unavailable") from exc
+            raise BuilderCliFailure(int(ExitCode.INTERNAL), 'native source provenance is not available') from exc
         if manifest.execution["project_revision"] != revision:
             raise BuilderCliFailure(int(ExitCode.VERIFICATION), "manifest source provenance mismatch")
     if manifest.execution["blender_binary_sha256"] != _hash_file(blender):
@@ -738,7 +738,7 @@ def verify_artifacts(request_path: str, output_path: str) -> None:
         verification_root = Path(tempfile.mkdtemp(prefix="hbcb-published-verify-"))
         verification_root.chmod(0o700)
     except OSError as exc:
-        raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "could not create verifier scratch") from exc
+        raise BuilderCliFailure(int(ExitCode.FILESYSTEM), "The program could not make verifier scratch data.") from exc
     try:
         result = verification_root / "result.json"
         return_code = _run(
@@ -756,7 +756,7 @@ def verify_artifacts(request_path: str, output_path: str) -> None:
                 raise ValueError("oversized verifier evidence")
             evidence = json.loads(evidence_payload.decode("utf-8", "strict"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            raise BuilderCliFailure(int(ExitCode.VERIFICATION), "published verifier evidence is invalid") from exc
+            raise BuilderCliFailure(int(ExitCode.VERIFICATION), 'published verifier evidence is incorrect') from exc
         expected_fields = {
             "checks",
             "dimensions_mm",

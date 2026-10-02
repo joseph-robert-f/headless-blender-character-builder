@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 name: Feature request
-description: Propose a bounded improvement or a clearly separated post-v0.1 extension.
+description: Propose an improvement with a fixed scope or an identified extension after v0.1.
 title: "[Feature]: "
 labels:
   - enhancement
@@ -10,16 +10,16 @@ body:
   - type: markdown
     attributes:
       value: |
-        Describe the problem before the implementation. v0.1 intentionally
-        excludes arbitrary Blender code, uploaded files, remote ingestion,
-        prompt planning/MCP, GPU orchestration, public multi-tenancy, and print
-        guarantees. Such proposals must be labeled as post-v0.1 and include a
-        security-boundary analysis.
+        Describe the problem before the implementation.
+        v0.1 excludes arbitrary Blender code, uploaded files, remote input,
+        prompt planning/MCP, GPU orchestration, public multi-tenancy, and print guarantees.
+        Identify a proposal for those features as work after v0.1.
+        Include a security-boundary analysis.
   - type: textarea
     id: problem
     attributes:
       label: Problem to solve
-      description: Who needs this, and what supported task is currently blocked?
+      description: Identify the user and the supported task that cannot proceed.
     validations:
       required: true
   - type: dropdown
@@ -52,19 +52,19 @@ body:
     id: proposal
     attributes:
       label: Proposed behavior
-      description: Describe the smallest stable contract and how old requests retain their meaning.
+      description: Describe the smallest stable contract. Explain how old requests keep their meaning.
     validations:
       required: true
   - type: textarea
     id: alternatives
     attributes:
       label: Alternatives considered
-      description: Include a no-change or documentation-only alternative when relevant.
+      description: If applicable, include an alternative with no change or only a documentation change.
   - type: checkboxes
     id: boundaries
     attributes:
       label: Boundary changes
-      description: Select every area this proposal would expand.
+      description: Select each area that this proposal expands.
       options:
         - label: Accepted files, paths, URLs, archives, or reference assets
         - label: Python/Blender execution, add-ons, drivers, nodes, or commands
@@ -76,7 +76,7 @@ body:
     id: security
     attributes:
       label: Security, privacy, licensing, and compatibility impact
-      description: Explain new threats, rights requirements, migration/versioning, tests, and documentation. Write “none” only after review.
+      description: Explain new threats, rights requirements, migration, versions, tests, and documentation. Write “none” only after an assessment.
     validations:
       required: true
   - type: checkboxes
@@ -86,5 +86,5 @@ body:
       options:
         - label: I will not attach credentials, private references, signed URLs, or material I cannot redistribute.
           required: true
-        - label: I understand geometry QA is not a legal clearance or physical-print guarantee.
+        - label: I understand that geometry QA does not give legal clearance or a physical-print guarantee.
           required: true

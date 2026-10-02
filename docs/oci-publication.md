@@ -1,92 +1,99 @@
 # Conditional OCI image publication
 
-This document is the complete, blocked image-publication path for the
-builder, API, and worker images. It was split out of the operative
-[release process](release-process.md) when that process was right-sized for
-a solo maintainer (D-070); its transactions, gates, and recovery procedures
-are preserved unchanged. Nothing in this document is part of publishing
-source. Until the requirements below are met, the release gate's
-corresponding-source record declares `public_oci_ready: false` and every
-transaction here stays hard-blocked.
+This document gives the full image-publication procedure for builder,
+API, and worker images. The procedure stays blocked. D-070 moved it from
+the [release process](release-process.md) to keep that process suitable for
+one maintainer. The transactions, gates, and recovery controls stay the same.
+This procedure is separate from source publication.
 
-Public OCI publication remains blocked. Before any push, an independent reviewer
-must inventory the actual final images—including the project-derived PostgreSQL
-runtime, native Python wheels, and
-operating-system packages—identify every applicable copyleft/source-delivery
-duty, add checksum-bound source material and a retention plan, and change the
-machine-readable readiness flag through review. The existing assets must still
-be co-published and retained with each eventual public image version. This is a
-conservative release policy, not legal advice; obtain qualified review.
+Until all requirements that follow are satisfied, the corresponding-source record
+must declare `public_oci_ready: false`. All transactions in this document
+must stay blocked.
+
+Before a push, a reviewer who acts independently of the publisher must examine the final images.
+This inspection must include the project-derived PostgreSQL runtime, native
+Python wheels, and operating-system packages. The reviewer must identify all
+applicable copyleft and source-delivery duties. Add checksum-bound source
+material and a retention plan. Change the machine-readable readiness flag
+only through an examined change.
+
+For each future public image version, publish and keep the existing assets
+together with the image. This is a conservative release policy, not legal
+advice. Get legal review from a person with the necessary legal qualifications.
 
 ## Image identity records
 
-The current release evidence records builder, API, and worker. A complete
-future VPS release must record the derived PostgreSQL image under the same
-contract before it can populate a release lock. Record for each of those four
-project-built images:
+The release evidence records builder, API, and worker images. A full
+future VPS release must also record the derived PostgreSQL image with the
+same contract. Do this before you complete a release lock.
+For each of the four project-built images, record these items:
 
-- repository and version tag;
-- OCI config image ID from `docker image inspect`;
-- platform (`linux/amd64`);
-- source commit and clean indexed-tree hash;
-- builder or PostgreSQL recipe/source revision, as applicable;
-- single-platform image-manifest digest after registry publication;
-- SPDX SBOM checksum.
+- The repository and version tag
+- The OCI config image ID from `docker image inspect`
+- The platform (`linux/amd64`)
+- The source commit and clean indexed-tree hash
+- The builder or PostgreSQL recipe/source revision, as applicable
+- The single-platform image-manifest digest after registry publication
+- The SPDX SBOM checksum.
 
-The current three-image evidence cannot populate a complete
-`deploy/vps/release.lock.env`; PostgreSQL publication support is still missing.
-Once all four records exist, populate the lock from those reviewed values.
-Production Compose accepts digest references, not a floating `latest` tag.
+The three-image evidence cannot complete `deploy/vps/release.lock.env`.
+PostgreSQL publication support is missing. After all four records
+are available, use the examined values for the lock. Production Compose accepts
+digest references. It does not accept a floating `latest` tag.
 
 ## Conditional publication
 
-> **Do not execute this transaction today.** It handles only builder, API, and
-> worker. `public_oci_ready` must remain false until the derived PostgreSQL image
-> has matching inventory, SBOM, signing, publication, source/notice, and
-> digest-lock support in addition to the independent source/delivery review.
-> The currently authorized v0.1 path is
+> **Do not do this transaction at this time.** It includes only builder, API, and worker.
+> Keep `public_oci_ready` false until the derived PostgreSQL image has the
+> same inventory, SBOM, signing, publication, source/notice, and digest-lock support.
+> A reviewer must also examine source/delivery duties independently.
+> The approved v0.1 procedure is the
 > [Source-only v0.1 release](release-process.md#source-only-v01-release).
 
-Publication requires explicit owner authorization, an installed and
-authenticated GitHub CLI, authenticated GHCR access, and a tested Git tag-
-signing key configured explicitly as `user.signingkey`. Identity and
-corresponding-source evidence are automated locally, but public publication
-remains an operator-reviewed, separately authorized act. A release operator:
+Publication is a separate operator action with explicit owner authorization.
+It also makes these prerequisites necessary:
 
-Use a dedicated, single-operator release checkout and Docker host. The
-procedure does not defend its temporary paths, Docker tags, or Git references
-against a concurrent local process that already has the same account or Docker
-authority; any such concurrency invalidates the run.
+- An installed, authenticated GitHub CLI
+- Authenticated GHCR access
+- A tested Git tag-signing key explicitly configured as `user.signingkey`.
 
-1. verifies branch protection, required checks, CODEOWNERS, secret scanning,
-   push protection, and private vulnerability reporting;
-2. reruns the local release check on the exact commit;
-3. runs `make dependency-scan` from that exact commit using a new output
-   directory in strict/default mode; requires exit `0`; reviews the retained
-   reports; and performs publication no more than seven days after that scan;
-4. confirms the local release check built `linux/amd64` builder, API, worker,
-   and derived PostgreSQL images from that exact commit and verifies their
-   local identities; the current transaction handles only the first three, so
-   this step cannot pass until PostgreSQL inventory, SBOM, signing, push, and
-   release-lock support are added;
-5. independently completes actual-image copyleft/source review, supplies every
-   required source asset, changes `public_oci_ready` to true through a reviewed
-   code change, and confirms every mapped asset will be retained;
-6. confirms the GHCR packages remain private, pushes immutable version tags
-   only after step 5 is complete, captures registry digests, and never deploys
-   by `latest`;
-7. creates and pushes the signed `v0.1.0-rc.1` Git tag only after all three
-   private image pushes succeed;
-8. creates a draft GitHub Release and uploads every generated top-level source,
-   checksum, SBOM, notice, inventory, metadata, and sample archive asset;
-9. verifies both the private pushed images by digest in a clean environment and
-   the downloaded Release assets against `SHA256SUMS`;
-10. publishes the source-bearing Release before separately changing the matched
-    GHCR packages to public visibility. If that ordering cannot be guaranteed,
-    image publication stays blocked.
+Local tools automate identity and corresponding-source evidence. They do not
+give public-publication authorization. Use a dedicated release checkout and
+Docker host with one operator.
 
-Run the dependency-scan step from the clean release worktree with a unique,
-ignored destination and retain that directory until publication review:
+The procedure does not isolate temporary paths, Docker tags, or Git
+references from concurrent processes with the same account or Docker authority.
+Such concurrent activity makes the results invalid.
+
+Use this operator procedure:
+
+1. Examine branch protection, required checks, CODEOWNERS, secret scanning,
+   push protection, and private vulnerability reporting.
+2. Do the local release check again on the specified commit.
+3. Use `make dependency-scan` on that commit with a new output directory and
+   strict/default mode. Exit `0` is necessary. Examine the stored reports.
+   Publish no more than seven days after the scan.
+4. Make sure that the local release check made all four `linux/amd64` project
+   images from that commit. Do checks of their local identities.
+   This step cannot pass at this time. The transaction includes only three images.
+   PostgreSQL inventory, SBOM, signing, push, and release-lock support are missing.
+5. Complete the actual-image copyleft/source review with a reviewer who acts independently. Supply all
+   necessary source assets. Change `public_oci_ready` to true through an
+   examined code change. Make sure that the retention plan includes each mapped asset.
+6. Make sure that the GHCR packages stay private. After step 5, push only
+   immutable version tags and record registry digests. Do not deploy by `latest`.
+7. After all three private image pushes succeed, make and push the signed
+   `v0.1.0-rc.1` Git tag.
+8. Make a draft GitHub Release. Upload all generated top-level source,
+   checksum, SBOM, notice, inventory, metadata, and sample archive assets.
+9. Verify the private pushed images by digest in a clean environment.
+   Compare the downloaded Release assets with `SHA256SUMS`.
+10. Publish the source-bearing Release. Then, as a separate operation, change the related
+    GHCR packages to public visibility. If this sequence is not guaranteed,
+    keep image publication blocked.
+
+Use a unique, ignored destination for the dependency scan from the clean
+release worktree. Keep the output directory until publication review:
 
 ```sh
 release_commit=$(git rev-parse HEAD)
@@ -96,22 +103,23 @@ make dependency-scan DEPENDENCY_OUTPUT="$dependency_evidence"
 test "$(git rev-parse HEAD)" = "$release_commit"
 ```
 
-The scheduled report-only audit cannot replace this strict scan. This is an
-operator-enforced gate: `make release-check` and
-`scripts/release-publication-preflight` do not validate the scan artifact or
-its age automatically.
+The scheduled report-only audit cannot replace this strict scan.
+The operator must apply this gate. `make release-check` and
+`scripts/release-publication-preflight` do not automatically validate the
+scan artifact or its age.
 
-`make release-check` performs only the local gate in step 2; it does not run the
-networked dependency scan or any publication step. Exact registry and GitHub
-commands are intentionally operator-run so credentials and irreversible public
-actions cannot be triggered by a local test target. After reviewing every
-placeholder and receiving explicit publication authorization, the command
-shape is:
+`make release-check` does only the local gate in step 2. It does not do the
+networked dependency scan or a publication step. The operator must use the
+registry and GitHub commands. Thus, a local test target cannot start
+credential use or irreversible public actions.
+
+Examine each placeholder first. Get explicit publication authorization.
+Only then can the command templates that follow apply.
 
 ### Private push and draft transaction
 
-This phase ends with private images, a signed tag, a draft Release, and a
-locally reverified asset download. It cannot make a package or Release public.
+This phase ends with private images, a signed tag, a draft Release, and
+locally verified asset downloads. It cannot make a package or Release public.
 
 ```sh
 (
@@ -535,24 +543,25 @@ trap - 0 1 2 15
 )
 ```
 
-The top-level upload covers the checksum-bound 81 MiB Blender source archive as
-well as the project archive, SBOMs, notices, inventory, deterministic sample
-archive, and metadata. The local `sample/` evidence directory is represented by
-that archive so GitHub asset naming does not flatten its paths. Review a fresh
-download of the draft against the *local* `SHA256SUMS`; do not make the GHCR
-packages public until the Release containing those source assets is public.
+The top-level upload includes the checksum-bound 81 MiB Blender source archive.
+It also includes the project archive, SBOMs, notices, inventory, deterministic
+sample archive, and metadata. The archive contains the local `sample/`
+evidence tree. Thus, GitHub asset names do not flatten its paths.
+
+Download a new copy of the draft. Compare it with the *local* `SHA256SUMS`.
+Keep GHCR packages private until the Release with those source assets is public.
 
 ### Mandatory clean-environment digest verification
 
-The transaction deliberately stops with a draft Release and three private
-packages. Its local daemon is not a clean-room verifier. Before making the
-draft public, provision a fresh disposable VM with an empty Docker daemon and
-no HBCB images, transfer the complete already verified review directory
-(including the extracted `sample/` tree) through the reviewed handoff, and
-send the local SHA-256 of its `SHA256SUMS` file through a separate authenticated
-channel. Authenticate with a new short-lived read-only package token. On that
-VM, run the following. Destroy the VM afterward; do not reuse the publishing
-host's daemon or Docker configuration.
+The transaction stops with a draft Release and three private packages.
+Its local daemon is not a clean-environment verifier. Before draft publication,
+prepare a new disposable VM. Its Docker daemon must be empty, without HBCB images.
+
+Through the examined transfer procedure, send the full verified directory,
+including the extracted `sample/` tree. Send the local SHA-256 of its
+`SHA256SUMS` file through a separate authenticated channel.
+Authenticate with a new, short-term, read-only package token.
+Use these commands on the VM:
 
 ```sh
 (
@@ -660,15 +669,18 @@ echo 'HBCB_CLEAN_REGISTRY_VERIFY: PASS roles=3 platform=linux/amd64'
 )
 ```
 
+Delete the VM after the checks. Do not use the publication host's daemon or
+Docker configuration as an alternative.
+
 ### Final visibility commit
 
-This is the irreversible phase. It is permitted only after the source Release,
-clean-room image check, and three private identities all agree.
+This phase is irreversible. It is permitted only when the source Release,
+clean-environment image check, and three private identities agree.
 
-Retain the clean-room transcript with the release review. Re-download and
-recheck the draft assets after that PASS. Keep an exact empty scratch directory
-for the following read-only check; for each role, `package` is the matching
-name used above and `role` is `builder`, `api`, or `worker`:
+Keep the clean-environment transcript with the release inspection record.
+After PASS, download and examine the draft assets again. Use an empty
+temporary directory for the read-only check that follows. For each role, `package`
+is the related name from the previous commands. `role` is `builder`, `api`, or `worker`:
 
 ```sh
 set -eu
@@ -830,14 +842,15 @@ verify_release_assets true
 echo 'HBCB_PRIVATE_VISIBILITY_REVIEW: PASS roles=3'
 ```
 
-Run that block in a dedicated review shell and keep the shell open. It creates
-and owns a mode-`0700` scratch directory and authenticates with an isolated
-Docker configuration. After the first three-role PASS, publish the
-source-bearing draft with
-`gh release edit "v${RC_VERSION}" --draft=false --repo joseph-robert-f/headless-blender-character-builder`,
-then follow this exact sequence in that same shell. Each checkpoint revalidates
-the Release assets, every package already made public, and the next private
-package before another irreversible visibility change:
+Use that block in a dedicated inspection shell. Keep the shell open.
+The block makes and owns a temporary directory with mode `0700`.
+It authenticates with an isolated Docker configuration.
+
+After the first three-role PASS, publish the source-bearing draft with
+`gh release edit "v${RC_VERSION}" --draft=false --repo joseph-robert-f/headless-blender-character-builder`.
+Then use this sequence in the same shell. Each checkpoint validates the
+Release assets, each public package, and the next private package again.
+Only then can the next irreversible visibility change occur:
 
 ```sh
 # Before changing the builder package:
@@ -870,37 +883,40 @@ verify_public_remote_role worker headless-blender-character-builder-worker
 echo 'HBCB_PUBLIC_VISIBILITY_COMMIT: PASS roles=3 release_assets=verified'
 ```
 
-If any command fails, stop. Never use a bulk visibility control. GitHub warns
-that a public package cannot be made private again. Exit the dedicated review
-shell afterward so its exact trap removes the temporary Docker credentials,
-asset downloads, and manifest copies.
+If a command fails, stop. Do not use a bulk visibility control.
+GitHub warns that a public package cannot become private again.
+Exit the dedicated shell afterward. Its trap removes the specified temporary
+Docker credentials, asset downloads, and manifest copies.
 
-The registry digests also enable a publisher-supplied
-`release.lock.env`. Populate every nonzero value in
-`deploy/vps/release.lock.env.example` from this single reviewed release,
-including the four project image identities and separately pinned Caddy and
-migration identities. Validate it through the documented offline VPS preflight
-from the exact extracted source tree before delivery. The release transaction
-does not synthesize or deploy this operator artifact; automated propagation
-remains a candidate extension.
+The registry digests also make a publisher-supplied `release.lock.env` possible.
+Use this single examined release for each nonzero value in
+`deploy/vps/release.lock.env.example`. Include the four project image
+identities and independently specified Caddy and migration identities.
+Before delivery, validate the lock with offline VPS preflight from the
+related extracted source tree.
+
+The release transaction does not make or deploy this operator artifact.
+Automatic propagation stays future work.
 
 ### Recovery and bounded cleanup
 
-Remote publication is a fail-fast but non-atomic operator transaction. If the
-block stops after its first `docker push`, keep every GHCR package private and
-keep any Release as a draft. Do not blindly rerun from the top: inspect the
-three private image tags, `git ls-remote --tags origin`, and
-`gh release view "v${RC_VERSION}" --json isDraft,tagName`; compare every
-observed identity with the locally verified candidate, then resume only the
-failed and later steps. If an identity disagrees, stop and obtain explicit
-maintainer approval before deleting or replacing a remote tag, draft, or
-package version. Nothing in this procedure automatically rolls back remote
-state or makes a package public.
+Remote publication stops at a failure, but the transaction is not atomic.
+If it stops after the first `docker push`, keep each GHCR package private.
+If there is a Release, keep it as a draft. Do not do the full procedure again without
+inspection of remote state.
 
-Use this bounded recovery inventory before deciding whether to resume or clean
-up. It is read-only. Save the three `docker push` digest lines with the release
-review record and compare each raw private manifest digest with the recorded
-value:
+Examine the three private image tags, `git ls-remote --tags origin`, and
+`gh release view "v${RC_VERSION}" --json isDraft,tagName`.
+Compare each identity with the locally verified candidate. Continue only
+from the failed step and subsequent steps.
+
+If an identity disagrees, stop. Get explicit maintainer approval before you
+delete or replace a remote tag, draft, or package version.
+This procedure does not automatically reverse remote state or make packages public.
+
+Use this scope-limited, read-only recovery inventory before continuation or cleanup.
+Keep the three `docker push` digest lines with the release inspection record.
+Compare each raw private manifest digest with the recorded value:
 
 ```sh
 set -eu
@@ -1061,8 +1077,8 @@ esac
 test "$inventory_complete" = 1
 ```
 
-If finalization completed but the shell stopped before Git tagging, resume from
-the completed no-clobber bundle instead of running the finalizer again:
+If finalization finished before a shell failure at Git tagging, use the
+completed no-clobber bundle. Do not start the finalizer again:
 
 ```sh
 ORIGINAL_RELEASE_DIR="$PWD/build/release-check/$RELEASE_RUN_ID/release"
@@ -1080,10 +1096,10 @@ RELEASE_DIR=$PUBLISHED_RELEASE_DIR
 # Continue at the signed Git-tag step only after the read-only inventory agrees.
 ```
 
-A failed finalization deliberately quarantines its owned partial directory as
-`.release.published.failed-<random>` beside the intended output instead of
-deleting through a replaceable pathname. It is never a candidate or resume
-source. List only that parent-scoped pattern:
+After failed finalization, the finalizer quarantines its partial directory.
+The name is `.release.published.failed-<random>`, beside the intended output.
+It does not delete data through a replaceable pathname. This directory is
+not a candidate or a continuation source. List only this pattern in that parent:
 
 ```sh
 published_parent=$(dirname "$PUBLISHED_RELEASE_DIR")
@@ -1092,67 +1108,75 @@ find "$published_parent" -maxdepth 1 -type d \
   -name ".${published_name}.failed-*" -print
 ```
 
-Inspect each exact path and confirm it is neither a symlink nor the completed
-candidate. After explicit maintainer approval, remove only that reviewed
-absolute quarantine path; never use a parent wildcard or global cleanup.
+Examine each specified path. Make sure that it is not a symlink or the
+completed candidate. Get explicit maintainer approval before removal.
+Remove only that examined absolute quarantine path. Do not use a parent
+wildcard or global cleanup.
 
-If a draft already exists, inventory its names and byte counts with
+If there is a draft, get its names and byte counts with
 `gh release view "v${RC_VERSION}" --repo joseph-robert-f/headless-blender-character-builder --json assets,isDraft,tagName,url`.
-Download existing assets to a new empty directory and compare them with the
-local finalized set and local `SHA256SUMS`. Upload only an absent exact local
-asset. Never use `--clobber`; an existing asset with a different size or hash
-is an identity conflict, not a retry.
+Download existing assets into a new empty directory. Compare them with the
+local finalized set and local `SHA256SUMS`. Upload only a specified local
+asset that is missing remotely.
 
-If all existing identities match, rerun the local publication preflight and
-resume at the first missing step. If cleanup is explicitly approved instead,
-delete only the exact draft first with
-`gh release delete "v${RC_VERSION}" --yes --repo joseph-robert-f/headless-blender-character-builder`;
-verify an existing remote annotated
-tag peels to the reviewed commit before using
-`git push origin --delete "v${RC_VERSION}"`. Delete a private GHCR package
-version only through its exact version ID after confirming both its package
-visibility is `private` and its sole reviewed version tag is `${RC_VERSION}`.
-Never use a package-wide delete, wildcard, `latest`, or global prune during
-recovery. Re-run the read-only inventory afterward and retain the transcript in
-the release review.
+Do not use `--clobber`. An existing asset with a different size or hash is
+an identity conflict. It is not a retry condition.
 
-The pre-push `image-metadata.json` deliberately contains only each expected
-local release tag and `published_digest: null`. After all three private pushes,
-the no-clobber finalizer creates the bundle that is actually uploaded: every
-tag becomes the exact registry-qualified GHCR tag and every
-`published_digest` is the SHA-256 of a raw manifest whose config digest matches
-the checksum-bound local image ID. The new image metadata, updated release
-metadata, and complete file set are covered by a rebuilt `SHA256SUMS`. Docker's
-daemon-global `RepoTags` and `RepoDigests` arrays are never copied, so an
-unrelated private alias cannot leak into uploaded evidence. Public visibility
-remains blocked until these digests and the complete source-delivery review are
-independently approved.
+If all existing identities agree, do local publication preflight again.
+Continue at the first missing step. If cleanup has explicit approval as an alternative,
+first delete only the specified draft with
+`gh release delete "v${RC_VERSION}" --yes --repo joseph-robert-f/headless-blender-character-builder`.
 
-`CR_PAT` is a short-lived operator-supplied token with only the package scope
-needed for the target owner; do not write it to `.env`, shell history, logs, or
-release evidence. Capture the pushed `RepoDigest` values, replace the VPS lock
-examples with those immutable digests, and complete the fresh-environment
-verification before making the draft Release non-draft/public. GitHub's
-current references are the
+Make sure that the remote annotated tag peels to the examined commit.
+Only then use `git push origin --delete "v${RC_VERSION}"`.
+Before deletion of a private GHCR package version, verify its version ID,
+`private` visibility, and sole examined version tag `${RC_VERSION}`.
+Delete only that version ID.
+
+Do not use package-wide deletion, a wildcard, `latest`, or global prune during
+recovery. Do the read-only inventory again afterward. Keep the transcript with
+the release inspection record.
+
+Before push, `image-metadata.json` contains only expected local release tags
+and `published_digest: null`. After all three private pushes, the no-clobber
+finalizer makes the upload bundle. Each tag becomes the specified
+registry-qualified GHCR tag.
+
+Each `published_digest` is the SHA-256 of a raw manifest. Its config digest
+must agree with the checksum-bound local image ID. A new `SHA256SUMS` covers
+the new image metadata, updated release metadata, and full file set.
+
+The finalizer does not copy Docker's daemon-global `RepoTags` or `RepoDigests`
+arrays. Thus, unrelated private aliases do not enter uploaded evidence.
+Public visibility stays blocked until reviewers independently approve the digests
+and full source-delivery review.
+
+`CR_PAT` is a short-term, operator-supplied token. Give it only the necessary
+package scope for the target owner. Do not write it to `.env`, shell history,
+logs, or release evidence. Record the pushed `RepoDigest` values.
+Replace the VPS lock examples with those immutable digests.
+Complete fresh-environment verification before you make the draft Release public.
+
+Refer to the GitHub
 [Container registry guide](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry),
-the [Packages REST API](https://docs.github.com/en/rest/packages/packages?apiVersion=2022-11-28),
+[Packages REST API](https://docs.github.com/en/rest/packages/packages?apiVersion=2022-11-28),
 and [`gh release create` manual](https://cli.github.com/manual/gh_release_create).
 
 ## Image-publication operator checklist
 
-The items below gate the Conditional publication (image) transaction above.
+Complete these checks before the Conditional publication transaction:
 
-- [ ] Mandatory fresh-VM image pull/config-ID verification completed and its
-      transcript retained.
+- [ ] The mandatory fresh-VM image pull/config-ID verification passed.
+      Its transcript is stored.
 - [ ] GitHub-hosted CI passed on the published commit.
-- [ ] A complete dependency scan exited `0` on this exact commit within the
-      last seven days, and its reports were reviewed.
-- [ ] GitHub license detection recognizes GPL-3.0.
+- [ ] A full dependency scan exited `0` on the same commit within the
+      last seven days. The reports passed inspection.
+- [ ] GitHub license detection identifies GPL-3.0.
 - [ ] Private vulnerability reporting and secret protection are enabled.
-- [ ] Actual final-image copyleft/source review is complete, every required
-      source/delivery asset is checksum-bound, and `public_oci_ready` is true.
-- [ ] GHCR digests and SBOM checksums match the draft release.
-- [ ] Release assets contain no secrets, signed URLs, private references, or
-      personal absolute paths.
-- [ ] Any live VPS, DNS, ACME, firewall, provider IAM, and off-host backup test
-      was separately authorized and recorded.
+- [ ] The reviewer completed the final-image copyleft/source review. All necessary
+      source/delivery assets are checksum-bound. `public_oci_ready` is true.
+- [ ] GHCR digests and SBOM checksums agree with the draft release.
+- [ ] Release assets contain no secrets, signed URLs, private references,
+      or personal absolute paths.
+- [ ] Each live VPS, DNS, ACME, firewall, provider IAM, and off-host backup
+      test has separate recorded authorization.

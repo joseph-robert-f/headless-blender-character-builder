@@ -44,7 +44,7 @@ def _path(path: Path) -> Path:
     if any(p.is_symlink() for p in (path, *path.parents)):
         raise ValueError("symlink input/output path")
     if any(c in str(path) for c in (",", "\n", "\r")):
-        raise ValueError("invalid mount path")
+        raise ValueError('incorrect mount path')
     return path.resolve()
 
 
@@ -75,7 +75,7 @@ def extract_output(archive: Path, output: Path, limits: Limits) -> None:
         for member in stream:
             name = PurePosixPath(member.name)
             if name.is_absolute() or ".." in name.parts or "\\" in member.name:
-                raise SandboxError("unsafe output archive path")
+                raise SandboxError('not safe output archive path')
             if str(name) == "." and member.isdir():
                 continue
             if str(name) in seen or len(str(name)) > 1024:
@@ -137,7 +137,7 @@ class DockerSandbox:
 
     def _command(self, *args: str) -> list[str]:
         if self.docker is None:
-            raise SandboxError("SANDBOX_UNAVAILABLE: Docker CLI unavailable; no native fallback")
+            raise SandboxError('SANDBOX_UNAVAILABLE: Docker CLI not available. No native fallback')
         return [self.docker, "--host", "unix://" + str(self.socket), *args]
 
     def _control(self, *args: str) -> str:
@@ -154,10 +154,10 @@ class DockerSandbox:
         if info.get("OSType") != "linux" or not any("name=seccomp" in x and "profile=builtin" in x for x in security):
             raise SandboxError("SANDBOX_UNAVAILABLE: Linux Docker with default seccomp required")
         if any(info.get(key) is not True for key in ("MemoryLimit", "PidsLimit", "CpuCfsQuota")):
-            raise SandboxError("SANDBOX_UNAVAILABLE: mandatory cgroup limits unavailable")
+            raise SandboxError('SANDBOX_UNAVAILABLE: mandatory cgroup limits not available')
         images = json.loads(self._control("image", "inspect", self.image_id))
         if len(images) != 1 or images[0].get("Id") != self.image_id or images[0].get("Os") != "linux":
-            raise SandboxError("SANDBOX_UNAVAILABLE: exact Linux image ID not found")
+            raise SandboxError("SANDBOX_UNAVAILABLE: The program did not find the specified Linux image ID.")
         # Inherited image volumes would create unbounded writable mounts.
         if images[0].get("Config", {}).get("Volumes"):
             raise SandboxError("SANDBOX_UNAVAILABLE: image declares writable volumes")
@@ -241,13 +241,13 @@ class DockerSandbox:
         roles = {"author": {"source", "params"}, "inspect": {"inspector", "input"},
                  "roundtrip": {"inspector", "input", "reference"}, "reopen": {"inspector", "input", "reference"}}
         if stage not in roles or set(inputs) != roles[stage]:
-            raise ValueError("invalid sandbox stage or input roles")
+            raise ValueError('incorrect sandbox stage or input roles')
         inputs = {role: _input(path, role == "source") for role, path in inputs.items()}
         output, log = _path(output), _path(log)
         if not output.is_dir() or any(output.iterdir()):
             raise ValueError("sandbox output must be an empty directory")
         if log.exists() or log.is_relative_to(output):
-            raise ValueError("sandbox log must be a new file outside output")
+            raise ValueError("Use a new file for the sandbox log. Do not put it in the output folder.")
         if any(output == p or output.is_relative_to(p) or p.is_relative_to(output) for p in inputs.values()):
             raise ValueError("sandbox inputs/output overlap")
         runtime = self.verify_runtime()

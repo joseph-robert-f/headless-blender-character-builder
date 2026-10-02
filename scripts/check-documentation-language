@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Find a small set of documentation-language problems.
+
+This heuristic does not establish ASD-STE100 conformity. It does not validate
+all vocabulary, meanings, parts of speech, procedural context, or safety content.
+Use the official standard and a human review for those checks.
+"""
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+SCOPE = ROOT / "docs/documentation-scope.json"
+
+
+@dataclass(frozen=True)
+class Finding:
+    path: str
+    line: int
+    rule: str
+    message: str
+
+
+# Locators only. A human must identify the grammatical function and context.
+CONTRACTION = re.compile(r"\b(?:\w+n['’]t|(?:it|that|there|here|what|who)['’]s|\w+['’](?:re|ve|ll|d))\b", re.I)
+COMPLEX = re.compile(r"\b(?:has|have|had)\s+(?:been|\w+ed)\b|\b(?:is|are|was|were|be)\s+(?!(?:missing|mating|remaining)\b)\w+ing\b", re.I)
+OBVIOUS = re.compile(r"\b(?:ensure|ensures|ensuring|utilize|utilizes|utilizing|alternatively)\b", re.I)
+INSTRUCTION = re.compile(r"^(?:\*\*)?(?:Do|Use|Make|Open|Close|Enter|Select|Read|Keep|Remove|Add|Copy|Move|Stop|Start|Set|Save|Run|Examine|Compare|Download|Install|Extract|Type|Press|Give|Replace|Do not)\b")
+
+
+def plain(text: str) -> str:
+    # Code, quoted UI text, and parentheses count as one element. This is only
+    # an approximation of rules 8.4-8.7, not a complete word-count implementation.
+    text = re.sub(r"`[^`]*`", "IDENTIFIER", text)
+    text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"<https?://[^>]+>|https?://\S+", "URL", text)
+    text = re.sub(r'"[^"\n]+"|“[^”\n]+”', "QUOTE", text)
+    while re.search(r"\([^()]*\)", text):
+        text = re.sub(r"\([^()]*\)", "PAREN", text)
+    text = re.sub(r"\b\d+(?:\.\d+)*\b", "NUMBER", text)
+    return re.sub(r"[*_~]", "", text)
+
+
+def sentences(text: str) -> list[str]:
+    text = plain(text)
+    return [s.strip() for s in re.split(r"[.!?](?:\s+|$)|:\s*(?=$)", text) if s.strip()]
+
+
+def prose_blocks(text: str):
+    fence = False
+    comment = False
+    preserved = False
+    buffer: list[str] = []
+    start = 1
+    def flush():
+        nonlocal buffer
+        result = (start, " ".join(buffer)) if buffer else None
+        buffer = []
+        return result
+    for line_no, raw in enumerate(text.splitlines(), 1):
+        stripped = raw.strip()
+        if re.fullmatch(r"<!-- ste-preserve:start historical [^>]+ -->", stripped):
+            item = flush()
+            if item:
+                yield item
+            preserved = True
+            continue
+        if stripped == "<!-- ste-preserve:end -->":
+            preserved = False
+            continue
+        if preserved:
+            continue
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            item = flush()
+            if item:
+                yield item
+            fence = not fence
+            continue
+        if fence:
+            continue
+        if "<!--" in raw:
+            comment = "-->" not in raw
+            continue
+        if comment:
+            comment = "-->" not in raw
+            continue
+        if not stripped or stripped.startswith(("#", "<a ", "![")) or re.fullmatch(r"[-|: ]+", stripped):
+            item = flush()
+            if item:
+                yield item
+            continue
+        if stripped.startswith("|"):
+            item = flush()
+            if item:
+                yield item
+            for cell in stripped.strip("|").split("|"):
+                if cell.strip():
+                    yield line_no, cell.strip()
+            continue
+        stripped = re.sub(r"^>\s?", "", stripped)
+        is_item = re.match(r"^(?:[-*+] |\d+\. )", stripped)
+        if is_item:
+            item = flush()
+            if item:
+                yield item
+            stripped = stripped[is_item.end():]
+        if not buffer:
+            start = line_no
+        buffer.append(stripped)
+    item = flush()
+    if item:
+        yield item
+
+
+def inspect_text(path: str, text: str) -> list[Finding]:
+    findings: list[Finding] = []
+    for line, block in prose_blocks(text):
+        value = plain(block)
+        if ";" in value:
+            findings.append(Finding(path, line, "semicolon", "Use sentence punctuation instead of a semicolon."))
+        for rule, pattern, message in (
+            ("contraction", CONTRACTION, "Write the full words."),
+            ("complex-verb", COMPLEX, "Examine this possible complex verb form."),
+            ("word-choice", OBVIOUS, "Examine this word in the official dictionary."),
+        ):
+            for match in pattern.finditer(value):
+                findings.append(Finding(path, line, rule, f"{match.group()}: {message}"))
+        parts = sentences(block)
+        if len(parts) > 6:
+            findings.append(Finding(path, line, "paragraph", f"Paragraph has {len(parts)} sentences; maximum is 6."))
+        for sentence in parts:
+            count = len(sentence.split())
+            limit = 20 if INSTRUCTION.match(sentence) else 25
+            if count > limit:
+                findings.append(Finding(path, line, "sentence", f"Estimated {count} words; limit {limit}: {sentence}"))
+    return findings
+
+
+def historical_markers(path: str, text: str, allowed: bool) -> list[Finding]:
+    findings: list[Finding] = []
+    active = False
+    for number, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if "ste-preserve:" not in line:
+            continue
+        if not allowed:
+            findings.append(Finding(path, number, "scope", "Historical regions are not in the scope inventory."))
+        if re.fullmatch(r"<!-- ste-preserve:start historical [^>]+ -->", line):
+            if active:
+                findings.append(Finding(path, number, "scope", "Historical regions must not be nested."))
+            active = True
+        elif line == "<!-- ste-preserve:end -->":
+            if not active:
+                findings.append(Finding(path, number, "scope", "Historical region has no start marker."))
+            active = False
+        else:
+            findings.append(Finding(path, number, "scope", "Historical region marker is not valid."))
+    if active:
+        findings.append(Finding(path, 1, "scope", "Historical region has no end marker."))
+    return findings
+
+
+def tracked_markdown(root: Path) -> set[str]:
+    result = subprocess.run(["git", "ls-files", "--", "*.md"], cwd=root, check=True,
+                            text=True, capture_output=True)
+    return set(result.stdout.splitlines())
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("paths", nargs="*", help="Markdown files to examine. The default is the maintained scope.")
+    parser.add_argument("--json", action="store_true", help="Show the results as JSON.")
+    parser.add_argument("--inventory-only", action="store_true", help="Examine file coverage only.")
+    args = parser.parse_args(argv)
+    scope = json.loads(SCOPE.read_text(encoding="utf-8"))
+    maintained = set(scope["maintained_markdown"])
+    excluded = set(scope["preserved_markdown"])
+    findings = []
+    if not args.paths:
+        for path in sorted(tracked_markdown(ROOT) - maintained - excluded):
+            findings.append(Finding(path, 1, "scope", "Classify this Markdown file in the scope inventory."))
+        for path in sorted(maintained):
+            if not (ROOT / path).is_file():
+                findings.append(Finding(path, 1, "scope", "The maintained file does not exist."))
+    if not args.inventory_only:
+        for path in args.paths or sorted(maintained):
+            target = ROOT / path
+            if not target.is_file():
+                continue
+            content = target.read_text(encoding="utf-8")
+            findings.extend(historical_markers(path, content, path in scope.get("historical_regions", {})))
+            if path == "PLAN.md":
+                # The executed plan is historical. Its current introduction is
+                # the only automated prose scope; other mixed sections need review.
+                content = content.split("## 1.", 1)[0]
+            findings.extend(inspect_text(path, content))
+    if args.json:
+        print(json.dumps({"heuristic_only": True, "findings": [f.__dict__ for f in findings]}, indent=2))
+    else:
+        for finding in findings:
+            print(f"{finding.path}:{finding.line}: {finding.rule}: {finding.message}")
+        outcome = "REVIEW" if findings else "PASS"
+        print(f"DOCUMENTATION_LANGUAGE: {outcome} ({len(findings)} findings; heuristic checks only, not STE certification)")
+    return 1 if findings else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
