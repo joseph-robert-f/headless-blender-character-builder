@@ -72,6 +72,12 @@ archive, release lock, or published image set yet.
 - [Workspace inventory](inventory.md) — preserved pre-project baseline and
   migration constraints
 
+## Experimental project tooling
+
+- [Local project/runtime launcher](local-project-launcher.md) — portable project
+  metadata, explicit runtime readiness and Linux-only development integration;
+  Windows/Mac installation remains future work
+
 ## Policies
 
 - [Security policy](../SECURITY.md) and [support policy](../SUPPORT.md)

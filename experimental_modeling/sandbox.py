@@ -119,13 +119,20 @@ class DockerSandbox:
                      "OMP_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "2"}
 
     def __init__(self, image_id: str, limits: Limits | None = None,
-                 socket: Path = Path("/var/run/docker.sock")):
+                 socket: Path = Path("/var/run/docker.sock"),
+                 docker_executable: Path | None = None):
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
             raise ValueError("sandbox requires an immutable full sha256 image ID")
         self.image_id = image_id
         self.limits = limits or Limits()
         self.socket = Path(socket).absolute().resolve()
-        self.docker = shutil.which("docker")
+        if docker_executable is not None:
+            candidate = Path(docker_executable)
+            if not candidate.is_absolute() or not candidate.is_file() or not os.access(candidate, os.X_OK):
+                raise ValueError("Docker executable must be an existing executable absolute path")
+            self.docker = str(candidate)
+        else:
+            self.docker = shutil.which("docker")
         self.env = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LANG": "C.UTF-8"}
 
     def _command(self, *args: str) -> list[str]:
@@ -157,7 +164,11 @@ class DockerSandbox:
         inherited = images[0].get("Config", {}).get("Env") or []
         if any(entry.partition("=")[0] not in self.container_env for entry in inherited):
             raise SandboxError("SANDBOX_UNAVAILABLE: unexpected inherited image environment")
-        return {"image_id": self.image_id, "docker_version": info.get("ServerVersion")}
+        labels = images[0].get("Config", {}).get("Labels") or {}
+        return {"image_id": self.image_id, "docker_version": info.get("ServerVersion"),
+                "image_architecture": images[0].get("Architecture"),
+                "blender_version": labels.get("org.blender.version"),
+                "blender_archive_sha256": labels.get("org.blender.download.sha256")}
 
     def create_command(self, name: str, inputs: dict[str, Path], volume: str, *, exporter: bool = False) -> list[str]:
         lim = self.limits

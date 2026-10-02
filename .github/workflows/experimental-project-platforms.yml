@@ -1,0 +1,104 @@
+{
+  "name": "Experimental project native platforms",
+  "on": {
+    "workflow_dispatch": {},
+    "pull_request": {
+      "paths": [
+        "experimental_modeling/**",
+        "tests/experimental_modeling/**",
+        ".github/workflows/experimental-project-platforms.yml"
+      ]
+    },
+    "push": {
+      "branches": [
+        "main"
+      ],
+      "paths": [
+        "experimental_modeling/**",
+        "tests/experimental_modeling/**",
+        ".github/workflows/experimental-project-platforms.yml"
+      ]
+    }
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "concurrency": {
+    "group": "project-platforms-${{ github.ref }}",
+    "cancel-in-progress": true
+  },
+  "jobs": {
+    "native-project-review": {
+      "name": "${{ matrix.target.runner }} / Python ${{ matrix.python }} / ${{ matrix.target.architecture }}",
+      "runs-on": "${{ matrix.target.runner }}",
+      "timeout-minutes": 15,
+      "strategy": {
+        "fail-fast": false,
+        "matrix": {
+          "target": [
+            {
+              "runner": "ubuntu-24.04",
+              "system": "Linux",
+              "architecture": "x64"
+            },
+            {
+              "runner": "windows-2022",
+              "system": "Windows",
+              "architecture": "x64"
+            },
+            {
+              "runner": "macos-15",
+              "system": "Darwin",
+              "architecture": "arm64"
+            }
+          ],
+          "python": [
+            "3.11",
+            "3.13"
+          ]
+        }
+      },
+      "env": {
+        "PYTHONUTF8": "1",
+        "PYTHONDONTWRITEBYTECODE": "1"
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+          "with": {
+            "persist-credentials": false
+          }
+        },
+        {
+          "name": "Select official Python for the native architecture",
+          "uses": "actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c",
+          "with": {
+            "python-version": "${{ matrix.python }}",
+            "architecture": "${{ matrix.target.architecture }}"
+          }
+        },
+        {
+          "name": "Assert real platform and run bounded portable review tests",
+          "shell": "python {0}",
+          "env": {
+            "EXPECTED_SYSTEM": "${{ matrix.target.system }}",
+            "EXPECTED_ARCHITECTURE": "${{ matrix.target.architecture }}",
+            "EXPECTED_PYTHON": "${{ matrix.python }}"
+          },
+          "run": "# Candidate portability evidence only; this workflow does not promote support.\n# Official labels: https://docs.github.com/en/actions/reference/runners/github-hosted-runners\nimport io\nimport json\nimport os\nfrom pathlib import Path\nimport platform\nimport sys\nimport time\nimport traceback\nimport unittest\n\nsys.path.insert(0, str(Path.cwd()))\noutput = Path(os.environ[\"RUNNER_TEMP\"]) / \"experimental-project-platforms\"\noutput.mkdir(parents=True, exist_ok=True)\nobserved = {\n    \"schema_version\": 1,\n    \"system\": platform.system(),\n    \"machine\": platform.machine(),\n    \"python\": platform.python_version(),\n    \"runner_os\": os.environ.get(\"RUNNER_OS\"),\n    \"runner_arch\": os.environ.get(\"RUNNER_ARCH\"),\n    \"runner_image\": os.environ.get(\"ImageOS\"),\n    \"runner_image_version\": os.environ.get(\"ImageVersion\"),\n    \"commit\": os.environ.get(\"GITHUB_SHA\"),\n    \"expected_system\": os.environ[\"EXPECTED_SYSTEM\"],\n    \"expected_architecture\": os.environ[\"EXPECTED_ARCHITECTURE\"],\n    \"expected_python\": os.environ[\"EXPECTED_PYTHON\"],\n    \"scope\": \"Synthetic-evidence review and project I/O; no model execution or support promotion\",\n}\n(output / \"platform.json\").write_text(json.dumps(observed, indent=2) + \"\\n\", encoding=\"utf-8\")\nprint(json.dumps(observed, indent=2), flush=True)\n\nclass BoundedLog(io.StringIO):\n    limit = 256 * 1024\n    def write(self, text):\n        remaining = self.limit - self.tell()\n        if remaining > 0:\n            kept = text[:remaining]\n            sys.stdout.write(kept)\n            super().write(kept)\n        return len(text)\n\nclass RecordedResult(unittest.TextTestResult):\n    def startTest(self, test):\n        super().startTest(test)\n        self.started = time.monotonic()\n    def record(self, test, status, detail=None):\n        row = {\"test\": test.id(), \"status\": status,\n               \"seconds\": round(time.monotonic() - self.started, 4)}\n        if detail is not None:\n            row[\"detail\"] = detail[:8192]\n        records.append(row)\n    def addSuccess(self, test):\n        super().addSuccess(test)\n        self.record(test, \"pass\")\n    def addSkip(self, test, reason):\n        super().addSkip(test, reason)\n        self.record(test, \"skip\", reason)\n    def addFailure(self, test, error):\n        super().addFailure(test, error)\n        self.record(test, \"fail\", self._exc_info_to_string(error, test))\n    def addError(self, test, error):\n        super().addError(test, error)\n        self.record(test, \"error\", self._exc_info_to_string(error, test))\n    def addSubTest(self, test, subtest, error):\n        super().addSubTest(test, subtest, error)\n        if error is not None:\n            self.record(subtest, \"fail\", self._exc_info_to_string(error, test))\n\nrecords = []\nlog = BoundedLog()\nsucceeded = False\ntry:\n    assert observed[\"system\"] == observed[\"expected_system\"], \"Runner OS differs from matrix\"\n    expected_machines = {\"x64\": {\"amd64\", \"x86_64\"}, \"arm64\": {\"arm64\", \"aarch64\"}}\n    assert observed[\"machine\"].lower() in expected_machines[observed[\"expected_architecture\"]], \"Unexpected CPU; emulated/Intel evidence must not count as Apple Silicon\"\n    assert \".\".join(map(str, sys.version_info[:2])) == observed[\"expected_python\"], \"Wrong Python minor\"\n    suite = unittest.defaultTestLoader.discover(\"tests/experimental_modeling\", pattern=\"test_portable_review.py\")\n    # Only the pure evaluator class; FailureEvidenceTests invoke Linux build fixtures.\n    sys.path.insert(0, str(Path(\"tests/experimental_modeling\").resolve()))\n    from test_requirements import RequirementTests\n    suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(RequirementTests))\n    result = unittest.TextTestRunner(stream=log, verbosity=2, resultclass=RecordedResult).run(suite)\n    succeeded = result.wasSuccessful()\nexcept Exception:\n    log.write(traceback.format_exc()[-8192:])\nfinally:\n    (output / \"tests.log\").write_text(log.getvalue(), encoding=\"utf-8\")\n    summary = observed | {\"successful\": succeeded, \"tests\": records,\n                          \"log_limit_characters\": 256 * 1024}\n    (output / \"results.json\").write_text(json.dumps(summary, indent=2) + \"\\n\", encoding=\"utf-8\")\nraise SystemExit(0 if succeeded else 1)\n"
+        },
+        {
+          "name": "Retain bounded native-platform evidence",
+          "if": "${{ always() }}",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "name": "project-platform-${{ matrix.target.runner }}-py${{ matrix.python }}-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "${{ runner.temp }}/experimental-project-platforms/*.json\n${{ runner.temp }}/experimental-project-platforms/*.log",
+            "retention-days": 7,
+            "if-no-files-found": "warn"
+          }
+        }
+      ]
+    }
+  }
+}

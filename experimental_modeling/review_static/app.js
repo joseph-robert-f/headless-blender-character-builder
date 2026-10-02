@@ -49,7 +49,7 @@
     const data = state.data; const report = data?.report; const rows = report?.requirements || [];
     const verified = report?.machine_verified === true && data?.state?.machine_verified !== false;
     const hardPass = rows.every(row => row.hard === false || row.applicable === false || row.status === 'pass');
-    const hasIdentity = Boolean(state.project?.csrf_token && data?.revision?.result_hash && state.revisionId && !state.loading);
+    const hasIdentity = state.project?.read_only !== true && Boolean(state.project?.csrf_token && data?.revision?.result_hash && state.revisionId && !state.loading);
     return { verified, hardPass, hasIdentity, accepted: data?.state?.human_accepted === true };
   }
   function updateControls() {
@@ -104,7 +104,7 @@
     text('verified-status', verified ? 'Required checks passed' : revision.status === 'rejected' ? 'One or more checks failed' : 'Not established'); statusIcon('verified-icon', verified, revision.status === 'rejected');
     text('accepted-status', accepted ? 'Human decision recorded' : 'Awaiting your decision'); statusIcon('accepted-icon', accepted);
     text('decision-title', accepted ? 'Acceptance recorded' : 'Ready for your review');
-    text('decision-copy', accepted ? `Accepted${data.state.accepted_at ? ' ' + date(data.state.accepted_at) : ''}. This record is separate from machine verification.` : !verified || !hardPass ? 'Human acceptance is unavailable until machine verification is established and all required checks pass.' : 'Inspect the model and its evidence before recording your acceptance.');
+    text('decision-copy', state.project?.read_only ? state.project.read_only_reason : accepted ? `Accepted${data.state.accepted_at ? ' ' + date(data.state.accepted_at) : ''}. This record is separate from machine verification.` : !verified || !hardPass ? 'Human acceptance is unavailable until machine verification is established and all required checks pass.' : 'Inspect the model and its evidence before recording your acceptance.');
     $('accept-notes').value = data.state?.notes || ''; updateControls();
   }
   function renderProvenance(data) {
@@ -134,7 +134,7 @@
       const cached = state.project?.revisions?.find(revision => revision.id === id);
       if (cached) Object.assign(cached, data.revision, data.state, { evidence_unavailable: false });
       renderHistory(); renderState(data); renderRequirements(data.report); renderProvenance(data); renderArtifacts(data); setGeometry(data);
-      text('request-status', ''); text('accept-status', 'Acceptance records a human decision. It does not change the machine-check result.');
+      text('request-status', state.project?.read_only_reason || ''); text('accept-status', state.project?.read_only_reason || 'Acceptance records a human decision. It does not change the machine-check result.');
       $('request-prompt').value = '';
     } catch (error) { if (request !== state.request) return; state.loading = false; state.data = null;
       const cached = state.project?.revisions?.find(revision => revision.id === id);
@@ -243,7 +243,7 @@
     finally { if (revisionId === state.revisionId) updateControls(); }
   });
   async function start() {
-    try { state.project = await api('/api/project'); text('project-name', state.project.project_name || 'Source modeling'); renderHistory(); renderQueue(); const id = state.project.latest_revision || state.project.revisions?.[0]?.id; if (id) await loadRevision(id); else { text('revision-title', 'Your model workspace'); text('revision-description', 'No revisions are available to review yet'); setGeometry({}); } }
+    try { state.project = await api('/api/project'); text('project-name', state.project.project_name || 'Source modeling'); text('review-mode', state.project.read_only_reason || ''); $('review-mode').hidden = !state.project.read_only; renderHistory(); renderQueue(); const id = state.project.latest_revision || state.project.revisions?.[0]?.id; if (id) await loadRevision(id); else { text('revision-title', 'Your model workspace'); text('revision-description', 'No revisions are available to review yet'); setGeometry({}); } }
     catch (error) { notice(error.message); text('revision-title', 'Workspace unavailable'); text('revision-description', 'Check the local server, then reload this page'); $('revision-list').replaceChildren(el('p', 'empty', 'Could not read revision history.')); }
   }
   start();

@@ -222,3 +222,38 @@ locks and accepted parent hashes are checked independently of candidate-authored
 flags, including missing-baseline and deleted-lock cases. This is a local-owner
 trust boundary, not multi-user authentication or protection against a filesystem
 owner rewriting every trust root. See [local review details](local-model-review.md).
+
+## Experimental portable project/review scaffold
+
+The [project launcher](local-project-launcher.md) is a separate opt-in source-
+checkout surface. A project descriptor can select only fixed version-1 relative
+folders and a reviewed runtime policy; it cannot select executables, authorize
+native execution, carry provider credentials or weaken acceptance requirements.
+The default doctor reads state without launching programs. Explicit probes/builds
+use caller-selected trusted absolute runtime paths outside the project, with no
+PATH discovery, image pull, runtime install or isolated-to-native fallback.
+
+The review server remains loopback-only with Host/Origin/CSRF checks. POSIX review
+writes retain the original store lock and fsync contract. Candidate Windows
+review is intentionally read-only: it creates no review metadata and denies both
+acceptance and change-request mutation methods before any write, even if a client
+bypasses disabled UI controls. No Windows generated-source execution is enabled.
+Windows durable review writes require a separately implemented and tested adapter;
+this is an intermediate feature boundary, not a statement that Windows cannot
+provide durable writes.
+
+Project/session leases use existing POSIX flock semantics or a Windows kernel
+byte-range lock. Lock files are never removed to force a takeover, and persisted
+PIDs/URLs do not confer process ownership. Windows reparse-point attributes are
+checked on Python 3.11+, including junctions, before project or JSON metadata reads.
+These checks assume a trusted local OS user and local filesystem; they are not a
+sandbox or protection against another process with equivalent filesystem authority.
+A forced process termination releases the lease. Build errors retain a recovery
+marker requiring inspection and explicit acknowledgement; no automatic artifact or
+Docker-resource deletion is introduced. Console exit tests cover review only and
+do not establish containment of generated subprocess trees.
+
+Actual native-platform CI must validate each claimed review support level.
+A passing Windows/Mac review test does not establish Blender generation, Docker
+Desktop isolation, cross-runtime geometry determinism, installer safety, code
+signing/notarization or provider authentication support.

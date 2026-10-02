@@ -19,14 +19,17 @@ const store = path.join(temp, 'project');
 fs.cpSync(source, store, { recursive: true });
 fs.rmSync(path.join(store, 'review'), { recursive: true, force: true });
 let server, browser;
-(async () => {
-  server = spawn(process.env.PYTHON || 'python', ['-m', 'experimental_modeling.review_server', '--store', store, '--port', '0'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
-  const origin = await new Promise((resolve, reject) => {
+async function startServer(extra = []) {
+  server = spawn(process.env.PYTHON || 'python', ['-m', 'experimental_modeling.review_server', '--store', store, '--port', '0', ...extra], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+  return await new Promise((resolve, reject) => {
     let buffer = ''; const timer = setTimeout(() => reject(new Error('Local server startup timeout')), 15000);
     server.stdout.on('data', data => { buffer += data; const found = buffer.match(/Local model review: (http:\/\/127\.0\.0\.1:\d+)/); if (found) { clearTimeout(timer); resolve(found[1]); } });
     server.on('error', reject); server.on('exit', code => { if (!buffer.includes('Local model review:')) reject(new Error(`Server exited ${code}`)); });
     server.stderr.on('data', data => process.stderr.write(data));
   });
+}
+(async () => {
+  const origin = await startServer();
   browser = await chromium.launch({ ...(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : {}), headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1100 } });
   const page = await context.newPage(); const pageErrors = []; page.on('pageerror', error => pageErrors.push(error.message));
@@ -90,6 +93,23 @@ let server, browser;
   server.kill('SIGTERM'); await new Promise(resolve => server.once('exit', resolve));
   await page.getByRole('button', { name: 'r1 Machine verified', exact: true }).click(); await page.locator('#notice').waitFor({ state: 'visible' }); assert.equal(await page.locator('#accept-submit').isEnabled(), false); assert.equal(await page.locator('#download-glb').isVisible(), false); assert.equal(await page.locator('#preview-empty').isVisible(), true);
   assert.equal(await page.getByRole('button', { name: 'r1 Evidence unavailable', exact: true }).count(), 1);
-  const summary = { status: 'passed', browser: await browser.version(), viewport_desktop: [1440, 1100], viewport_mobile: [390, 844], actual_server: true, mocked_api: false, tested: ['real inspected mesh and material render', 'orbit keyboard changes canvas', 'before/after', 'part highlighting', 'edges/reset', 'saved image artifacts', 'human acceptance persistence', 'repeat queue deduplication', 'queued request history after reload', 'failed revision acceptance disabled', 'initial revision applicability', 'CSRF/stale-hash rejection', 'mobile no horizontal overflow', 'mobile queue submission', 'tampered artifact clears preview and blocks acceptance', 'real server outage clears prior revision and disables actions'], screenshots: ['desktop-compare.png', 'desktop-review.png', 'mobile-review.png', 'mobile-compare.png', 'desktop-integrity-error.png'], store_copy: store };
+  const readOnlyOrigin = await startServer(['--read-only']);
+  const readonly = await context.newPage(); readonly.on('pageerror', error => pageErrors.push(error.message));
+  await readonly.goto(readOnlyOrigin); await readonly.locator('#geometry-stats').filter({ hasText: '9 parts' }).waitFor();
+  await readonly.locator('#review-mode').filter({ hasText: 'Read-only review' }).waitFor();
+  for (const id of ['accept-submit', 'accept-notes', 'request-prompt', 'request-submit']) assert.equal(await readonly.locator('#' + id).isEnabled(), false);
+  const beforeReadOnly = await (await context.request.get(readOnlyOrigin + '/api/project')).json();
+  assert.equal(beforeReadOnly.read_only, true);
+  const denied = await context.request.post(readOnlyOrigin + '/api/requests', { headers: { Origin: readOnlyOrigin }, data: { csrf_token: beforeReadOnly.csrf_token, revision_id: 'r3', expected_result_hash: revision.revision.result_hash, prompt: 'Must not be saved in read-only mode' } });
+  assert.equal(denied.status(), 403);
+  const afterReadOnly = await (await context.request.get(readOnlyOrigin + '/api/project')).json();
+  assert.deepEqual(afterReadOnly.requests, beforeReadOnly.requests);
+  await readonly.screenshot({ path: path.join(output, 'desktop-read-only.png'), fullPage: true });
+  await phone.goto(readOnlyOrigin); await phone.locator('#review-mode').waitFor(); await phone.locator('#geometry-stats').filter({ hasText: '9 parts' }).waitFor();
+  assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  assert.equal(await phone.locator('#request-submit').isEnabled(), false);
+  await phone.screenshot({ path: path.join(output, 'mobile-read-only.png'), fullPage: true });
+  assert.deepEqual(pageErrors, []);
+  const summary = { status: 'passed', browser: await browser.version(), viewport_desktop: [1440, 1100], viewport_mobile: [390, 844], actual_server: true, mocked_api: false, tested: ['real inspected mesh and material render', 'orbit keyboard changes canvas', 'before/after', 'part highlighting', 'edges/reset', 'saved image artifacts', 'human acceptance persistence', 'repeat queue deduplication', 'queued request history after reload', 'failed revision acceptance disabled', 'initial revision applicability', 'CSRF/stale-hash rejection', 'mobile no horizontal overflow', 'mobile queue submission', 'tampered artifact clears preview and blocks acceptance', 'real server outage clears prior revision and disables actions', 'read-only reviewer displays reason and disables all mutation controls', 'read-only request endpoint rejects writes', 'read-only desktop/mobile screenshots'], screenshots: ['desktop-compare.png', 'desktop-review.png', 'mobile-review.png', 'mobile-compare.png', 'desktop-integrity-error.png', 'desktop-read-only.png', 'mobile-read-only.png'], store_copy: store };
   fs.writeFileSync(path.join(output, 'summary.json'), JSON.stringify(summary, null, 2) + '\n'); console.log(JSON.stringify(summary, null, 2));
 })().catch(error => { fs.writeFileSync(path.join(output, 'summary.json'), JSON.stringify({ status: browser ? 'failed' : 'browser_launch_blocked', error: error.message.slice(0, 1000), desktop_mobile_verified: false }, null, 2) + '\n'); console.error(error); process.exitCode = 1; }).finally(async () => { if (browser) await browser.close(); if (server && server.exitCode === null) server.kill('SIGTERM'); });
