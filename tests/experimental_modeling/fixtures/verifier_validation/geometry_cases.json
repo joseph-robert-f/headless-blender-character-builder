@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "scope": "Handwritten geometry verifier fixtures, not model-author capability",
+  "delta_m": [
+    0.015,
+    -0.02,
+    0.03
+  ],
+  "position_tolerance_m": 1e-06,
+  "normal_tolerance_radians": 0.001,
+  "expected_outcomes": {
+    "accepted": 6,
+    "rejected": 4,
+    "controller_stages": 40,
+    "artifact_probes": 30
+  },
+  "cases": [
+    {
+      "revision": "box-r0",
+      "fixture": "box",
+      "step": 0,
+      "defect": "none",
+      "serialization": "initial",
+      "parent": null,
+      "expected_status": "accepted",
+      "classification": "within-indexed-contract"
+    },
+    {
+      "revision": "box-r1",
+      "fixture": "box",
+      "step": 1,
+      "defect": "none",
+      "serialization": "permuted",
+      "parent": "box-r0",
+      "expected_status": "accepted",
+      "classification": "within-indexed-contract"
+    },
+    {
+      "revision": "box-body-bad",
+      "fixture": "box",
+      "step": 2,
+      "defect": "deformation",
+      "serialization": "permuted",
+      "parent": "box-r1",
+      "expected_status": "rejected",
+      "classification": "damaged-body"
+    },
+    {
+      "revision": "box-base-bad",
+      "fixture": "box",
+      "step": 2,
+      "defect": "protected_base",
+      "serialization": "permuted",
+      "parent": "box-r1",
+      "expected_status": "rejected",
+      "classification": "protected-transform-change"
+    },
+    {
+      "revision": "box-repair",
+      "fixture": "box",
+      "step": 2,
+      "defect": "none",
+      "serialization": "repair",
+      "parent": "box-r1",
+      "expected_status": "accepted",
+      "classification": "within-indexed-contract"
+    },
+    {
+      "revision": "l-prism-r0",
+      "fixture": "l_prism",
+      "step": 0,
+      "defect": "none",
+      "serialization": "initial",
+      "parent": null,
+      "expected_status": "accepted",
+      "classification": "within-indexed-contract"
+    },
+    {
+      "revision": "l-prism-r1",
+      "fixture": "l_prism",
+      "step": 1,
+      "defect": "none",
+      "serialization": "permuted",
+      "parent": "l-prism-r0",
+      "expected_status": "accepted",
+      "classification": "within-indexed-contract"
+    },
+    {
+      "revision": "l-prism-body-bad",
+      "fixture": "l_prism",
+      "step": 2,
+      "defect": "retessellation",
+      "serialization": "permuted",
+      "parent": "l-prism-r1",
+      "expected_status": "rejected",
+      "classification": "outside-indexed-contract-same-surface"
+    },
+    {
+      "revision": "l-prism-base-bad",
+      "fixture": "l_prism",
+      "step": 2,
+      "defect": "protected_base",
+      "serialization": "permuted",
+      "parent": "l-prism-r1",
+      "expected_status": "rejected",
+      "classification": "protected-transform-change"
+    },
+    {
+      "revision": "l-prism-repair",
+      "fixture": "l_prism",
+      "step": 2,
+      "defect": "none",
+      "serialization": "repair",
+      "parent": "l-prism-r1",
+      "expected_status": "accepted",
+      "classification": "within-indexed-contract"
+    }
+  ]
+}

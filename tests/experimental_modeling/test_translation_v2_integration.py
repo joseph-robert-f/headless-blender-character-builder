@@ -453,6 +453,7 @@ class StaticValidationRunnerTests(unittest.TestCase):
     def test_independent_oracle_and_probe_import_no_production_or_author_modules(self):
         directory = FIXTURES / "verifier_validation"
         allowed = {"oracle.py": {"collections", "math"},
+                   "geometry_oracle.py": {"collections", "math"},
                    "probe_artifact.py": {"argparse", "json", "math", "pathlib", "sys", "bpy"}}
         for filename, imports in allowed.items():
             with self.subTest(filename=filename):
@@ -473,6 +474,84 @@ class StaticValidationRunnerTests(unittest.TestCase):
                 self.assertNotIn("experimental_modeling", actual)
                 self.assertNotIn("builder", actual)
                 self.assertNotIn("geometry", actual)
+
+    def test_geometry_manifest_declares_ten_bounded_live_outcomes(self):
+        runner = self.load_runner()
+        manifest = runner.geometry_cases()
+        self.assertEqual(manifest['expected_outcomes'], {
+            'accepted': 6, 'rejected': 4, 'controller_stages': 40, 'artifact_probes': 30})
+        self.assertEqual(len({case['revision'] for case in manifest['cases']}), 10)
+        for fixture in ('box', 'l_prism'):
+            cases = [case for case in manifest['cases'] if case['fixture'] == fixture]
+            self.assertEqual([case['expected_status'] for case in cases],
+                             ['accepted', 'accepted', 'rejected', 'rejected', 'accepted'])
+            self.assertEqual([case['step'] for case in cases], [0, 1, 2, 2, 2])
+            self.assertIsNone(cases[0]['parent'])
+            self.assertEqual(cases[1]['parent'], cases[0]['revision'])
+            self.assertTrue(all(case['parent'] == cases[1]['revision'] for case in cases[2:]))
+        initial = Policy.parse(runner.geometry_policy(False))
+        revised = Policy.parse(runner.geometry_policy(True))
+        self.assertEqual(set(initial.changed_parts), {'body', 'base'})
+        self.assertEqual(set(revised.changed_parts), {'body'})
+        translation = next(c for c in revised.constraints if c.kind == 'translated')
+        self.assertEqual(translation.data, {
+            'delta': [.015, -.02, .03], 'tolerance': 1e-6, 'normal_tolerance_radians': .001})
+
+    def test_geometry_negative_requires_the_exact_policy_failure(self):
+        runner = self.load_runner()
+        protected = [{'check': 'unchanged', 'part': 'base', 'component': 'transform_hash'}]
+        runner.assert_geometry_rejection(protected, 'protected_base')
+        for invalid in ([], protected * 2, [{'check': 'unchanged', 'part': 'base', 'component': 'geometry_hash'}]):
+            with self.assertRaises(AssertionError):
+                runner.assert_geometry_rejection(invalid, 'protected_base')
+        for defect, failed in (
+                ('deformation', {'indexed_translation_equal'}),
+                ('retessellation', {'oriented_polygons_equal', 'indexed_edges_equal',
+                                   'face_material_assignments_equal', 'corner_normals_equal'})):
+            measured = {key: key not in failed for key in runner.TRANSLATION_COMPONENTS}
+            failure = [{'check': 'translated', 'part': 'body', 'measured': measured}]
+            runner.assert_geometry_rejection(failure, defect)
+            measured['ordered_material_palette_equal'] = False
+            with self.assertRaises(AssertionError):
+                runner.assert_geometry_rejection(failure, defect)
+
+    def test_geometry_observer_values_are_independently_checked(self):
+        from tests.experimental_modeling.test_geometry_oracle import _probe
+        runner = self.load_runner()
+        raw = _probe('box')  # Separately hand-constructed probe-shaped geometry.
+        observation = {'schema_version': 2, 'units': {'scale_length': 1.},
+                       'runtime': {'autoexec_enabled': False}, 'parts': {}}
+        for name, part in raw['parts'].items():
+            observation['parts'][name] = {
+                'world_vertices': part['points'], 'edge_indices': part['edges'],
+                'materials': part['palette'], 'matrix_world': part['matrix_world'],
+                'face_indices': [face['indices'] for face in part['faces']],
+                'face_material_indices': [face['material_index'] for face in part['faces']],
+                'face_world_corner_normals': [face['corner_normals'] for face in part['faces']]}
+        def inspect(value):
+            return runner.inspect_geometry(runner.geometry_observation_probe(value), 'box', 0, 'none',
+                tolerance=runner.POSITION_TOLERANCE_M, normal_tolerance=runner.NORMAL_TOLERANCE_RADIANS)
+        inspect(observation)
+        # A correlated A*n observer error can preserve all translation verdicts.
+        # The saved observation must still match the analytic A^-T*n direction.
+        bad = copy.deepcopy(observation)
+        normal = (.6, .45, -1.2)
+        length = sum(x*x for x in normal) ** .5
+        bad['parts']['body']['face_world_corner_normals'][0][0] = [x/length for x in normal]
+        with self.assertRaisesRegex(AssertionError, 'Incorrect independently expected corner normal'):
+            inspect(bad)
+        for field in ('world_vertices', 'face_material_indices'):
+            bad = copy.deepcopy(observation)
+            if field == 'world_vertices':
+                bad['parts']['body'][field][0][0] += .005
+            else:
+                bad['parts']['body'][field][0] = 1
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                inspect(bad)
+        bad = copy.deepcopy(observation)
+        bad['parts']['body']['face_world_corner_normals'].pop()
+        with self.assertRaisesRegex(AssertionError, 'Incomplete inspected face data'):
+            inspect(bad)
 
     def test_validation_runner_requires_explicit_isolation_and_fresh_output(self):
         runner = self.load_runner()

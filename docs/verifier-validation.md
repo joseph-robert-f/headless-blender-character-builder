@@ -112,6 +112,43 @@ The CI test also reconstructs the lamp's original polygon order in a new source 
 It does not change the recorded lamp example or delivered evidence.
 The test must show that the corrected check accepts the measured translation.
 
+The extended test adds a transformed quad box and a concave L prism.
+Each has a separate protected base.
+Each sequence has five revisions: a baseline, a translation, two rejected
+attempts, and a repair from the accepted translated parent.
+The box has nonuniform scale, rotation, and one oblique corner normal.
+Its body defect changes the local height by 4 mm, which changes world height by 6 mm.
+
+The L-prism body attempt changes one cap from a polygon to four triangles.
+It preserves the solid but falls outside the indexed contract.
+Its rejection does not establish geometric damage or a separate material defect.
+Both fixtures also test a 5 mm movement of the protected base.
+Each rejection must preserve the accepted parent's files and last-good pointer.
+
+The independent geometry oracle checks named surfaces, materials, corner normals,
+area, volume, and complete triangle coverage.
+Separate synthetic mutations test the oracle itself.
+The raw GLB probe uses Blender's importer.
+It is not an independent GLB decoder.
+
+The same analytic oracle also checks the stored production observation values.
+This detects a consistently wrong observer even if its revision comparisons pass.
+The oracle requires each fixture's fixed transform and its declared translation.
+An identity transform with the same world geometry cannot satisfy that check.
+
+Production artifact comparison still requires the same triangle decomposition
+within each candidate's export roundtrip.
+An export failure or an unknown result cannot satisfy an expected rejection.
+No tolerance, production comparison, or supported representation changes.
+
+The committed case manifest specifies ten additional live outcomes.
+The complete corpus targets 17 outcomes: 11 accepted and 6 rejected,
+with 68 controller stages and 51 artifact probes.
+These counts are expectations until the isolated run completes.
+Use the run summary's completed counts and source hashes as execution evidence.
+Four separate offline tests cover incomplete or excessive multipart evidence.
+They do not add live outcomes.
+
 The test policy uses an explicit angle of 0.001 radians.
 Treat this value as provisional until the isolated positive cases run.
 Record their maximum measured angle before calling this fixture tolerance calibrated.

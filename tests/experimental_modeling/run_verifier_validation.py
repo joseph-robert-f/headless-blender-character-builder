@@ -25,6 +25,7 @@ from experimental_modeling.sandbox import DockerSandbox
 FIXTURE = Path(__file__).parent / 'fixtures/verifier_validation'
 sys.path.insert(0, str(FIXTURE))
 from oracle import assert_tetra_case, indexed_translation, inspect_tetra
+from geometry_oracle import inspect_geometry
 
 LAMP = ROOT / 'experimental_modeling/examples/external_lamp'
 PROBE = FIXTURE / 'probe_artifact.py'
@@ -37,6 +38,11 @@ POSITION_TOLERANCE_M = 1e-6
 # Reviewed provisional threshold, NOT a new production default. Only an actual
 # successful Blender run supplies calibration evidence for its recorded runtime.
 NORMAL_TOLERANCE_RADIANS = .001
+GEOMETRY_CASES = FIXTURE / 'geometry_cases.json'
+TRANSLATION_COMPONENTS = (
+    'vertex_count_equal', 'indexed_translation_equal', 'oriented_polygons_equal',
+    'face_material_assignments_equal', 'ordered_material_palette_equal',
+    'indexed_edges_equal', 'corner_normals_equal')
 TETRA_STATES = (
     ('tetra-r0', 0., 'none', 'initial', None, 'accepted'),
     ('tetra-r1', .03, 'none', 'permuted', 'tetra-r0', 'accepted'),
@@ -105,6 +111,64 @@ def lamp_policy(translated):
     return policy
 
 
+def geometry_policy(translated):
+    constraints = [{'kind': 'manifold', 'part': part, 'data': {}} for part in ('body', 'base')]
+    if translated:
+        constraints.append({'kind': 'translated', 'part': 'body', 'data': {
+            'delta': [.015, -.02, .03], 'tolerance': POSITION_TOLERANCE_M,
+            'normal_tolerance_radians': NORMAL_TOLERANCE_RADIANS}})
+    return {'schema_version': 2, 'profile': 'scene', 'parts': ['body', 'base'],
+            'changed_parts': ['body'] if translated else ['body', 'base'], 'constraints': constraints}
+
+
+def assert_geometry_rejection(failures, defect):
+    """Assert a specific completed policy rejection, never a runtime failure."""
+    assert len(failures) == 1, failures
+    failure = failures[0]
+    if defect == 'protected_base':
+        assert failure == {'check': 'unchanged', 'part': 'base', 'component': 'transform_hash'}, failures
+        return
+    assert failure.get('check') == 'translated' and failure.get('part') == 'body', failures
+    expected = {'deformation': {'indexed_translation_equal'},
+                # Material/normal comparisons depend on polygon correspondence.
+                # These false flags do not imply independent shading defects.
+                'retessellation': {'oriented_polygons_equal', 'indexed_edges_equal',
+                                  'face_material_assignments_equal', 'corner_normals_equal'}}[defect]
+    assert {key for key in TRANSLATION_COMPONENTS if failure['measured'][key] is not True} == expected, failures
+
+
+def geometry_cases():
+    manifest = read(GEOMETRY_CASES)
+    assert manifest['schema_version'] == 1
+    assert manifest['delta_m'] == [.015, -.02, .03]
+    assert manifest['position_tolerance_m'] == POSITION_TOLERANCE_M
+    assert manifest['normal_tolerance_radians'] == NORMAL_TOLERANCE_RADIANS
+    assert len(manifest['cases']) == 10
+    return manifest
+
+
+def geometry_observation_probe(observation):
+    """Adapt inspected values without computing or correcting geometry data.
+
+    A raw-artifact oracle alone cannot detect a consistently wrong observer.
+    Check its stored values against the same independently declared geometry.
+    This is an observation check, not an additional independent artifact probe.
+    """
+    assert observation['schema_version'] == 2
+    parts = {}
+    for name, part in observation['parts'].items():
+        faces, materials, normals = (part[key] for key in
+            ('face_indices', 'face_material_indices', 'face_world_corner_normals'))
+        assert len(faces) == len(materials) == len(normals), 'Incomplete inspected face data'
+        parts[name] = {'points': part['world_vertices'], 'edges': part['edge_indices'],
+                       'palette': part['materials'], 'matrix_world': part['matrix_world'],
+                       'faces': [{'indices': indices, 'material_index': material, 'corner_normals': corners}
+                                 for indices, material, corners in zip(faces, materials, normals)]}
+    return {'input_format': 'blend', 'parts': parts,
+            'autoexec_enabled': observation['runtime']['autoexec_enabled'],
+            'scale_length': observation['units']['scale_length']}
+
+
 def result_directory(store, result):
     return store / ('accepted' if result['status'] == 'accepted' else 'attempts') / result['revision']
 
@@ -127,8 +191,13 @@ def run(store, *, sandbox_image, docker_executable=None, docker_socket=Path('/va
                                     'max_positive_deviation_radians': None},
                'validation_files': {'runner': sha(Path(__file__)),
                                     'probe': sha(PROBE), 'oracle': sha(FIXTURE / 'oracle.py'),
-                                    'author': sha(FIXTURE / 'source/builder.py')},
-               'results': [], 'independent_artifact_probes': {}, 'positive_comparisons': {}}
+                                    'author': sha(FIXTURE / 'source/builder.py'),
+                                    'geometry_cases': sha(GEOMETRY_CASES),
+                                    'geometry_oracle': sha(FIXTURE / 'geometry_oracle.py'),
+                                    'geometry_author': sha(FIXTURE / 'geometry_source/builder.py')},
+               'geometry_expectations': geometry_cases(),
+               'results': [], 'independent_artifact_probes': {}, 'positive_comparisons': {},
+               'production_observation_checks': {}}
     summary_path = store / 'verifier-validation-summary.json'
     def save():
         summary['elapsed_seconds'] = round(time.monotonic() - started, 3)
@@ -162,7 +231,8 @@ def run(store, *, sandbox_image, docker_executable=None, docker_socket=Path('/va
             save()
             return result
 
-        def execute(name, target, source, params, policy, parent, status, *, requirements=None, tetra_case=None):
+        def execute(name, target, source, params, policy, parent, status, *, requirements=None,
+                    tetra_case=None, geometry_case=None):
             param_path, policy_path = inputs / (name + '-params.json'), inputs / (name + '-policy.json')
             write(param_path, params); write(policy_path, policy)
             Policy.parse(policy)
@@ -173,6 +243,9 @@ def run(store, *, sandbox_image, docker_executable=None, docker_socket=Path('/va
                 intent='Test-only independent translated verifier validation')
             row = {key: result.get(key) for key in ('revision', 'parent', 'status', 'error', 'failures', 'jobs')}
             row['expected_status'] = status
+            if geometry_case is not None:
+                row['classification'] = geometry_case['classification']
+                row['source_files'] = result.get('source_files')
             summary['results'].append(row); save()
             directory = result_directory(target, result)
             # Probe actual artifacts before trusting aggregate status. Preserve
@@ -199,8 +272,38 @@ def run(store, *, sandbox_image, docker_executable=None, docker_socket=Path('/va
                         oracle_errors.append(label + ': ' + str(exc)[:1000])
                     save()
                 assert not oracle_errors, '; '.join(oracle_errors)
+            if geometry_case is not None:
+                oracle_errors = []
+                for label, measured in raw_probes.get(name, {}).items():
+                    evidence = summary['independent_artifact_probes'][name][label]
+                    try:
+                        report = inspect_geometry(measured, geometry_case['fixture'], geometry_case['step'],
+                            geometry_case['defect'], tolerance=POSITION_TOLERANCE_M,
+                            normal_tolerance=NORMAL_TOLERANCE_RADIANS)
+                        evidence['oracle'] = report
+                        if geometry_case['defect'] == 'none':
+                            normal_measurements.append(report['max_normal_angle_deviation_radians'])
+                    except AssertionError as exc:
+                        evidence['oracle_error'] = str(exc)[:3000]
+                        oracle_errors.append(label + ': ' + str(exc)[:1000])
+                    save()
+                assert not oracle_errors, '; '.join(oracle_errors)
             observations[name] = read(directory / 'inspection/observation.json')
             assert observations[name]['schema_version'] == 2
+            if geometry_case is not None:
+                assert result.get('source_files') == {
+                    'builder.py': summary['validation_files']['geometry_author']}, 'Geometry author source binding changed'
+                observation_evidence = {
+                    'observation': str((directory / 'inspection/observation.json').relative_to(store)),
+                    'observation_sha256': sha(directory / 'inspection/observation.json')}
+                summary['production_observation_checks'][name] = observation_evidence
+                observation_report = inspect_geometry(geometry_observation_probe(observations[name]),
+                    geometry_case['fixture'], geometry_case['step'], geometry_case['defect'],
+                    tolerance=POSITION_TOLERANCE_M, normal_tolerance=NORMAL_TOLERANCE_RADIANS)
+                observation_evidence['oracle'] = observation_report
+                if geometry_case['defect'] == 'none':
+                    normal_measurements.append(observation_report['max_normal_angle_deviation_radians'])
+                save()
             assert result['status'] == status, json.dumps(row, indent=2)
             assert not result.get('error'), row
             assert all(result['jobs'][stage]['exit_code'] == 0
@@ -208,22 +311,24 @@ def run(store, *, sandbox_image, docker_executable=None, docker_socket=Path('/va
             assert set(raw_probes[name]) == {'authored-blend', 'saved-blend', 'exported-glb'}
             verification = read(directory / 'verification.json')
             assert verification['machine_verified'] == (status == 'accepted')
+            assert verification['summary']['unknown'] == 0, verification
             if status == 'accepted':
                 pointer = read(target / 'last_good.json')
                 assert pointer['revision'] == name
                 verify_accepted(directory, pointer['result_hash'])
             else:
                 assert not (target / 'accepted' / name).exists()
-                assert len(result['failures']) == 1, row
-                failure = result['failures'][0]
-                assert failure.get('check') == 'translated' and failure.get('part') == 'tetra', row
-                assert tetra_case is not None
-                defective_component = {'material': 'face_material_assignments_equal',
-                                       'normal': 'corner_normals_equal'}[tetra_case[1]]
-                components = ('vertex_count_equal', 'indexed_translation_equal', 'oriented_polygons_equal',
-                              'face_material_assignments_equal', 'ordered_material_palette_equal',
-                              'indexed_edges_equal', 'corner_normals_equal')
-                assert {key for key in components if failure['measured'][key] is not True} == {defective_component}, row
+                if geometry_case is not None:
+                    assert_geometry_rejection(result['failures'], geometry_case['defect'])
+                else:
+                    assert len(result['failures']) == 1, row
+                    failure = result['failures'][0]
+                    assert failure.get('check') == 'translated' and failure.get('part') == 'tetra', row
+                    assert tetra_case is not None
+                    defective_component = {'material': 'face_material_assignments_equal',
+                                           'normal': 'corner_normals_equal'}[tetra_case[1]]
+                    assert {key for key in TRANSLATION_COMPONENTS
+                            if failure['measured'][key] is not True} == {defective_component}, row
             row['verified_artifact_count'] = 3
             save()
             return result
@@ -245,7 +350,7 @@ def run(store, *, sandbox_image, docker_executable=None, docker_socket=Path('/va
                 summary['positive_comparisons'][name] = comparison
                 normal_measurements.append(comparison['max_normal_angle_deviation_radians'])
             save()
-        summary['negative_controls_preserved_last_good'] = True
+        summary['tetra_negative_controls_preserved_last_good'] = True
 
         lamp_source = inputs / 'original-lamp-source'
         summary['original_lamp_source_hashes'] = prepare_lamp_source(lamp_source)
@@ -272,11 +377,49 @@ def run(store, *, sandbox_image, docker_executable=None, docker_socket=Path('/va
         summary['original_lamp_regression'] = {'independent_comparisons': lamp_comparisons,
                                                'frozen_v1_failures': legacy_failures,
                                                'v2_status': 'accepted'}
+        for case in summary['geometry_expectations']['cases']:
+            name, parent = case['revision'], case['parent']
+            target = store / ('geometry-' + case['fixture'])
+            preserved_pointer = (target / 'last_good.json').read_bytes() if parent else None
+            parent_directory = target / 'accepted' / parent if parent else None
+            preserved_parent = file_hashes(parent_directory) if parent else None
+            execute(name, target, FIXTURE / 'geometry_source',
+                    {key: case[key] for key in ('fixture', 'step', 'defect', 'serialization')},
+                    geometry_policy(parent is not None), parent, case['expected_status'], geometry_case=case)
+            if parent:
+                assert file_hashes(parent_directory) == preserved_parent, 'Accepted parent files changed'
+            if case['expected_status'] == 'rejected':
+                assert (target / 'last_good.json').read_bytes() == preserved_pointer, 'Rejected candidate moved last_good'
+                summary['results'][-1]['accepted_parent_files_unchanged'] = True
+                summary['results'][-1]['last_good_bytes_unchanged'] = True
+            if parent and case['defect'] in {'none', 'protected_base'}:
+                comparisons = {}
+                for label in ('authored-blend', 'saved-blend'):
+                    comparisons[label] = indexed_translation(raw_probes[parent][label]['parts']['body'],
+                        raw_probes[name][label]['parts']['body'], [.015, -.02, .03],
+                        tolerance=POSITION_TOLERANCE_M, normal_tolerance=NORMAL_TOLERANCE_RADIANS)
+                    if case['defect'] == 'none':
+                        assert comparisons[label]['raw_face_order_changed'], 'Positive must change face/corner serialization'
+                        normal_measurements.append(comparisons[label]['max_normal_angle_deviation_radians'])
+                summary['positive_comparisons'][name] = comparisons
+            save()
+        # Count only completed evidence, not the manifest's planned outcomes.
+        summary['completed_counts'] = {
+            'outcomes': len(summary['results']),
+            'accepted': sum(row['status'] == 'accepted' for row in summary['results']),
+            'rejected': sum(row['status'] == 'rejected' for row in summary['results']),
+            'controller_stages': sum(job['exit_code'] == 0 for row in summary['results']
+                                     for job in row['jobs'].values()),
+            'artifact_probes': sum(len(probes) for probes in summary['independent_artifact_probes'].values())}
+        assert summary['completed_counts'] == {
+            'outcomes': 17, 'accepted': 11, 'rejected': 6, 'controller_stages': 68, 'artifact_probes': 51}
+        assert len(summary['production_observation_checks']) == 10
+        summary['negative_controls_preserved_last_good'] = True
         summary['normal_tolerance'].update({
             'calibration_status': 'measured_fixture_positives_for_recorded_runtime',
             'max_positive_deviation_radians': max(normal_measurements),
             'measurement_count': len(normal_measurements),
-            'scope': 'tetra artifact normals and unchanged translated lamp faces; not a universal tolerance'})
+            'scope': 'tetra, transformed box, L prism, protected base, and translated lamp fixture positives; not a universal tolerance'})
         assert max(normal_measurements) <= NORMAL_TOLERANCE_RADIANS
         assert file_hashes(LAMP) == original_hashes, 'Recorded lamp files were modified'
         summary['recorded_lamp_unchanged'] = True
