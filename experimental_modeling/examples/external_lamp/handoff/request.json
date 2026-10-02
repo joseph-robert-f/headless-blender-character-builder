@@ -1,0 +1,13 @@
+{
+  "context_files": {
+    "AUTHORING.md": "72146dcc170f2f9d09397253f6951a9eeab7ea63743efec9416b3ab71954f069"
+  },
+  "kind": "initial",
+  "legacy_request": null,
+  "locked_requirements_hash": null,
+  "parent": null,
+  "prompt": "Make a small sculptural desk lamp. Use a teal rounded rectangular base, a curved brass stem, and a cream bell-shaped shade. The base is 160 mm wide and 120 mm deep. Total height is about 260 mm. Keep the parts separate and name them base, stem, shade, and light. This is a visual scene model, not a working electrical product or a print-ready design.\n",
+  "reference": null,
+  "request_id": "55a3819fc372c6a56345739bb7f706485f6a87c5ff98f1ec0f1e1948e52441a7",
+  "schema_version": "model-request/v1"
+}

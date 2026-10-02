@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "requirements": [
+    {
+      "id": "base-preserved",
+      "title": "Keep the complete base unchanged",
+      "kind": "preserved_region",
+      "hard": true,
+      "phase": "revision",
+      "params": {
+        "part": "base",
+        "region": [
+          [
+            null,
+            null
+          ],
+          [
+            null,
+            null
+          ],
+          [
+            null,
+            null
+          ]
+        ],
+        "tolerance": 1e-06
+      }
+    },
+    {
+      "id": "appearance-review",
+      "title": "Examine the visual design",
+      "kind": "manual_review",
+      "hard": false,
+      "phase": "always",
+      "params": {
+        "instruction": "Examine the curved brass stem, cream bell shade, teal base, and proportions. This is a visual scene. Do not infer electrical safety or physical print suitability."
+      }
+    }
+  ]
+}

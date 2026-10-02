@@ -112,6 +112,8 @@ def verify_accepted(directory: Path, expected_hash: str) -> dict:
     if manifest["status"] != "accepted": raise ValueError("parent not accepted")
     actual = {str(p.relative_to(directory)): digest(p) for p in regular_tree(directory) if p != manifest_path}
     if actual != manifest["artifacts"]: raise ValueError("parent artifact integrity mismatch")
+    from .request_contract import validate_result_binding
+    validate_result_binding(directory, manifest)
     return manifest
 
 
@@ -186,7 +188,8 @@ def store_lock(store: Path):
 def build(*, source: Path, params: Path, policy_path: Path, store: Path, revision: str,
           parent: str | None = None, blender: str = "blender", trusted_reviewed_source: bool = False,
           renders: bool = True, intent: str = "", sandbox_image: str | None = None, requirements_path: Path | None = None,
-          docker_executable: Path | None = None, docker_socket: Path = Path("/var/run/docker.sock")) -> dict:
+          docker_executable: Path | None = None, docker_socket: Path = Path("/var/run/docker.sock"),
+          request_binding: dict | None = None) -> dict:
     # Fail before reading/importing/executing author code. No implicit native fallback.
     if os.name == "nt":
         raise RuntimeError('SOURCE_EXECUTION_UNAVAILABLE: Windows builds are not implemented. Review is read-only')
@@ -196,6 +199,13 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
         raise RuntimeError('UNTRUSTED_EXECUTION_UNAVAILABLE: no audited sandbox backend. Review source and explicitly opt into trusted development only')
     if not isinstance(intent, str) or len(intent) > 2000:
         raise ValueError("revision intent must be at most 2000 characters")
+    if request_binding is not None:
+        from .request_contract import validate_binding
+        validate_binding(request_binding)
+        if sandbox_image is None or trusted_reviewed_source:
+            raise ValueError("Model request execution requires the isolated Docker backend.")
+        if request_binding["revision"] != revision:
+            raise ValueError("The request binding targets a different revision.")
     identifier(revision)
     if parent is not None: identifier(parent)
     source, params, policy_path, store = [safe_path(p) for p in (source, params, policy_path, store)]
@@ -220,7 +230,32 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
         binary = str(Path(binary).resolve())
     store.mkdir(parents=True, exist_ok=True)
     with store_lock(store):
-        requirements_lock = store / "requirements.json"
+        requirements_lock = safe_path(store / "requirements.json")
+        if request_binding is not None:
+            from .request_contract import encoded, sha, runtime_identity, legacy_request, read_json as strict_json
+            request, approval = request_binding["request"], request_binding["approval"]
+            pointer_path = safe_path(store / "last_good.json")
+            actual_parent = strict_json(pointer_path) if pointer_path.exists() else None
+            prior_rules = canonical_hash(RequirementSet.parse(strict_json(requirements_lock, 4 * 1024 * 1024)).raw) if requirements_lock.exists() else None
+            if request["parent"] != actual_parent or request["locked_requirements_hash"] != prior_rules:
+                raise ValueError("The accepted parent or project rules changed after inspection.")
+            if request["reference"] is not None:
+                from .review_server import verified_revision
+                ref = request["reference"]
+                _, reference_result, reference_hash = verified_revision(store, ref["revision"])
+                if reference_hash != ref["result_hash"]:
+                    raise ValueError("The reference result changed after inspection.")
+                if request["kind"] == "repair" and (reference_result["status"] != "rejected" or
+                        reference_result.get("parent") != actual_parent["revision"] or
+                        reference_result.get("parent_result_hash") != actual_parent["result_hash"]):
+                    raise ValueError("The repair reference is not a rejected direct child of the accepted parent.")
+            if request["legacy_request"] is not None:
+                old = request["legacy_request"]
+                if legacy_request(strict_json(store / "review/requests" / (old["request_id"] + ".json")), old["request_id"]) != old:
+                    raise ValueError("The queued request changed after inspection.")
+            if (sha(encoded(raw_params)) != approval["params_hash"] or sha(encoded(raw_policy)) != approval["policy_hash"] or
+                    runtime_identity(Path(backend.docker), docker_socket, sandbox_image) != approval["runtime"]):
+                raise ValueError("The approved inputs or runtime changed after inspection.")
         prior_rule_hashes=set()
         history=list((store/"accepted").glob("*/result.json"))+list((store/"attempts").glob("*/result.json"))
         if len(history)>512:raise ValueError("project history exceeds bounded requirements audit")
@@ -237,9 +272,13 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
                 raise ValueError('project requirements are locked. Build cannot replace or weaken them')
         else:
             requirements = provided_requirements or RequirementSet.parse({"schema_version":1,"requirements":[]})
+            if request_binding is not None and canonical_hash(requirements.raw) != request_binding["approval"]["requirements_hash"]:
+                raise ValueError("The request requirements differ from the reviewed definition.")
             if provided_requirements is not None:
                 write_json(requirements_lock, requirements.raw)
                 sync_directory(store)
+        if request_binding is not None and canonical_hash(requirements.raw) != request_binding["approval"]["requirements_hash"]:
+            raise ValueError("The request requirements differ from the reviewed definition.")
         for name in ("attempts", "accepted"):
             path = store / name
             safe_path(path)
@@ -276,6 +315,13 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
             result["policy_hash"] = digest(attempt / "policy.json")
             result["runtime_hash"] = sandbox_image if backend else digest(Path(binary))
             result["source_files"] = snapshot(source, attempt / "source")
+            if request_binding is not None:
+                from .request_contract import BINDING_FILE, source_manifest
+                if (source_manifest(attempt / "source") != request_binding["approval"]["source_files"] or
+                        result["source_files"] != request_binding["approval"]["source_files"]):
+                    raise ValueError("The executed source differs from the inspected proposal.")
+                write_json(attempt / BINDING_FILE, request_binding)
+                result["request_binding_hash"] = digest(attempt / BINDING_FILE)
             result["controller_files"] = {p.name: digest(p) for p in Path(__file__).parent.glob("*.py") if backend or p.name != "sandbox.py"}
             authored = attempt / "authored"
             authored.mkdir()
@@ -351,6 +397,9 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
             observation=None;result["status"]="needs_review";result["observation_error"]=str(exc)[:300]
         write_json(attempt / "verification.json", make_report(result, policy, observation, previous, requirements))
         result["artifacts"]["verification.json"] = digest(attempt / "verification.json")
+        if request_binding is not None and "request_binding_hash" in result:
+            from .request_contract import validate_result_binding
+            validate_result_binding(attempt, result)
         write_json(attempt / "result.json", result)
         if result["status"] == "accepted":
             promote(attempt, store, revision)

@@ -29,6 +29,7 @@
     "docs/licensing.md",
     "docs/local-model-review.md",
     "docs/local-project-launcher.md",
+    "docs/model-request-bridge.md",
     "docs/oci-publication.md",
     "docs/release-process.md",
     "docs/review-preview.md",
@@ -36,6 +37,7 @@
     "docs/troubleshooting.md",
     "examples/README.md",
     "experimental_modeling/examples/desk_creature/README.md",
+    "experimental_modeling/examples/external_lamp/README.md",
     "experimental_modeling/examples/robot/README.md",
     "experimental_modeling/examples/watering_can/README.md"
   ],
@@ -49,7 +51,8 @@
     "docs/inventory.md": "Historical evidence and source hashes.",
     "docs/progress.md": "Historical execution evidence.",
     "docs/release-notes/v0.1.0-rc.1.md": "Historical release-candidate record.",
-    "docs/security/vulnerability-review-2026-08-12.md": "Dated vulnerability evidence."
+    "docs/security/vulnerability-review-2026-08-12.md": "Dated vulnerability evidence.",
+    "experimental_modeling/examples/external_lamp/handoff/AUTHORING.md": "Historical hash-bound external author contract. Preserve the request evidence."
   },
   "mixed_scope": {
     "PLAN.md": "Current introductory guidance only. Preserve the executed historical plan.",
@@ -70,7 +73,9 @@
     "schemas/*schema.json": "Schema descriptions. Preserve validation rules.",
     "release/dependency-policy.json": "The seven manual_review reason fields generate current maintainer instructions. Names, identifiers, file lists, and dependency settings stay unchanged.",
     "service/pyproject.toml": "Service package description. Preserve package metadata identifiers.",
-    "service/src/hbcb_service/maintenance_main.py": "Maintenance CLI help and guidance. Preserve commands, status codes, and behavior."
+    "service/src/hbcb_service/maintenance_main.py": "Maintenance CLI help and guidance. Preserve commands, status codes, and behavior.",
+    "experimental_modeling/requests.py": "CLI guidance and exported author contract. Preserve identifiers and commands.",
+    "experimental_modeling/request_contract.py": "Request contract diagnostic guidance. Preserve schema identifiers and field names."
   },
   "generated_documentation": {
     "package_README": "scripts/build-review-preview copies docs/review-preview.md without changes.",

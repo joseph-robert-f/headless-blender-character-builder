@@ -1,0 +1,34 @@
+{
+  "context_files": {
+    "AUTHORING.md": "72146dcc170f2f9d09397253f6951a9eeab7ea63743efec9416b3ab71954f069",
+    "context/observation.json": "879aa3b29d842834492e7c9feea50f4c178d9284eeb3eb9f4aff977448b21fdf",
+    "context/params.json": "28f484f16317ef1d68ca50ae866e7b50b40029faf5f136156c0a1fcdefbb914e",
+    "context/policy.json": "ff1a11a2d39de1dd6180b840fb1bd1d7b73c2966c61cf349870c4943852ad009",
+    "context/requirements.json": "4a7696919112c46e64bb11650e3571e05393016db7cd6d91e754633f855a5cf3",
+    "context/source/builder.py": "8d31b470a31f6a18e90fbcdefe3ecb49c08f1cfc111fffc5d02f1f87a1932cc6",
+    "context/source/geometry.py": "4104a88f029ea1ced220f0aa1ba3633957e7ed7e9d6210e7bfd1a8ede857cfcb"
+  },
+  "kind": "edit",
+  "legacy_request": {
+    "created_at": "2026-10-01T22:57:06.346348+00:00",
+    "execution": "not_started",
+    "prompt": "Increase the lamp height from 260 mm to 290 mm. Keep the complete base geometry, location, and teal material unchanged. Keep the shade and light shapes and materials unchanged, and move them upward by 30 mm. Extend the curved stem to meet the raised shade. This remains a visual scene, not an electrical or print-ready product.",
+    "request_id": "6ad27d16fa96291589f9623f",
+    "result_hash": "5c4464e87006c0c95e88e3431fdc70bad3cf49ba17b15d39227dfa579a4bffeb",
+    "revision_id": "lamp-r0",
+    "schema_version": 1,
+    "status": "queued"
+  },
+  "locked_requirements_hash": "5dcf457f2b69e46aa61af9dc09e21872b1560f8bf6fbe5e799ee9d09061bb3ca",
+  "parent": {
+    "result_hash": "5c4464e87006c0c95e88e3431fdc70bad3cf49ba17b15d39227dfa579a4bffeb",
+    "revision": "lamp-r0"
+  },
+  "prompt": "Increase the lamp height from 260 mm to 290 mm. Keep the complete base geometry, location, and teal material unchanged. Keep the shade and light shapes and materials unchanged, and move them upward by 30 mm. Extend the curved stem to meet the raised shade. This remains a visual scene, not an electrical or print-ready product.",
+  "reference": {
+    "result_hash": "5c4464e87006c0c95e88e3431fdc70bad3cf49ba17b15d39227dfa579a4bffeb",
+    "revision": "lamp-r0"
+  },
+  "request_id": "6b7702474c63f5e28409826650628dc775995719b216f2ec3188a28eebd88759",
+  "schema_version": "model-request/v1"
+}

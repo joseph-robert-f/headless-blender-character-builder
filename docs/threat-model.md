@@ -320,3 +320,57 @@ Actual native-platform CI must validate each stated review support level.
 A Windows or Mac review test does not show Blender generation or Docker Desktop isolation.
 It also does not show cross-runtime geometry determinism, installer safety,
 code signing/notarization, or provider authentication support.
+
+## Explicit external-author request bridge
+
+The [request bridge](model-request-bridge.md) is an optional source-checkout feature outside v0.1.
+It adds inert handoff files, explicit proposal inspection, and one isolated execution command.
+It does not start an AI model, coding agent, queue worker, or remote listener.
+Preparation and inspection make no network call or subprocess.
+Execution uses the selected local Docker daemon and existing isolated Blender stages.
+
+A saved prompt is not execution approval.
+The execution command selects a full inspection digest and a new revision identity.
+That digest binds the exact request, source bytes, normalized parameters, reviewed policy, requirements, and selected runtime.
+The full prompt is not truncated into the older short intent field.
+The selected reference can be a rejected result, but the execution parent must remain the current accepted result.
+A changed baseline stops execution instead of an automatic rebase.
+
+The source author cannot select the runtime, replace project requirements, change accepted history, or declare verification success.
+An operator selects and examines the policy independently.
+Source, parameter, policy, requirement, and runtime identities are checked again before execution.
+The controller records a strict versioned request-binding artifact before result publication.
+Current verifiers reject partial or inconsistent new bindings.
+Legacy results without this binding keep their existing verification contract.
+
+The handoff and project evidence can contain private information.
+Full prompts and source context persist in exported handoffs and model history.
+Examine the exported contents before transmission to an external author or service.
+The app excludes repository metadata, known agent configuration, and execution logs from handoffs.
+It does not scan arbitrary source or assets for secrets.
+Those exclusions do not prove that the exported files contain no private data.
+
+Proposal reads reject links, redirected paths, devices, and nonregular files.
+Nonblocking file opens prevent a named pipe from holding an input read open.
+The program applies fixed limits to file bytes, file counts, directory counts, path depth, and path lengths.
+The program copies source to private project staging under the existing build lease.
+It checks the copied bytes before the controller takes its own source snapshot.
+Generated code receives no write access to policy, request evidence, or project history.
+
+The runtime identity includes Docker executable bytes, its selected path, the image ID, and local socket identity.
+These checks detect a changed selection.
+They do not establish publisher authenticity or image trust.
+The operator must trust the selected Docker installation, daemon, and reviewed image.
+The bridge has no native execution option or automatic runtime fallback.
+Windows and Mac generation remain unavailable, and packaged previews remain read-only.
+
+Replay verifies an existing revision and its binding before returning the recorded outcome.
+It does not execute the same revision again or clear uncertain cleanup state.
+Interruption retains the existing conservative recovery marker and immutable attempt evidence.
+A new execution requires recovery acknowledgement where applicable and a new revision ID.
+The tests are not physical power-loss tests or a general sandbox assurance.
+
+This boundary assumes one trusted local OS owner and local filesystem.
+Hashes are not signatures or protection against an owner who replaces every trust root.
+The existing Docker and native-parser limitations still apply.
+A verified model satisfies its declared checks, not every natural-language, appearance, electrical, or manufacturing requirement.

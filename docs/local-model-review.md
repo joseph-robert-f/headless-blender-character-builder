@@ -138,12 +138,15 @@ A previous human decision stays in history if new rules introduce an unverified 
 
 **Save change request** keeps the text without changes and the selected result hash in `STORE/review/requests/`.
 The program combines identical requests into one record.
-Requests survive reloads and show **queued / execution not started**.
+New requests survive reloads and show **queued / execution not started**.
 The queue limit is 256 records.
 The program does not automatically delete records.
 
 A coding agent or operator can read the request JSON as task input.
-The program has no built-in language model, automatic queue consumer, or execution endpoint.
+The review program has no built-in language model, automatic queue consumer, or execution endpoint.
+The separate [request bridge](model-request-bridge.md) can consume one externally authored proposal after explicit inspection.
+The review program then links the request to its recorded execution result.
+
 You can request a repair for a rejected candidate.
 But the controller's build parent must be a valid accepted last-good revision.
 The UI has no build or revert controls.

@@ -39,10 +39,17 @@
     if (!requests.length) { list.append(el('p', 'empty', 'No saved requests.')); return; }
     for (const request of [...requests].reverse()) {
       const item = el('details', 'queue-item'); const heading = el('summary');
-      heading.append(el('span', '', `Revision ${request.revision_id}`), el('span', 'status-pill', humanize(request.status || 'Unknown status')));
+      heading.append(el('span', '', request.revision_id ? `Revision ${request.revision_id}` : 'Initial model'), el('span', 'status-pill', humanize(request.status || 'Unknown status')));
       item.append(heading, el('p', '', request.prompt || 'No prompt recorded'));
       const meta = el('div', 'queue-meta'); meta.append(el('span', '', date(request.created_at)), el('span', '', request.execution === 'not_started' ? 'Execution not started' : humanize(request.execution || 'Execution unknown')));
-      item.append(meta, el('div', 'queue-id', request.request_id || '')); list.append(item);
+      item.append(meta, el('div', 'queue-id', request.request_id || ''));
+      for (const result of request.results || []) {
+        const label = result.human_accepted ? 'Human accepted' : result.outcome === 'machine_accepted' ? 'Machine accepted' : humanize(result.outcome);
+        const button = el('button', 'part-chip', `${result.revision_id}: ${label}`); button.type = 'button';
+        button.addEventListener('click', () => loadRevision(result.revision_id)); item.append(button);
+        if (!result.machine_verified) item.append(el('p', '', 'Current machine verification is not available for this result.'));
+      }
+      list.append(item);
     }
   }
   function readiness() {
