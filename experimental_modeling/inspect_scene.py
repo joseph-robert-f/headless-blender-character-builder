@@ -46,8 +46,13 @@ def digest(value):
     return hashlib.sha256(json.dumps(normalized(value), sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
-def write_json(path, value):
-    Path(path).write_text(json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + '\n')
+def write_json(path, value, *, compact=False):
+    options = {"sort_keys": True, "allow_nan": False}
+    if compact:
+        options["separators"] = (",", ":")
+    else:
+        options["indent"] = 2
+    Path(path).write_text(json.dumps(value, **options) + '\n')
 
 
 def clear_active_content():
@@ -392,7 +397,7 @@ def main():
             bpy.ops.import_scene.gltf(filepath=str(Path(args.input).resolve()))
             clear_active_content()
             observation = observe(args.observation_version)
-            write_json(output / 'observation.json', observation)
+            write_json(output / 'observation.json', observation, compact=args.observation_version == 2)
             if not args.reference:
                 raise ValueError('--reference required for roundtrip')
             result = compare(json.loads(Path(args.reference).read_text()), observation)
@@ -418,7 +423,7 @@ def main():
             write_json(output / 'reopen.json', result)
             if not result['passed']:
                 raise ValueError('Reopened scene mismatch')
-        write_json(output / 'observation.json', observation)
+        write_json(output / 'observation.json', observation, compact=args.observation_version == 2)
     except Exception as exc:
         write_json(output / 'error.json', {'error': type(exc).__name__, 'message': str(exc)})
         raise
