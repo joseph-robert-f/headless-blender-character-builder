@@ -131,7 +131,7 @@ class SandboxTests(unittest.TestCase):
         workflow=json.loads((root/'.github/workflows/experimental-modeling-sandbox.yml').read_text())
         archive=next(s for s in workflow['jobs']['docker-boundary-and-benchmark']['steps'] if s.get('name')=='Retain bounded experimental evidence')
         self.assertTrue(archive['with']['include-hidden-files'])
-        self.assertEqual(set(archive['with']['path'].splitlines()), {'${{ runner.temp }}/modeling-benchmark','${{ runner.temp }}/modeling-desk-benchmark','${{ runner.temp }}/modeling-review-ui','${{ runner.temp }}/modeling-water-relations','${{ runner.temp }}/modeling-review-project','${{ runner.temp }}/modeling-request-bridge','${{ runner.temp }}/modeling-verifier-validation'})
+        self.assertEqual(set(archive['with']['path'].splitlines()), {'${{ runner.temp }}/modeling-benchmark','${{ runner.temp }}/modeling-desk-benchmark','${{ runner.temp }}/modeling-review-ui','${{ runner.temp }}/modeling-water-relations','${{ runner.temp }}/modeling-review-project','${{ runner.temp }}/modeling-request-bridge','${{ runner.temp }}/modeling-verifier-validation','${{ runner.temp }}/modeling-workbench-ui'})
         lamp=next(s for s in workflow['jobs']['docker-boundary-and-benchmark']['steps'] if s.get('name')=='Retain external author lamp evidence')
         self.assertTrue(lamp['with']['include-hidden-files'])
         self.assertEqual(lamp['with']['path'], '${{ runner.temp }}/modeling-external-lamp')

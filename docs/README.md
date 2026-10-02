@@ -57,6 +57,7 @@ Read the applicable guide before use:
 - [Source-directed modeling](experimental-source-modeling.md): source inputs, trust boundaries, constraints, evidence, and benchmark reproduction
 - [Docker backend](EXPERIMENTAL_MODELING_SANDBOX.md): container controls, limits, and cleanup
 - [External model requests](model-request-bridge.md): prepare a brief, inspect external source, and execute one verified proposal
+- [External-author workbench](authoring-workbench.md): Linux source-only browser preparation, complete inspection, and one explicit run
 - [Local model review](local-model-review.md): geometry inspection, requirements, decisions, and change requests
 - [Local project launcher](local-project-launcher.md): portable project metadata, runtime readiness, and Linux-only generation
 - [HBCB REVIEW PREVIEW](review-preview.md): the unsigned, read-only Windows x64 and Mac arm64 packages.

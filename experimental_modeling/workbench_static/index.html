@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Authoring workbench · Experimental modeling</title>
+  <link rel="stylesheet" href="/workbench/static/style.css">
+  <script src="/workbench/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/workbench"><span class="brand-mark" aria-hidden="true">◇</span>Authoring workbench<span class="tag">EXPERIMENTAL</span></a>
+    <a class="review-link" href="/">Open model review <span aria-hidden="true">↗</span></a>
+  </header>
+  <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+  <main>
+    <div class="page-heading"><div><p class="eyebrow">LOCAL LINUX · SOURCE-ONLY EXPERIMENT</p><h1 id="project-name">Your authoring workspace</h1><p class="intro">Prepare a brief. Bring back an externally authored proposal. Inspect it before you run.</p></div><button id="refresh" class="button secondary" type="button">Refresh records</button></div>
+    <section class="boundary" aria-label="Execution boundary"><span class="boundary-icon" aria-hidden="true">i</span><div><strong>No model or AI author is built in.</strong><p>An external author creates the source proposal. Preparing a handoff or inspecting files does not execute that source. A run uses the server’s configured execution mode; review the complete source, policy, and requirements first. Machine checks and human acceptance are separate decisions.</p></div></section>
+    <div class="layout">
+      <div class="workflow">
+        <section class="card" aria-labelledby="prepare-heading">
+          <div class="step-heading"><span class="step">01</span><div><p class="eyebrow">EXTERNAL AUTHOR HANDOFF</p><h2 id="prepare-heading">Describe the next model</h2></div></div>
+          <p class="subtle">Prepare an initial brief, or use a saved refinement from model review. Give the resulting handoff to your external coding agent.</p>
+          <div class="prepare-grid">
+            <form id="brief-form"><label for="brief">Initial model brief</label><textarea id="brief" rows="5" maxlength="8000" placeholder="Describe the object, dimensions, and what the model must do…" required></textarea><button id="prepare-brief" class="button secondary" type="submit" disabled>Prepare initial handoff</button></form>
+            <form id="request-form"><label for="saved-request">Or choose a saved refinement</label><select id="saved-request" disabled><option value="">Saved requests loading…</option></select><p id="request-preview" class="request-preview subtle">Saved refinements keep their parent revision and original request.</p><button id="prepare-request" class="button secondary" type="submit" disabled>Prepare refinement handoff</button></form>
+          </div>
+          <p id="prepare-status" class="status-line" role="status"></p>
+          <details id="handoff-result" class="record" hidden><summary>Prepared handoff · complete record</summary><p class="subtle">The paths and instructions below are for the external author. Return its proposal under the configured proposals root, then refresh the file choices.</p><pre id="handoff-json" tabindex="0"></pre></details>
+        </section>
+        <section class="card" aria-labelledby="inspect-heading">
+          <div class="step-heading"><span class="step">02</span><div><p class="eyebrow">EXPLICIT INPUT SELECTION</p><h2 id="inspect-heading">Choose what will run</h2></div></div>
+          <p class="subtle">Choose server-listed files from the configured roots. Policies and requirements come from the separately managed rules root. Nothing is run when you select a file.</p>
+          <form id="inspect-form"><div class="input-grid">
+            <div><label for="handoff">Prepared handoff</label><select id="handoff" required disabled><option value="">Loading…</option></select></div>
+            <div><label for="proposal">External proposal</label><select id="proposal" required disabled><option value="">Loading…</option></select></div>
+            <div><label for="policy">Independently reviewed policy</label><select id="policy" required disabled><option value="">Loading…</option></select></div>
+            <div><label for="requirements">Requirements file</label><select id="requirements" disabled><option value="">Keep project requirements (none for a new project)</option></select></div>
+          </div><div class="form-footer"><p class="subtle">Inspection records the exact inputs and reserves a stable revision.</p><button id="inspect-submit" class="button secondary" type="submit" disabled>Inspect selected inputs</button></div></form>
+          <p id="inspect-status" class="status-line" role="status"></p>
+          <details class="roots"><summary>Configured file roots</summary><dl id="roots-list"></dl></details>
+        </section>
+        <section class="card inspection-card" aria-labelledby="inspection-heading">
+          <div class="step-heading"><span class="step">03</span><div><p class="eyebrow">REVIEW BEFORE EXECUTION</p><h2 id="inspection-heading">Inspect the exact candidate</h2></div></div>
+          <label for="saved-inspection">Saved inspections</label><select id="saved-inspection" disabled><option value="">No inspection selected</option></select>
+          <div id="inspection-empty" class="empty-state"><span aria-hidden="true">⌕</span><h3>Every run starts with an inspection.</h3><p>Inspect the selected inputs above, or reopen a saved inspection. Full input records and before / after source are shown here.</p></div>
+          <div id="inspection-content" hidden>
+            <div class="inspection-identity"><div><span class="eyebrow">RESERVED REVISION</span><strong id="inspection-revision"></strong></div><div><span class="eyebrow">INSPECTION ID</span><span id="inspection-id" class="mono"></span></div></div>
+            <details class="record"><summary>Inspection digest and summary</summary><pre id="inspection-summary" tabindex="0"></pre></details>
+            <div class="inspection-tabs" role="group" aria-label="Inspection view"><button id="show-inputs" type="button" aria-pressed="true">Exact inputs</button><button id="show-diffs" type="button" aria-pressed="false">Before / after</button></div>
+            <div id="inputs-panel"><h3 class="panel-heading">Request, parameters, policy, and requirements</h3><p class="subtle">Complete records are available below. Source is displayed as inert text and is never executed by this page.</p><div id="input-records"></div><h3 class="panel-heading">Source and asset inventory</h3><p class="subtle">Every file includes its complete SHA-256 and byte size. Binary or unavailable text is identified explicitly.</p><div id="source-records"></div><details class="record"><summary>Full input snapshot · JSON</summary><pre id="inputs-json" tabindex="0"></pre></details></div>
+            <div id="diffs-panel" hidden><p class="subtle diff-intro">Complete before / after values from this inspection. A missing value is shown explicitly; no unchanged lines are omitted.</p><div id="source-diffs"></div><div id="json-diffs"></div><details class="record"><summary>Full diff snapshot · JSON</summary><pre id="diffs-json" tabindex="0"></pre></details></div>
+            <div class="run-confirmation"><p class="eyebrow">YOUR EXPLICIT RUN DECISION</p><h3>Review, acknowledge, then run</h3><p class="subtle">Acknowledgments apply only to this inspection and reset when it changes or this page reloads. This action executes the inspected source in the server’s configured mode.</p><label class="checkbox-row"><input id="ack-rules" type="checkbox"><span>I reviewed the policy and requirements independently of the author’s proposal.</span></label><label class="checkbox-row"><input id="ack-inputs" type="checkbox"><span>I inspected the exact request, full source and assets, parameters, and before / after changes for this revision.</span></label><div class="form-footer"><p id="run-readiness" class="subtle">Both acknowledgments are required.</p><button id="run" class="button primary" type="button" disabled>Run inspected candidate</button></div><p id="run-status" class="status-line" role="status"></p></div>
+          </div>
+        </section>
+      </div>
+      <aside class="operations-panel" aria-labelledby="operations-heading"><div class="operations-heading"><div><p class="eyebrow">DURABLE EXECUTION RECORD</p><h2 id="operations-heading">Operations</h2></div><span id="operation-count" class="count">0</span></div><p class="subtle">Reloading or navigating back never starts a run. A repeated run request for one inspection refers to the same stable revision.</p><p id="sync-status" class="sync-status" role="status">Connecting to local server…</p><div id="operations"><p class="empty">Operation history loading…</p></div><div class="review-note"><strong>Then review the model</strong><p>Open the existing model review and select the recorded revision in its history. Use Before / after to compare, then make a separate human acceptance decision.</p><a class="button secondary" href="/">Open model review <span aria-hidden="true">↗</span></a></div></aside>
+    </div>
+  </main>
+  <footer>Experimental authoring · Local Linux source workflow · No automatic generation or acceptance</footer>
+</body>
+</html>
