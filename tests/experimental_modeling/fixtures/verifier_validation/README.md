@@ -69,7 +69,65 @@ The raw light polygon order must differ. Frozen v1 checks must
 reject that light order on the same measured observations. If the ordering
 difference is not reproduced, the gate fails rather than claiming coverage.
 
-## Evidence and tolerance
+## Extended geometry fixtures
+
+`geometry_cases.json` declares ten additional live outcomes before execution.
+`geometry_source/builder.py` and `geometry_oracle.py` define their geometry
+separately. The oracle imports no author or production code.
+Each fixture has a body and a fixed base.
+The body translation is (15, -20, 30) mm per step.
+
+The sequence accepts steps 0 and 1, rejects two step-2 attempts, then accepts a
+new step-2 repair. All step-2 attempts use the accepted step-1 parent.
+
+The box has local dimensions 40 by 30 by 20 mm.
+Its fixed transform is x'=x-0.45y+0.11, y'=0.75x+0.6y-0.07, z'=1.5z+0.09.
+Its physical edge lengths are 50, 22.5, and 30 mm.
+Its world-axis bounds span 53.5, 48, and 30 mm before the defect.
+Its volume is 0.00003375 cubic meters and area is 0.0066 square meters.
+
+The bottom corner at local (0,0,0) has normal (0.6,0,-0.8).
+Its expected world direction is (36,27,-50)/sqrt(4525).
+This corner distinguishes inverse-transpose normal handling from forward transformation.
+The body defect raises all top vertices by 4 mm locally, or 6 mm in world Z.
+
+The L-prism footprint in meters is (0,0), (0.06,0), (0.06,0.02),
+(0.02,0.02), (0.02,0.05), (0,0.05). Its height is 0.03 m.
+Its fixed position is (-0.09,0.08,0.07) m.
+The footprint area is 0.0018 square meters and perimeter is 0.22 m.
+The volume is 0.000054 cubic meters and closed area is 0.0102 square meters.
+The baseline has 12 vertices, 18 edges, 8 polygons, and 20 render triangles.
+
+The body attempt replaces only the top cap with four triangles.
+It has 12 vertices, 21 edges, 11 polygons, and the same 20 render triangles.
+The solid is unchanged. The representation violates the indexed contract.
+
+Topology-dependent material and normal comparison flags also fail.
+These flags do not establish separate material or normal defects.
+
+The base is an 80 by 60 by 10 mm box at (-40,-30,-10) mm.
+The protected-base negative shifts only its object transform by 5 mm in world X.
+The body still has the specified translation.
+Each rejected attempt must leave all accepted parent files and the last-good
+pointer bytes unchanged. Repair restores the parent's indexed body representation.
+
+For Blend files, the oracle checks named directed polygon boundaries.
+For GLB, it checks each face patch's triangle containment, non-overlap, area,
+and directed boundary counts. It permits a valid alternate diagonal in this
+geometric oracle only. The production roundtrip predicate does not change.
+
+The tests do not claim identical shading across arbitrary triangle diagonals.
+Both artifact paths use Blender, so this is not an independent GLB decoder.
+All four controller stages and all three artifact probes must complete per revision.
+An export failure is a failed experiment, never the intended policy rejection.
+
+The oracle also checks each stored production observation against its analytic
+geometry, corner normals, materials, and fixed transforms.
+These ten observation checks are separate from the 51 actual artifact probes.
+A consistently wrong observer cannot pass only because its parent and child agree.
+Each executed author source hash must match the hash in the run summary.
+
+## Recorded evidence and tolerance
 
 The runner retains raw probes, bounded sandbox logs, immutable controller result
 stores and `verifier-validation-summary.json`, including on failure. That summary

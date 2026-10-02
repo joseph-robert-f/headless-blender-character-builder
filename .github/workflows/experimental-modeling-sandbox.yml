@@ -112,7 +112,7 @@
             "MODELING_V2_QA_STORE": "${{ runner.temp }}/modeling-verifier-validation/tetra",
             "MODELING_REVIEW_QA_OUTPUT": "${{ runner.temp }}/modeling-review-ui"
           },
-          "run": "node tests/experimental_modeling/review_verifier_ui_qa.cjs"
+          "run": "node --test tests/experimental_modeling/test_review_verifier_ui_readiness.cjs\nnode tests/experimental_modeling/review_verifier_ui_qa.cjs"
         },
         {
           "name": "Create bounded verifier proof archive",
