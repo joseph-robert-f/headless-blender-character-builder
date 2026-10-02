@@ -1,0 +1,142 @@
+libmpdec 4.0.0 selected by CPython 3.13.16 for windows-x64.
+Comments and copyright files below retain the upstream text.
+
+Sources:
+COPYRIGHT.txt
+
+Copyright (c) 2008-2024 Stefan Krah. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+
+Sources:
+libmpdec/basearith.c
+libmpdec/basearith.h
+libmpdec/bench.c
+libmpdec/bench_full.c
+libmpdec/bits.h
+libmpdec/constants.c
+libmpdec/constants.h
+libmpdec/context.c
+libmpdec/convolute.c
+libmpdec/convolute.h
+libmpdec/crt.c
+libmpdec/crt.h
+libmpdec/difradix2.c
+libmpdec/difradix2.h
+libmpdec/examples/compare.c
+libmpdec/examples/div.c
+libmpdec/examples/divmod.c
+libmpdec/examples/multiply.c
+libmpdec/examples/pow.c
+libmpdec/examples/powmod.c
+libmpdec/examples/shift.c
+libmpdec/examples/sqrt.c
+libmpdec/fnt.c
+libmpdec/fnt.h
+libmpdec/fourstep.c
+libmpdec/fourstep.h
+libmpdec/io.c
+libmpdec/io.h
+libmpdec/mpalloc.c
+libmpdec/mpalloc.h
+libmpdec/mpdecimal.c
+libmpdec/mpdecimal.h.in
+libmpdec/mpdecimal32vc.h
+libmpdec/mpdecimal64vc.h
+libmpdec/mpsignal.c
+libmpdec/numbertheory.c
+libmpdec/numbertheory.h
+libmpdec/sixstep.c
+libmpdec/sixstep.h
+libmpdec/transpose.c
+libmpdec/transpose.h
+libmpdec/typearith.h
+libmpdec/umodarith.h
+
+/*
+ * Copyright (c) 2008-2024 Stefan Krah. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+Sources:
+libmpdec/typearith.h
+
+/*
+ * By Henry S. Warren: http://www.hackersdelight.org/HDcode/divlu.c.txt
+ * http://www.hackersdelight.org/permissions.htm:
+ * "You are free to use, copy, and distribute any of the code on this web
+ *  site, whether modified by you or not. You need not give attribution."
+ *
+ * Slightly modified, comments are mine.
+ */
+
+Sources:
+libmpdec/vcdiv64.asm
+
+;
+; Copyright (c) 2008-2024 Stefan Krah. All rights reserved.
+;
+; Redistribution and use in source and binary forms, with or without
+; modification, are permitted provided that the following conditions
+; are met:
+;
+; 1. Redistributions of source code must retain the above copyright
+;    notice, this list of conditions and the following disclaimer.
+; 2. Redistributions in binary form must reproduce the above copyright
+;    notice, this list of conditions and the following disclaimer in the
+;    documentation and/or other materials provided with the distribution.
+;
+; THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+; ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+; IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+; ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+; FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+; DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+; OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+; HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+; LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+; OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+; SUCH DAMAGE.
+;
+

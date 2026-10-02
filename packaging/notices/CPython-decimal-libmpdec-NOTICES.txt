@@ -1,0 +1,145 @@
+CPython 3.13.16 _decimal wrapper and vendored libmpdec 2.5.1 notices.
+Comments and copyright files below retain the upstream text.
+
+Sources:
+Modules/_decimal/_decimal.c
+
+/*
+ * Copyright (c) 2008-2012 Stefan Krah. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+Sources:
+Modules/_decimal/docstrings.h
+
+/*
+ * Copyright (c) 2001-2012 Python Software Foundation. All Rights Reserved.
+ * Modified and extended by Stefan Krah.
+ */
+
+Sources:
+Modules/_decimal/libmpdec/basearith.c
+Modules/_decimal/libmpdec/basearith.h
+Modules/_decimal/libmpdec/bench.c
+Modules/_decimal/libmpdec/bench_full.c
+Modules/_decimal/libmpdec/bits.h
+Modules/_decimal/libmpdec/constants.c
+Modules/_decimal/libmpdec/constants.h
+Modules/_decimal/libmpdec/context.c
+Modules/_decimal/libmpdec/convolute.c
+Modules/_decimal/libmpdec/convolute.h
+Modules/_decimal/libmpdec/crt.c
+Modules/_decimal/libmpdec/crt.h
+Modules/_decimal/libmpdec/difradix2.c
+Modules/_decimal/libmpdec/difradix2.h
+Modules/_decimal/libmpdec/fnt.c
+Modules/_decimal/libmpdec/fnt.h
+Modules/_decimal/libmpdec/fourstep.c
+Modules/_decimal/libmpdec/fourstep.h
+Modules/_decimal/libmpdec/io.c
+Modules/_decimal/libmpdec/io.h
+Modules/_decimal/libmpdec/mpalloc.c
+Modules/_decimal/libmpdec/mpalloc.h
+Modules/_decimal/libmpdec/mpdecimal.c
+Modules/_decimal/libmpdec/mpdecimal.h
+Modules/_decimal/libmpdec/mpsignal.c
+Modules/_decimal/libmpdec/numbertheory.c
+Modules/_decimal/libmpdec/numbertheory.h
+Modules/_decimal/libmpdec/sixstep.c
+Modules/_decimal/libmpdec/sixstep.h
+Modules/_decimal/libmpdec/transpose.c
+Modules/_decimal/libmpdec/transpose.h
+Modules/_decimal/libmpdec/typearith.h
+Modules/_decimal/libmpdec/umodarith.h
+
+/*
+ * Copyright (c) 2008-2020 Stefan Krah. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+Sources:
+Modules/_decimal/libmpdec/typearith.h
+
+/*
+ * By Henry S. Warren: http://www.hackersdelight.org/HDcode/divlu.c.txt
+ * http://www.hackersdelight.org/permissions.htm:
+ * "You are free to use, copy, and distribute any of the code on this web
+ *  site, whether modified by you or not. You need not give attribution."
+ *
+ * Slightly modified, comments are mine.
+ */
+
+Sources:
+Modules/_decimal/libmpdec/vcdiv64.asm
+
+;
+; Copyright (c) 2008-2020 Stefan Krah. All rights reserved.
+;
+; Redistribution and use in source and binary forms, with or without
+; modification, are permitted provided that the following conditions
+; are met:
+;
+; 1. Redistributions of source code must retain the above copyright
+;    notice, this list of conditions and the following disclaimer.
+;
+; 2. Redistributions in binary form must reproduce the above copyright
+;    notice, this list of conditions and the following disclaimer in the
+;    documentation and/or other materials provided with the distribution.
+;
+; THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS "AS IS" AND
+; ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+; IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+; ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+; FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+; DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+; OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+; HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+; LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+; OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+; SUCH DAMAGE.
+;
+

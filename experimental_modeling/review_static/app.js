@@ -83,6 +83,11 @@
     text('requirement-count', rows.length); const list = $('requirements'); list.replaceChildren();
     const counts = { pass: 0, fail: 0, unknown: 0 }; rows.forEach(row => counts[['pass', 'fail'].includes(row.status) ? row.status : 'unknown']++);
     const summary = $('requirement-summary'); summary.replaceChildren();
+    const legacyMissing = rows.some(row => row.id === 'legacy-report');
+    const contractLabel = legacyMissing ? 'Check version unknown' : report?.schema_version === 2 ? 'Checks v2' : report?.schema_version === 1 ? 'Legacy checks v1' : 'Check version unknown';
+    summary.append(el('span', 'status-pill', contractLabel));
+    const contractNotice = el('p', 'measurement-summary', legacyMissing ? 'No bound verification report is available.' : report?.schema_version === 2 ? 'Version 2 checks indexed translation and surface data. It does not check general mesh equivalence.' : 'This legacy version-1 report does not include version-2 surface checks.');
+    contractNotice.id = 'verifier-contract-notice'; list.append(contractNotice);
     for (const [status, label] of [['pass', 'passed'], ['fail', 'failed'], ['unknown', 'unknown']]) if (counts[status]) summary.append(el('span', `status-pill ${status}`, `${counts[status]} ${label}`));
     if (!rows.length) list.append(el('p', 'empty', 'No requirement evidence is available. This does not show a pass.'));
     for (const row of rows) {

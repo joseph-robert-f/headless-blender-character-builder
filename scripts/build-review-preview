@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ast
 import importlib.metadata
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -26,8 +27,51 @@ PYTHON_VERSION = "3.13.16"
 EXCLUDES = ["experimental_modeling.sandbox", "experimental_modeling.inspect_scene", "bpy",
             "tkinter", "_tkinter", "idlelib", "test", "unittest", "ensurepip", "pip",
             "setuptools", "sqlite3", "_sqlite3", "curses", "_curses", "readline",
-            "ssl", "_ssl", "_hashlib", "_bz2", "_lzma", "ctypes", "_ctypes",
-            "decimal", "_decimal"]
+            "ssl", "_ssl", "_hashlib", "_bz2", "_lzma", "ctypes", "_ctypes"]
+LIBMPDEC_VERSIONS = {"windows-x64": "4.0.0", "macos-arm64": "4.0.1"}
+
+
+def decimal_notices(target):
+    notices = ["licenses/CPython-LICENSE.txt", "licenses/CPython-incorporated-software.rst",
+               "licenses/CPython-decimal-libmpdec-NOTICES.txt"]
+    if target in LIBMPDEC_VERSIONS:
+        notices.append(f"licenses/CPython-libmpdec-{LIBMPDEC_VERSIONS[target]}-NOTICES.txt")
+    return notices
+
+
+def decimal_component(target):
+    import _decimal
+
+    version = _decimal.__libmpdec_version__
+    expected = LIBMPDEC_VERSIONS.get(target)
+    if expected is not None and version != expected:
+        raise ValueError(f"Unreviewed libmpdec version for {target}: {version}; expected {expected}")
+    return {"component": "libmpdec in CPython _decimal", "version": version,
+            "applicable": expected is not None,
+            "incorporation": ("Static, as selected by the reviewed CPython target build" if expected else
+                              "Local validation only; static incorporation and source identity are not asserted"),
+            "license_files": decimal_notices(target) if expected else [],
+            "notice_catalog": "licenses/sources.json",
+            "notice_catalog_entry": (f"CPython-libmpdec-{expected}-NOTICES.txt" if expected else None)}
+
+
+def bind_decimal_component(component, native, target):
+    matches = [row for row in native if Path(row["file"]).name.lower().startswith("_decimal.")]
+    origin = "extension"
+    if not matches and target == "linux-validation":
+        import _decimal
+
+        spec = importlib.util.find_spec("_decimal")
+        if ("_decimal" in sys.builtin_module_names and spec is not None and spec.origin == "built-in"
+                and getattr(_decimal, "__file__", None) is None):
+            matches = [row for row in native if row["bundled"] and row["component"] == "CPython"
+                       and re.fullmatch(r"libpython[0-9].*\.so(?:\..*)?", Path(row["file"]).name.lower())]
+            origin = "built-in; local validation only, source identity unverified"
+    if len(matches) != 1:
+        raise ValueError("The preview must include the _decimal native module used by fractions.Fraction; "
+                         "a verified Linux built-in requires one bundled libpython")
+    return {**component, "native_file": matches[0]["file"], "native_sha256": matches[0]["sha256"],
+            "runtime_module_origin": origin}
 
 
 def git(*args):
@@ -120,8 +164,19 @@ def native_inventory(bundle, work, target):
         source = inputs.get(name)
         if any(x in name for x in ("libssl", "libcrypto", "libffi", "libbz2", "liblzma")):
             raise ValueError(f"Unused external native library entered the preview: {name}")
+        # Reviewed target builds incorporate libmpdec into _decimal.
+        # A separate library needs its own source and notice review.
+        if name.startswith(("libmpdec", "mpdec")) and target != "linux-validation":
+            unmapped.append({"name": name, "sha256": sha256(path), "analysis_source": source})
+            continue
         if name.startswith("libz."):
             component, notices = "zlib", ["licenses/zlib-LICENSE.txt"]
+        elif name.startswith("_decimal."):
+            if target in LIBMPDEC_VERSIONS:
+                component = f"CPython _decimal with static libmpdec {LIBMPDEC_VERSIONS[target]}"
+                notices = decimal_notices(target)
+            else:
+                component, notices = "Local Linux validation _decimal/libmpdec (not a distributed target)", []
         elif name.endswith(".pyd") or ".cpython-" in name or name.startswith(("libpython", "python3")) or name == "python":
             component, notices = "CPython", ["licenses/CPython-LICENSE.txt", "licenses/CPython-incorporated-software.rst"]
             # Static incorporated code is invisible to dynamic-library scans.
@@ -173,6 +228,7 @@ def main():
         raise ValueError('Output must be new or empty. No existing package is overwritten')
     out.mkdir(parents=True, exist_ok=True)
     deps = dependencies()
+    decimal = decimal_component(args.target)
     work = out / "work"
     command = [sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", "--onedir", "--console",
                "--noupx", "--name", NAME, "--distpath", str(out / "dist"), "--workpath", str(work),
@@ -187,6 +243,7 @@ def main():
     bundle = out / "dist" / NAME
     collect_notices(bundle)
     native, excluded = native_inventory(bundle, work, args.target)
+    decimal = bind_decimal_component(decimal, native, args.target)
     (bundle / "source").mkdir()
     with (bundle / "source" / "hbcb-corresponding-source.tar.gz").open("wb") as stream:
         subprocess.run(["git", "archive", "--format=tar.gz", "--prefix=hbcb-source/", tree],
@@ -207,6 +264,7 @@ def main():
                   "changes": "Frozen Python module closure, relocated runtime and static reviewer; unused modules excluded; macOS arm64 thinning; Microsoft runtime not redistributed",
                   "excluded_modules": EXCLUDES, "native_components": native, "external_microsoft_runtime": excluded,
                   "static_components": [
+                      decimal,
                       {"component": "HACL* hash code and KaRaMeL support in CPython", "version": "bb3d0dc8d9d15a5cd51094d5b69e70aa09005ff0",
                        "license_files": ["licenses/CPython-hacl-NOTICES.txt", "licenses/Apache-2.0.txt"]},
                       {"component": "BLAKE2 in CPython", "version": "libb2 0.98.1 as vendored in CPython 3.13.16",

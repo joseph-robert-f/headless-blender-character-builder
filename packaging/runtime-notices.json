@@ -220,6 +220,560 @@
       "url": "https://raw.githubusercontent.com/creativecommons/cc-legal-tools-data/main/COPYING",
       "component": "BLAKE2 CC0 dedication; full legal text from Creative Commons official legal-tools repository",
       "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
+    },
+    {
+      "file": "CPython-decimal-libmpdec-NOTICES.txt",
+      "component": "CPython 3.13.16 _decimal wrapper and vendored libmpdec 2.5.1 notices.",
+      "sha256": "76d72212b9a5ab5f2a5afbd08b3f77c30398e2ba0bfa4ce568682d2732ef2d8b",
+      "url": "https://www.python.org/ftp/python/3.13.16/Python-3.13.16.tar.xz",
+      "source_archive_url": "https://www.python.org/ftp/python/3.13.16/Python-3.13.16.tar.xz",
+      "source_archive_sha256": "f4b1bfb3c79b5bb11b8d228a12504163b4c0dab4d679828d8f5f26b6cb6ab35d",
+      "scope": "The CPython wrapper and source-tree fallback. Target runtime libmpdec notices are separate.",
+      "extraction": "Full COPYRIGHT.txt, where present, and all distinct copyright, license, permission, and redistribution C comments from the listed files; full assembly notice header. Comments are scanned to end of file.",
+      "sources": [
+        {
+          "file": "Modules/_decimal/_decimal.c",
+          "sha256": "6ce1c04d434bf15cfeb8f83edf5b6eb2f2d020c8c0b998f4d10de3a55c43cbf6"
+        },
+        {
+          "file": "Modules/_decimal/docstrings.h",
+          "sha256": "51c0db925d3ad73604ee3d2452891a622b1fa6006e146ffc63f1207a79f9f9fd"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/basearith.c",
+          "sha256": "ad498362c31a5b99ab19fce320ac540cf14c5c4ec09478f0ad3858da1428113d"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/basearith.h",
+          "sha256": "2eaac88a71b9bcf3144396c12dcfeced573e0e550a0050d75b9ed3903248596d"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/bench.c",
+          "sha256": "007e38542ec8d9d8805fe243b5390d79211b9360e2797a20079e833e68ad9e45"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/bench_full.c",
+          "sha256": "1b9e892d4b268deea835ec8906f20a1e5d25e037b2e698edcd34315613f3608c"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/bits.h",
+          "sha256": "ce7741e58ea761a24250c0bfa10058cec8c4fd220dca70a41de3927a2e4f5376"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/constants.c",
+          "sha256": "cd430b8657cf8a616916e02f9bd5ca044d5fc19e69333f5d427e1fdb90b0864b"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/constants.h",
+          "sha256": "19dc46df04abb7ee08e9a403f87c8aac8d4a077efcce314c597f8b73e22884f2"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/context.c",
+          "sha256": "9a265d366f31894aad78bca7fcdc1457bc4a3aa3887ca231b7d78e41f79541c0"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/convolute.c",
+          "sha256": "66fe27b9bb37039cad5be32b105ed509e5aefa15c1957a9058af8ee23cddc97a"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/convolute.h",
+          "sha256": "c00d17450c2b8e1d7f1eb8a084f7e6a68f257a453f8701600e860bf357c531d7"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/crt.c",
+          "sha256": "1f4e65c44864c3e911a6e91f33adec76765293e90553459e3ebce35a58898dba"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/crt.h",
+          "sha256": "7d31f1d0dd73b62964dab0f7a1724473bf87f1f95d8febf0b40c15430ae9a47c"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/difradix2.c",
+          "sha256": "0a9fef8a374f55277e9f6000b7277bb037b9763c32b156c29950422b057498bd"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/difradix2.h",
+          "sha256": "5c6766496224de657400995b58b64db3e7084004bf00daebdd7e08d0c5995243"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/fnt.c",
+          "sha256": "a9f923524d53a9445769f27405375ec3d95fa804bb11db5ee249ae047f11cfce"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/fnt.h",
+          "sha256": "3b03e69adf78fde68c8f87d33595d557237581d33fc067e1039eed9e9f2cc44c"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/fourstep.c",
+          "sha256": "cf2e69b946ec14b087e523c0ff606553070d13c23e851fb0ba1df51a728017e6"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/fourstep.h",
+          "sha256": "dbaced03b52d0f880c377b86c943bcb36f24d557c99a5e9732df3ad5debb5917"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/io.c",
+          "sha256": "7cac49fef5e9d952ec9390bf81c54d83f1b5da32fdf76091c2f0770ed943b7fe"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/io.h",
+          "sha256": "259eab89fe27914e0e39e61199094a357ac60d86b2aab613c909040ff64a4a0c"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/mpalloc.c",
+          "sha256": "5ba2f4c80302e71fb216aa247c858e0bf6c8cfabffe7980ac17d4d023c0fef2b"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/mpalloc.h",
+          "sha256": "f7412521de38afb837fcabc2b1d48b971b86bfaa55f3f40d58ff9e46e92debd3"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/mpdecimal.c",
+          "sha256": "4f89b8095e408a18deff79cfb605299e615bae747898eb105d8936064f7fb626"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/mpdecimal.h",
+          "sha256": "ea0b9c6b296c13aed6ecaa50b463e39a9c1bdc059b84f50507fd8247b2e660f9"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/mpsignal.c",
+          "sha256": "653171cf2549719478417db7e9800fa0f9d99c02dec6da6876329ccf2c07b93f"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/numbertheory.c",
+          "sha256": "bdbf2e246f341a3ba3f6f9d8759e7cb222eb9b15f9ed1e7c9f6a59cbb9f8bc91"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/numbertheory.h",
+          "sha256": "2f7d5b40af508fa6ac86f5d62101fa3bf683c63b24aa87c9548e3fdd13abc57b"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/sixstep.c",
+          "sha256": "7602aaf98ec9525bc4b3cab9631615e1be2efd9af894002ef4e3f5ec63924fcf"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/sixstep.h",
+          "sha256": "a191366348b3d3dd49b9090ec5c77dbd77bb3a523c01ff32adafa137e5097ce7"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/transpose.c",
+          "sha256": "2d12fcae512143a9376c8a0d4c1ba3008e420e024497a7e7ec64c6bec23fcddc"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/transpose.h",
+          "sha256": "fafeb2b901b2b41bf0df00be7d99b84df1a78e3cc1e582e09cbfc3b6d44d4abe"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/typearith.h",
+          "sha256": "25e0a0703b51744277834e6b2398d7b7d2c17f92bf30f8b6f949e0486ae2b346"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/umodarith.h",
+          "sha256": "bfe1ddb2ca92906456b80745adcbe02c83cadac3ef69caa21bc09b7292cc152b"
+        },
+        {
+          "file": "Modules/_decimal/libmpdec/vcdiv64.asm",
+          "sha256": "aacc3e47ea8f41e8840c6c67f64ec96d54696a16889903098fa1aab56949a00f"
+        }
+      ]
+    },
+    {
+      "file": "CPython-libmpdec-4.0.0-NOTICES.txt",
+      "component": "libmpdec 4.0.0 selected by CPython 3.13.16 for windows-x64.",
+      "sha256": "542fc12a8c32932a862030959aeae283d6fb819b7d6e8d5b00a44e9fa0d33610",
+      "url": "https://raw.githubusercontent.com/python/cpython/v3.13.16/PCbuild/python.props",
+      "source_archive_url": "https://github.com/python/cpython-source-deps/archive/refs/tags/mpdecimal-4.0.0.tar.gz",
+      "source_archive_sha256": "338fac3fb8cdd60f406b6326431338756f58a8af94229ffd9bf1e7c2b1ad71ca",
+      "target": "windows-x64",
+      "version": "4.0.0",
+      "selection_source": {
+        "file": "PCbuild/python.props",
+        "sha256": "9fd0d0d7869c1096a6b1a95a3173f478c1e74235d383d79c45191fe8d286ff1a",
+        "source_archive_url": "https://www.python.org/ftp/python/3.13.16/Python-3.13.16.tar.xz",
+        "source_archive_sha256": "f4b1bfb3c79b5bb11b8d228a12504163b4c0dab4d679828d8f5f26b6cb6ab35d"
+      },
+      "extraction": "Full COPYRIGHT.txt, where present, and all distinct copyright, license, permission, and redistribution C comments from the listed files; full assembly notice header. Comments are scanned to end of file.",
+      "sources": [
+        {
+          "file": "COPYRIGHT.txt",
+          "sha256": "2713324211652ce4a60e6e21e54f9dc3004299e591b0933a352f1a89c5fb53c2"
+        },
+        {
+          "file": "libmpdec/basearith.c",
+          "sha256": "2009867fbf3f047736e6340d804c03c8c130d9fe2fd7bafe4a46b715716abe19"
+        },
+        {
+          "file": "libmpdec/basearith.h",
+          "sha256": "a69efed9bfa6dbd6c7cd9dd3855c8e56e2e86a97665fbd0a7431eeb424a9798d"
+        },
+        {
+          "file": "libmpdec/bench.c",
+          "sha256": "f342120c2cbd316b3f3d4c215936c4e33d5dc5b2ea95166d09b9d3d34ce7bb27"
+        },
+        {
+          "file": "libmpdec/bench_full.c",
+          "sha256": "b341375d53e7bb1cd117308e0c7159d9d7688bf31ed44fd21d23767f7d268de6"
+        },
+        {
+          "file": "libmpdec/bits.h",
+          "sha256": "fa52d41c172a056c224576869f886e22b04f4769438a4bd618ec7c5dbbcfc440"
+        },
+        {
+          "file": "libmpdec/constants.c",
+          "sha256": "4dc8fe8b945539362d1cdccdcf1100ab9dc315b9ce45de52971c691e5e7be297"
+        },
+        {
+          "file": "libmpdec/constants.h",
+          "sha256": "85e0f36b6559a53fb8d962f812c685c44ec07afe8cbb326a7efc02ac06ae8f01"
+        },
+        {
+          "file": "libmpdec/context.c",
+          "sha256": "8ede3155f2c7fef75564b0bbabdbc728a69a00713b8720a1b4a8d472eaf26714"
+        },
+        {
+          "file": "libmpdec/convolute.c",
+          "sha256": "d4a78072bfab8f8e235e1e19124965705d055f09acc9474bc94e04445ed283f4"
+        },
+        {
+          "file": "libmpdec/convolute.h",
+          "sha256": "388fdcb34edfea22e05204a88eeb478572b8db0db143c041a0022f77ff09cc85"
+        },
+        {
+          "file": "libmpdec/crt.c",
+          "sha256": "451b08a91ed2a7f2a458d55ce4bf5bd1e9002a5d12513ec33d9edd844106eec9"
+        },
+        {
+          "file": "libmpdec/crt.h",
+          "sha256": "473f92c4cd31f56928ae523e805c0337c6c15c147847dd49a3d2b297ea0172df"
+        },
+        {
+          "file": "libmpdec/difradix2.c",
+          "sha256": "0f7e27ac1db2c0cfc15410ad34173823acf44ac1c2b56b2b586cf7b063ae2b54"
+        },
+        {
+          "file": "libmpdec/difradix2.h",
+          "sha256": "0018b0abcbeda79b260c09e89bc343bb0588316e6b7051a65037a328342b4438"
+        },
+        {
+          "file": "libmpdec/examples/compare.c",
+          "sha256": "7fcf6659a0ad973c696bd0bd95624c3652e1977f9b334aefb2a22bee666c70d1"
+        },
+        {
+          "file": "libmpdec/examples/div.c",
+          "sha256": "9517494746051be53daeb4ff39c30cf04da8b5f9049b46e2ca5812b4c34dcf84"
+        },
+        {
+          "file": "libmpdec/examples/divmod.c",
+          "sha256": "9b2b8a5e7eb74421c6d637f132e11216c62124dfb4355320815e8301d7112434"
+        },
+        {
+          "file": "libmpdec/examples/multiply.c",
+          "sha256": "57daf21115afee450e3ed005669e5e98d6cc4e9107c12b8af8f0ce761a099568"
+        },
+        {
+          "file": "libmpdec/examples/pow.c",
+          "sha256": "b7be9ca023766587591082547a7e065ebedf529cf3516bdbe57e1a63ebf02961"
+        },
+        {
+          "file": "libmpdec/examples/powmod.c",
+          "sha256": "99cae0118b47c57fa4ce293491dc89718ec23cd40373f33bdf1a245bf7e7d36f"
+        },
+        {
+          "file": "libmpdec/examples/shift.c",
+          "sha256": "c86db6b54f8679c715f356e185c1c9a8d8b102a1b5083c4a4c3f5937e559dbb6"
+        },
+        {
+          "file": "libmpdec/examples/sqrt.c",
+          "sha256": "2565ba67355e05909d6255cc4fd1b6dfde1ad0164a324b113b44266c36600bec"
+        },
+        {
+          "file": "libmpdec/fnt.c",
+          "sha256": "55649067fa9403097c4c7632c70f65fe43d8ef51962ae1dfc042a9ec3a144b15"
+        },
+        {
+          "file": "libmpdec/fnt.h",
+          "sha256": "4f249cb0a147461c55d8cef97062256ab5c45a4f040eb2b96df712f62bdae4ce"
+        },
+        {
+          "file": "libmpdec/fourstep.c",
+          "sha256": "5a044d56e365504d5bbbbd24b7220e92261350be16a0c92ca965718afb97f64b"
+        },
+        {
+          "file": "libmpdec/fourstep.h",
+          "sha256": "a1ba1e3868ec064af54175d0f2a6189f881f1f87bf4589076a0d04ed048e956f"
+        },
+        {
+          "file": "libmpdec/io.c",
+          "sha256": "840d30f1e9a575f14d098a297693768026c50b927b8c34e0f6b834bbc05606aa"
+        },
+        {
+          "file": "libmpdec/io.h",
+          "sha256": "48e509c9bb5d368bfd8936dedbcf80bd595da25e00452f6e2fe7ab5f0a831f70"
+        },
+        {
+          "file": "libmpdec/mpalloc.c",
+          "sha256": "37d3e1a183830f40a62be5ef101e6fdc9816f334a90e2781d1f6ade55bc25e24"
+        },
+        {
+          "file": "libmpdec/mpalloc.h",
+          "sha256": "fd67a141fae9e2f71222fea032afbbd6644ab3a20a64c836f82cf133210a907b"
+        },
+        {
+          "file": "libmpdec/mpdecimal.c",
+          "sha256": "bf6b9509b12195704fc4c8a132ec9c742b343079571b26aea7c4503695236870"
+        },
+        {
+          "file": "libmpdec/mpdecimal.h.in",
+          "sha256": "8d0919ba81f8422d2fc30490bd4ce769c9c3b176a5aa361cfc895e09a3ead63b"
+        },
+        {
+          "file": "libmpdec/mpdecimal32vc.h",
+          "sha256": "f46413f1a5d972cad51140e0f1b5a999bce87b47631363c841319e72c5fd893a"
+        },
+        {
+          "file": "libmpdec/mpdecimal64vc.h",
+          "sha256": "fff57112e49da13308af5a6fb454b38c7f4fdb6a8dc121aa434773b144ac02f3"
+        },
+        {
+          "file": "libmpdec/mpsignal.c",
+          "sha256": "7e1c2ba122b3a7b308c5146769f4523043a2839500713701ca3f9fcdfd9b74bb"
+        },
+        {
+          "file": "libmpdec/numbertheory.c",
+          "sha256": "0ea44ede4ac3769894f4379ffc8198ede509e458603fd30f7caef736dcb1420f"
+        },
+        {
+          "file": "libmpdec/numbertheory.h",
+          "sha256": "81f8d6f521953662856b18c59f00dd2e263442f830386abce1378cb7bcbff99e"
+        },
+        {
+          "file": "libmpdec/sixstep.c",
+          "sha256": "3696ce97b6ebc1750920472e97639e6781d4d92eaf1cfd43c12b8463dd354d4f"
+        },
+        {
+          "file": "libmpdec/sixstep.h",
+          "sha256": "48ceb38cb862e656cbec76857789e68d77c7bbc55b9393de77127e6540426e70"
+        },
+        {
+          "file": "libmpdec/transpose.c",
+          "sha256": "f29bd7dff0734bd4774e13566dcc2e659fdfe02e2e7da9f18d6cbd7907730a6d"
+        },
+        {
+          "file": "libmpdec/transpose.h",
+          "sha256": "d63517df08f659995f1a3cd2456489593fcc973c6e0516e54028a49482eaee4e"
+        },
+        {
+          "file": "libmpdec/typearith.h",
+          "sha256": "57720bc657b9a13b4679cd805b0661e5d246359b4dac80fa95b3a49f840ae466"
+        },
+        {
+          "file": "libmpdec/umodarith.h",
+          "sha256": "631996ffde056768e4e446bc24b7d10e722dcd765430f69da20c394846351b2a"
+        },
+        {
+          "file": "libmpdec/vcdiv64.asm",
+          "sha256": "2a8750753ce9e8d94aa581b4a2f1e3d731b997808fbd2eecc5eaa0cb9d0e372b"
+        }
+      ]
+    },
+    {
+      "file": "CPython-libmpdec-4.0.1-NOTICES.txt",
+      "component": "libmpdec 4.0.1 selected by CPython 3.13.16 for macos-arm64.",
+      "sha256": "d4923f507ff4747e1791c9d934beeded3260007cf2d6d159f53d90b64f9b0bc6",
+      "url": "https://raw.githubusercontent.com/python/cpython/v3.13.16/Mac/BuildScript/build-installer.py",
+      "source_archive_url": "https://www.bytereef.org/software/mpdecimal/releases/mpdecimal-4.0.1.tar.gz",
+      "source_archive_sha256": "96d33abb4bb0070c7be0fed4246cd38416188325f820468214471938545b1ac8",
+      "target": "macos-arm64",
+      "version": "4.0.1",
+      "selection_source": {
+        "file": "Mac/BuildScript/build-installer.py",
+        "sha256": "c433b2028294083bd7f175b93e7210c5ecafe1aa493f9f27e7fa4f7c824c2ea1",
+        "source_archive_url": "https://www.python.org/ftp/python/3.13.16/Python-3.13.16.tar.xz",
+        "source_archive_sha256": "f4b1bfb3c79b5bb11b8d228a12504163b4c0dab4d679828d8f5f26b6cb6ab35d"
+      },
+      "extraction": "Full COPYRIGHT.txt, where present, and all distinct copyright, license, permission, and redistribution C comments from the listed files; full assembly notice header. Comments are scanned to end of file.",
+      "sources": [
+        {
+          "file": "COPYRIGHT.txt",
+          "sha256": "dba079e24a0286052f9f36a5e0b4f6cc95bc83ada657eb26bef8c0b6473f6512"
+        },
+        {
+          "file": "libmpdec/basearith.c",
+          "sha256": "d6c14a1783e5867b21285502b144f253f4cc1faf09e7d3a5ead44b1c0cf0803b"
+        },
+        {
+          "file": "libmpdec/basearith.h",
+          "sha256": "97facb90020ce52dc897299268e868b24b59d84c4ef6aac40f37ea4d7a1ae36b"
+        },
+        {
+          "file": "libmpdec/bench.c",
+          "sha256": "b9d9a16356c7c8b6834e2cfddcacc363b6c31cded9671ccb0fa8f07e0b311d89"
+        },
+        {
+          "file": "libmpdec/bench_full.c",
+          "sha256": "3c5f0b86aedcfd51091d5e7c5db8ebf2aca62bc309975a811ccf1d3ec5078b84"
+        },
+        {
+          "file": "libmpdec/bits.h",
+          "sha256": "93c9af2032045c0c33bbb87047aa8c0a4de2ba906522599e4b681e4b5555145f"
+        },
+        {
+          "file": "libmpdec/constants.c",
+          "sha256": "b9de7a3791f1667633cfd28c92a5371f64cbb52f40148e29cfdbe3a35240d703"
+        },
+        {
+          "file": "libmpdec/constants.h",
+          "sha256": "aa50bcedaea8806ac773661b4b777ef3dd8709dd3fe66f6542030e34be561ae1"
+        },
+        {
+          "file": "libmpdec/context.c",
+          "sha256": "035890c0af53a7f6918d1408fb70f91920db480ddf12f9b578bde7fe3e822dc1"
+        },
+        {
+          "file": "libmpdec/convolute.c",
+          "sha256": "c62e92bbe485ed9eb80d49cabcee2641039264ba014118fe3ed94eb28315bd23"
+        },
+        {
+          "file": "libmpdec/convolute.h",
+          "sha256": "4a1731e9ca98844c940236cce2849ccd5a139064dbb5240047a5f8262a680a25"
+        },
+        {
+          "file": "libmpdec/crt.c",
+          "sha256": "19f00c468f45a62effefe0686321e9a8e8fabad85fa63e75687ef94e7cb54bf1"
+        },
+        {
+          "file": "libmpdec/crt.h",
+          "sha256": "2d01b291348b4f54b8c540f12d9d7dcbf3213f21cdf0ab791627014d73d8d4e9"
+        },
+        {
+          "file": "libmpdec/difradix2.c",
+          "sha256": "ed7db58cabdbaae6b27da03d34de9b7a28e84a3fbefc08ed23aae2777361a413"
+        },
+        {
+          "file": "libmpdec/difradix2.h",
+          "sha256": "295da72d31714283a62f8bce5a67acbfef8871866e9c63dc9c8382c6fff3f795"
+        },
+        {
+          "file": "libmpdec/examples/compare.c",
+          "sha256": "2ca1398a969d453fd60eb440e1949134671b22a4960873584aba78fac6216484"
+        },
+        {
+          "file": "libmpdec/examples/div.c",
+          "sha256": "2cffc6616100b11aaa9bb77f30c4564619aec5d1b3fb9f45c191232f97547e85"
+        },
+        {
+          "file": "libmpdec/examples/divmod.c",
+          "sha256": "2f0b2840f7c7d2b5cab14529104aee024c1f2cfa20fcf652c586b586d6f6a5aa"
+        },
+        {
+          "file": "libmpdec/examples/multiply.c",
+          "sha256": "fb0cb82244039f7d339811ee9e1093c384bd933089b4d40f00517b6796d69a48"
+        },
+        {
+          "file": "libmpdec/examples/pow.c",
+          "sha256": "a706b04a75a449cf2a44b775f8b627960a58d5f03a68bc94a624830002e2f9e0"
+        },
+        {
+          "file": "libmpdec/examples/powmod.c",
+          "sha256": "366ea0fe1091b4de05c496c6dc15479b81bfb861f078333d6b3c25dc413bc897"
+        },
+        {
+          "file": "libmpdec/examples/shift.c",
+          "sha256": "14c495948c4f605331f4002ad60b848614e96aa1d82a60bdf5154e1031cca75f"
+        },
+        {
+          "file": "libmpdec/examples/sqrt.c",
+          "sha256": "19939fe762e2fb21c5cd42bd6ef42da69bf2cab1ed2fd375f73c7e19ce7c8d15"
+        },
+        {
+          "file": "libmpdec/fnt.c",
+          "sha256": "ee8c15745531a05b13956a766b08b96aa24bf7e5473fd09ba2256f920a938219"
+        },
+        {
+          "file": "libmpdec/fnt.h",
+          "sha256": "11accb7f21c2a3b909bcc21b3a8e3c3e55474769d3892f94750c2a1e3480c186"
+        },
+        {
+          "file": "libmpdec/fourstep.c",
+          "sha256": "cbe76add4ee239fe06e4935b7aa81b0f751a924394fe5268d45731f18a9961f5"
+        },
+        {
+          "file": "libmpdec/fourstep.h",
+          "sha256": "021e61ea2d4aa1b84e9ebda0fb62a2c5b48507197075b19fc1993c0a11fdfaa5"
+        },
+        {
+          "file": "libmpdec/io.c",
+          "sha256": "ed1dc2a80fbf33b67bc4b08618e7285a3559a883f8fa40a32e23fd4f70ca04d7"
+        },
+        {
+          "file": "libmpdec/io.h",
+          "sha256": "1008865d9664d9fea1a2105f74c79edcabcfff95a151b6deab24f8d06d0b495e"
+        },
+        {
+          "file": "libmpdec/mpalloc.c",
+          "sha256": "9d3b9ee5481022bdfef4e6a9e5c460d493c750032d0e42a2f3337eef01320d55"
+        },
+        {
+          "file": "libmpdec/mpalloc.h",
+          "sha256": "6dc6913ea9868be74a21fd703b18e8cfbfe2b876d58e9ac4c60b51a29432c5fb"
+        },
+        {
+          "file": "libmpdec/mpdecimal.c",
+          "sha256": "04f7291a2f132e6faa562f67ed7d59625584ec10e23bcad79c5f7412ac1eab39"
+        },
+        {
+          "file": "libmpdec/mpdecimal.h.in",
+          "sha256": "1e315cb8c3823639ddc275febe5ba8270b0f2abb4113b6d21501e6362bda1ad5"
+        },
+        {
+          "file": "libmpdec/mpdecimal32vc.h",
+          "sha256": "ea43e08945bb7b2c8be048d750d0dc1abfafe9d01493b961d1ff43b0d6b2831d"
+        },
+        {
+          "file": "libmpdec/mpdecimal64vc.h",
+          "sha256": "011068e97240337540418f29baa4e011eedbb03aba24ece8f93d7b471d14c11a"
+        },
+        {
+          "file": "libmpdec/mpsignal.c",
+          "sha256": "24e44a725fa2084ef303cbe739fa01efb57c7d9f6a6d6be30d50f7673fe51878"
+        },
+        {
+          "file": "libmpdec/numbertheory.c",
+          "sha256": "97bd1f839eee8d263b754d5ea53083663a538297f8a12645ad78930abf7e8ccd"
+        },
+        {
+          "file": "libmpdec/numbertheory.h",
+          "sha256": "5c4990de31c669378bd52fd9f27a2d552e204f67015106f6ac93eb57628d2a39"
+        },
+        {
+          "file": "libmpdec/sixstep.c",
+          "sha256": "3145a84ed22e88e57b050c3718cdf8a9cade05398f1ffffc598f60fcea7175c5"
+        },
+        {
+          "file": "libmpdec/sixstep.h",
+          "sha256": "82f60314ae95c0949e231af7675965edc556c6406422bddd315cd61576df92db"
+        },
+        {
+          "file": "libmpdec/transpose.c",
+          "sha256": "03b93e3bc2b8826a0bc5611a452b81932cb70fc889f2ad34e92a433c6e25e885"
+        },
+        {
+          "file": "libmpdec/transpose.h",
+          "sha256": "465074a3d337205cf648f4ad4f2bbc6ffa6c70f73271e54b0c3d754f2aa61f17"
+        },
+        {
+          "file": "libmpdec/typearith.h",
+          "sha256": "e477063e3df1636387ef4d6b95026960f3ee86c8aaa97ead99737ca43b16480f"
+        },
+        {
+          "file": "libmpdec/umodarith.h",
+          "sha256": "9944359a2d6f0cd119106e398ac7372ca8247355976182d7efd3d4a852b815cb"
+        },
+        {
+          "file": "libmpdec/vcdiv64.asm",
+          "sha256": "d7cce75dc20efbaec20ba2d27ed1e3a0a0a5a7896353fd2f3c495ada4b94284e"
+        }
+      ]
     }
   ]
 }

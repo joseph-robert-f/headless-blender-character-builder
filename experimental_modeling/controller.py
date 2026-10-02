@@ -230,6 +230,24 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
         binary = str(Path(binary).resolve())
     store.mkdir(parents=True, exist_ok=True)
     with store_lock(store):
+        history_entries = 0
+        for category in ("attempts", "accepted"):
+            history = safe_path(store / category)
+            if history.exists():
+                for old in history.iterdir():
+                    history_entries += 1
+                    if history_entries > 512:
+                        raise ValueError("Project history exceeds the policy-version audit limit.")
+                    old = safe_path(old)
+                    if not old.is_dir():
+                        continue
+                    old_policy = safe_path(old / "policy.json")
+                    if old_policy.exists():
+                        version = Policy.parse(read_json(old_policy)).schema_version
+                        if version != policy.schema_version:
+                            raise ValueError("A different policy version requires a new store.")
+                    elif policy.schema_version == 2:
+                        raise ValueError("Existing history has no policy version. An attempt can be incomplete. Use a new store.")
         requirements_lock = safe_path(store / "requirements.json")
         if request_binding is not None:
             from .request_contract import encoded, sha, runtime_identity, legacy_request, read_json as strict_json
@@ -347,7 +365,7 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
             inspection.mkdir()
             inspector = str(Path(__file__).with_name("inspect_scene.py"))
             command = ["--python", inspector, "--", "--input", str(scene), "--output", str(inspection),
-                              "--expected-ids", ",".join(policy.parts)]
+                              "--expected-ids", ",".join(policy.parts), "--observation-version", str(policy.schema_version)]
             if policy.profile == "print": command += ["--print-profile"]
             if not renders: command += ["--skip-renders"]
             result["jobs"]["inspect"] = execute("inspect", command, {"inspector": Path(inspector), "input": scene}, inspection, attempt / "inspect.log")
@@ -361,12 +379,12 @@ def build(*, source: Path, params: Path, policy_path: Path, store: Path, revisio
             roundtrip.mkdir()
             result["jobs"]["roundtrip"] = execute("roundtrip", ["--python", inspector, "--", "--mode", "roundtrip",
                 "--input", str(inspection / "model.glb"), "--output", str(roundtrip),
-                "--reference", str(inspection / "observation.json")], {"inspector": Path(inspector), "input": inspection / "model.glb", "reference": inspection / "observation.json"}, roundtrip, attempt / "roundtrip.log")
+                "--reference", str(inspection / "observation.json"), "--observation-version", str(policy.schema_version)], {"inspector": Path(inspector), "input": inspection / "model.glb", "reference": inspection / "observation.json"}, roundtrip, attempt / "roundtrip.log")
             reopened = attempt / "reopened"
             reopened.mkdir()
             result["jobs"]["reopen"] = execute("reopen", ["--python", inspector, "--", "--mode", "reopen",
                 "--input", str(inspection / "scene.blend"), "--output", str(reopened),
-                "--reference", str(inspection / "observation.json"), "--skip-renders"], {"inspector": Path(inspector), "input": inspection / "scene.blend", "reference": inspection / "observation.json"}, reopened, attempt / "reopen.log")
+                "--reference", str(inspection / "observation.json"), "--skip-renders", "--observation-version", str(policy.schema_version)], {"inspector": Path(inspector), "input": inspection / "scene.blend", "reference": inspection / "observation.json"}, reopened, attempt / "reopen.log")
             # Recheck frozen provenance after author execution: detects accidental edits,
             # not malicious native code (which is unsupported in this mode).
             for rel, expected in result["source_files"].items():

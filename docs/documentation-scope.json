@@ -35,11 +35,13 @@
     "docs/review-preview.md",
     "docs/threat-model.md",
     "docs/troubleshooting.md",
+    "docs/verifier-validation.md",
     "examples/README.md",
     "experimental_modeling/examples/desk_creature/README.md",
     "experimental_modeling/examples/external_lamp/README.md",
     "experimental_modeling/examples/robot/README.md",
-    "experimental_modeling/examples/watering_can/README.md"
+    "experimental_modeling/examples/watering_can/README.md",
+    "tests/experimental_modeling/fixtures/verifier_validation/README.md"
   ],
   "preserved_markdown": {
     "ASSET_LICENSE.md": "License and dedication text. Do not change its legal meaning.",

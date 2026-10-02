@@ -66,6 +66,10 @@
           "run": "python3 tests/experimental_modeling/run_external_lamp.py --output \"$RUNNER_TEMP/modeling-external-lamp\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\" --docker \"$(command -v docker)\" --docker-socket /run/docker.sock"
         },
         {
+          "name": "Version-2 verifier golden cases and independent Blender artifacts",
+          "run": "python3 tests/experimental_modeling/run_verifier_validation.py --store \"$RUNNER_TEMP/modeling-verifier-validation\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\" --docker \"$(command -v docker)\" --docker-socket /run/docker.sock"
+        },
+        {
           "name": "Install pinned browser QA tools",
           "run": "npm ci --prefix tests/review_ui --ignore-scripts --omit=optional\ntests/review_ui/node_modules/.bin/playwright install --with-deps chromium"
         },
@@ -100,12 +104,23 @@
           "run": "node tests/experimental_modeling/review_request_ui_qa.cjs"
         },
         {
+          "name": "Verifier version labels in the review browser",
+          "env": {
+            "NODE_PATH": "${{ github.workspace }}/tests/review_ui/node_modules",
+            "PYTHON": "python3",
+            "MODELING_V1_QA_STORE": "${{ runner.temp }}/modeling-benchmark/primary",
+            "MODELING_V2_QA_STORE": "${{ runner.temp }}/modeling-verifier-validation/tetra",
+            "MODELING_REVIEW_QA_OUTPUT": "${{ runner.temp }}/modeling-review-ui"
+          },
+          "run": "node tests/experimental_modeling/review_verifier_ui_qa.cjs"
+        },
+        {
           "name": "Retain bounded experimental evidence",
           "if": "${{ always() }}",
           "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
           "with": {
             "name": "modeling-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
-            "path": "${{ runner.temp }}/modeling-benchmark\n${{ runner.temp }}/modeling-desk-benchmark\n${{ runner.temp }}/modeling-review-ui\n${{ runner.temp }}/modeling-water-relations\n${{ runner.temp }}/modeling-review-project\n${{ runner.temp }}/modeling-request-bridge",
+            "path": "${{ runner.temp }}/modeling-benchmark\n${{ runner.temp }}/modeling-desk-benchmark\n${{ runner.temp }}/modeling-review-ui\n${{ runner.temp }}/modeling-water-relations\n${{ runner.temp }}/modeling-review-project\n${{ runner.temp }}/modeling-request-bridge\n${{ runner.temp }}/modeling-verifier-validation",
             "if-no-files-found": "ignore",
             "retention-days": 7,
             "include-hidden-files": true

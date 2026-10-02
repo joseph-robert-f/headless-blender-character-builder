@@ -137,7 +137,7 @@ def make_material(value, name):
     return mat
 
 
-def snapshot_source(expected_ids):
+def snapshot_source(expected_ids, observation_version=1):
     clear_active_content()
     if abs(bpy.context.scene.unit_settings.scale_length - 1.0) > 1e-9:
         raise ValueError('Experimental contract requires scale_length=1. Coordinates are meters')
@@ -167,9 +167,15 @@ def snapshot_source(expected_ids):
         if not mesh.vertices or not mesh.polygons:
             raise ValueError('Part has empty geometry: ' + sid)
         values = [material_value(m) for m in mesh.materials] or [material_value(None)]
+        face_materials = [int(p.material_index) for p in mesh.polygons] if observation_version == 2 else None
         mesh.materials.clear()
         for i, value in enumerate(values):
             mesh.materials.append(make_material(value, sid + '_material_' + str(i)))
+        if face_materials is not None:
+            for polygon, assignment in zip(mesh.polygons, face_materials):
+                if not 0 <= assignment < len(values):
+                    raise ValueError('Face material index is invalid.')
+                polygon.material_index = assignment
         copy = bpy.data.objects.new(sid, mesh)
         copy['semantic_id'] = sid
         copy.matrix_world = evaluated.matrix_world.copy()
@@ -193,7 +199,7 @@ def snapshot_source(expected_ids):
     return scene
 
 
-def observe():
+def observe(observation_version=1):
     parts = {}
     for obj in sorted(bpy.context.scene.objects, key=lambda o: o.name):
         if obj.type != 'MESH':
@@ -243,9 +249,14 @@ def observe():
             'face_indices': faces, 'triangle_indices': triangles, 'triangle_material_indices': tri_mats,
             'normals': normals, 'corner_normals': corner_normals, 'triangle_world_normals': triangle_normals, 'matrix_world': transform, 'materials': materials,
         }
+        if observation_version == 2:
+            parts[sid]['face_material_indices'] = [int(p.material_index) for p in mesh.polygons]
+            parts[sid]['face_world_corner_normals'] = [
+                [finite((normal_matrix @ Vector(corner_normals[i])).normalized()[:]) for i in p.loop_indices]
+                for p in mesh.polygons]
     if not parts:
         raise ValueError('No mesh parts observed')
-    return {'schema_version': SCHEMA_VERSION, 'trusted_observation': True,
+    return {'schema_version': observation_version, 'trusted_observation': True,
             'units': {'length': 'meter', 'scale_length': 1.0, 'area': 'square_meter', 'volume': 'cubic_meter'},
             'visibility_policy': 'All semantic geometry is included; source visibility flags are ignored',
             'material_contract': 'Constant base_color, alpha, metallic, roughness; default other Principled inputs',
@@ -366,6 +377,7 @@ def main():
     parser.add_argument('--output', required=True)
     parser.add_argument('--mode', choices=('source', 'reopen', 'roundtrip'), default='source')
     parser.add_argument('--reference')
+    parser.add_argument('--observation-version', type=int, choices=(1, 2), default=1)
     parser.add_argument('--expected-ids')
     parser.add_argument('--skip-renders', action='store_true')
     parser.add_argument('--print-profile', action='store_true')
@@ -379,7 +391,7 @@ def main():
             bpy.context.preferences.filepaths.use_scripts_auto_execute = False
             bpy.ops.import_scene.gltf(filepath=str(Path(args.input).resolve()))
             clear_active_content()
-            observation = observe()
+            observation = observe(args.observation_version)
             write_json(output / 'observation.json', observation)
             if not args.reference:
                 raise ValueError('--reference required for roundtrip')
@@ -389,8 +401,8 @@ def main():
                 raise ValueError('Roundtrip mismatch: ' + ', '.join(result['failures']))
             return
         bpy.ops.wm.open_mainfile(filepath=str(Path(args.input).resolve()), use_scripts=False, load_ui=False)
-        scene = snapshot_source(args.expected_ids.split(',') if args.expected_ids else None)
-        observation = observe()
+        scene = snapshot_source(args.expected_ids.split(',') if args.expected_ids else None, args.observation_version)
+        observation = observe(args.observation_version)
         observation['artifacts'] = {'blend': 'scene.blend', 'glb': 'model.glb', 'views': {}}
         if not args.skip_renders:
             observation['artifacts']['views'] = render_views(scene, output / 'views', observation)

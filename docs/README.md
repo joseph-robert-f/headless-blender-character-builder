@@ -66,3 +66,5 @@ Read the applicable guide before use:
 - [Security policy](../SECURITY.md) and [support policy](../SUPPORT.md)
 - [Generated output policy](../OUTPUT_POLICY.md)
 - [Source license](../LICENSE), [asset license](../ASSET_LICENSE.md), and [third-party notices](../THIRD_PARTY_NOTICES.md).
+
+- [Translation verification, version 2](verifier-validation.md): bounded checks, test evidence, and version-1 compatibility
