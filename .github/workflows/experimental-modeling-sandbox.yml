@@ -115,6 +115,15 @@
           "run": "node --test tests/experimental_modeling/test_review_verifier_ui_readiness.cjs\nnode tests/experimental_modeling/review_verifier_ui_qa.cjs"
         },
         {
+          "name": "Explicit authoring workbench browser and real isolated lamp",
+          "env": {
+            "NODE_PATH": "${{ github.workspace }}/tests/review_ui/node_modules",
+            "PYTHON": "python3",
+            "MODELING_WORKBENCH_QA_OUTPUT": "${{ runner.temp }}/modeling-workbench-ui"
+          },
+          "run": "MODELING_WORKBENCH_QA_DOCKER=\"$(readlink -f \"$(command -v docker)\")\" node tests/experimental_modeling/workbench_ui_qa.cjs"
+        },
+        {
           "name": "Create bounded verifier proof archive",
           "id": "verifier_proof",
           "if": "${{ always() }}",
@@ -137,7 +146,7 @@
           "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
           "with": {
             "name": "modeling-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
-            "path": "${{ runner.temp }}/modeling-benchmark\n${{ runner.temp }}/modeling-desk-benchmark\n${{ runner.temp }}/modeling-review-ui\n${{ runner.temp }}/modeling-water-relations\n${{ runner.temp }}/modeling-review-project\n${{ runner.temp }}/modeling-request-bridge\n${{ runner.temp }}/modeling-verifier-validation",
+            "path": "${{ runner.temp }}/modeling-benchmark\n${{ runner.temp }}/modeling-desk-benchmark\n${{ runner.temp }}/modeling-review-ui\n${{ runner.temp }}/modeling-water-relations\n${{ runner.temp }}/modeling-review-project\n${{ runner.temp }}/modeling-request-bridge\n${{ runner.temp }}/modeling-verifier-validation\n${{ runner.temp }}/modeling-workbench-ui",
             "if-no-files-found": "ignore",
             "retention-days": 7,
             "include-hidden-files": true

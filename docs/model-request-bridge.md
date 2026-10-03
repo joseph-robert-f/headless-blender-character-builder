@@ -10,6 +10,7 @@ The commands require a source checkout, Python 3.11+, and Linux x64.
 Execution requires the existing [isolated Docker runtime](EXPERIMENTAL_MODELING_SANDBOX.md).
 Windows and Mac source execution are not available.
 The packaged review previews remain read-only.
+An opt-in [Linux browser workbench](authoring-workbench.md) connects these same commands.
 
 ## Prepare an initial brief
 
