@@ -1,7 +1,38 @@
 {
   "name": "Experimental modeling sandbox",
   "on": {
-    "workflow_dispatch": {},
+    "workflow_dispatch": {
+      "inputs": {
+        "trial_mode": {
+          "description": "Offline tests by default. Live proposal requires reviewed setup and a fresh owner approval.",
+          "type": "choice",
+          "options": [
+            "offline",
+            "live-propose"
+          ],
+          "default": "offline",
+          "required": true
+        },
+        "reviewed_commit": {
+          "description": "Exact independently reviewed 40-character commit for live proposal",
+          "type": "string",
+          "default": "",
+          "required": false
+        },
+        "request_sha256": {
+          "description": "Exact reviewed outbound payload SHA-256",
+          "type": "string",
+          "default": "",
+          "required": false
+        },
+        "setup_confirmation": {
+          "description": "Enter protected-provider-environment-verified only after checking actual environment protection rules",
+          "type": "string",
+          "default": "",
+          "required": false
+        }
+      }
+    },
     "pull_request": {
       "paths": [
         "experimental_modeling/**",
@@ -15,8 +46,8 @@
     "contents": "read"
   },
   "concurrency": {
-    "group": "modeling-sandbox-${{ github.ref }}",
-    "cancel-in-progress": true
+    "group": "${{ inputs.trial_mode == 'live-propose' && 'hbcb-fixed-live-lamp-trial' || format('modeling-sandbox-{0}', github.ref) }}",
+    "cancel-in-progress": false
   },
   "jobs": {
     "docker-boundary-and-benchmark": {
@@ -191,7 +222,73 @@
             "include-hidden-files": true
           }
         }
+      ],
+      "if": "${{ github.event_name != 'workflow_dispatch' || inputs.trial_mode != 'live-propose' }}"
+    },
+    "live-lamp-proposal": {
+      "if": "${{ github.event_name == 'workflow_dispatch' && inputs.trial_mode == 'live-propose' && github.repository == 'joseph-robert-f/headless-blender-character-builder' && github.ref == 'refs/heads/experimental/live-openai-lamp' && github.actor == 'joseph-robert-f' && github.triggering_actor == 'joseph-robert-f' && github.run_attempt == 1 }}",
+      "name": "Authorize one live OpenAI request",
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 10,
+      "environment": {
+        "name": "hbcb-live-provider"
+      },
+      "permissions": {
+        "contents": "read",
+        "actions": "read"
+      },
+      "env": {
+        "TRIAL_MODE": "${{ inputs.trial_mode }}",
+        "TRIAL_REVIEWED_COMMIT": "${{ inputs.reviewed_commit }}",
+        "TRIAL_REQUEST_SHA256": "${{ inputs.request_sha256 }}",
+        "TRIAL_SETUP_CONFIRMATION": "${{ inputs.setup_confirmation }}"
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+          "with": {
+            "ref": "${{ github.sha }}",
+            "persist-credentials": false
+          }
+        },
+        {
+          "name": "Require exact reviewed source and fixed outbound payload",
+          "run": "test \"$(git rev-parse HEAD)\" = \"$TRIAL_REVIEWED_COMMIT\"\npython3 tests/experimental_modeling/live_openai_trial.py preview"
+        },
+        {
+          "name": "Fail closed on missing protections or prior live attempt",
+          "env": {
+            "TRIAL_GITHUB_READ_TOKEN": "${{ github.token }}"
+          },
+          "run": "python3 tests/experimental_modeling/live_openai_trial.py preflight --output \"$RUNNER_TEMP/hbcb-live-trial\""
+        },
+        {
+          "name": "Send one approved fixed request; never execute its output",
+          "id": "propose",
+          "env": {
+            "HBCB_OPENAI_TRIAL_KEY": "${{ secrets.HBCB_OPENAI_TRIAL_KEY }}"
+          },
+          "run": "python3 tests/experimental_modeling/live_openai_trial.py propose --output \"$RUNNER_TEMP/hbcb-live-trial\""
+        },
+        {
+          "name": "Check that the bounded artifact was finalized",
+          "id": "artifact",
+          "if": "${{ always() && steps.propose.outcome != 'skipped' }}",
+          "run": "if test -f \"$RUNNER_TEMP/hbcb-live-trial/public/artifact-manifest.json\"; then echo \"ready=true\" >> \"$GITHUB_OUTPUT\"; fi"
+        },
+        {
+          "name": "Retain bounded inert proposal and safe status",
+          "if": "${{ always() && steps.artifact.outputs.ready == 'true' }}",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "name": "live-lamp-proposal-${{ github.run_id }}-1",
+            "path": "${{ runner.temp }}/hbcb-live-trial/public",
+            "if-no-files-found": "error",
+            "retention-days": 7
+          }
+        }
       ]
     }
-  }
+  },
+  "run-name": "${{ inputs.trial_mode == 'live-propose' && format('HBCB live lamp proposal {0}', github.sha) || 'Experimental modeling sandbox' }}"
 }

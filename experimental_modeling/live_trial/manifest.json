@@ -1,0 +1,51 @@
+{
+  "approved_trial_budget_ceiling_usd": 5,
+  "automatic_retries": 0,
+  "conservative_cost_estimate_usd": 0.0278528,
+  "conservative_input_token_estimate": 36864,
+  "endpoint": "https://api.openai.com/v1/responses",
+  "excluded_data": [
+    "existing generated example source",
+    "images",
+    "Git history",
+    "private files",
+    "credentials"
+  ],
+  "max_output_tokens": 8192,
+  "max_request_bytes": 32768,
+  "maximum_calls_per_approved_run": 1,
+  "model": "gpt-4.1-mini-2025-04-14",
+  "outbound_data": [
+    "public initial lamp brief",
+    "public builder contract",
+    "public initial policy",
+    "public requirements",
+    "fixed structured-output schema and provider instructions"
+  ],
+  "price_source": "https://developers.openai.com/api/docs/models/gpt-4.1-mini",
+  "provider": "OpenAI",
+  "public_artifacts": [
+    "exact request and manifest",
+    "validated generated proposal",
+    "bounded usage and safe status"
+  ],
+  "rate_checked_date": "2026-10-03",
+  "rates_usd_per_million": {
+    "input": 0.4,
+    "output": 1.6
+  },
+  "request_bytes": 5398,
+  "request_sha256": "98f98db99814205f7c5ba5d6d82314e0a8146c4460981748d25befa72549921a",
+  "schema_version": 1,
+  "scope": "One fixed public lamp proposal; no generated source execution. Local estimate is not an invoice or provider account limit.",
+  "source_inputs": {
+    "experimental_modeling/examples/external_lamp/handoff/AUTHORING.md": "72146dcc170f2f9d09397253f6951a9eeab7ea63743efec9416b3ab71954f069",
+    "experimental_modeling/examples/external_lamp/handoff/request.json": "0fe1288944543fd0b2cf1f287343355e44395ba60bdd49a494ff812ff23eb8a9",
+    "experimental_modeling/examples/external_lamp/policy-initial.json": "f65f62782760d196bbe5871aa3d048802d0b32c9191c1e5e606497734c3aafa5",
+    "experimental_modeling/examples/external_lamp/requirements.json": "c8012e71dd7c40db4e73ee94bbb052e34f380b2893d4f79885711c699b85bdd4"
+  },
+  "store": false,
+  "timeout_seconds": 90,
+  "tools": [],
+  "trial_id": "lamp-openai-2026-10-03"
+}

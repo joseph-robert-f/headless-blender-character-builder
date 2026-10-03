@@ -239,3 +239,10 @@ The adapter follows the official [Responses API](https://developers.openai.com/a
 [image input](https://developers.openai.com/api/docs/guides/images-vision), and
 [data controls](https://developers.openai.com/api/docs/guides/your-data) documentation.
 Images are intentionally excluded from this first request contract.
+
+
+### Separate CI proposal trial
+
+The [manual OpenAI lamp trial](live-openai-lamp-trial.md) is a separate, fixed CI experiment.
+It requires owner review and a protected GitHub Environment secret.
+It does not change this workbench's Secret Service contract or execute generated source.
