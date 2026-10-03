@@ -42,10 +42,18 @@ class ReleasePolicyTests(unittest.TestCase):
                 document = json.loads(path.read_text(encoding="utf-8"))
                 self.assertIsInstance(document, dict)
                 self.assertEqual(document.get("permissions"), {"contents": "read"})
-                self.assertTrue(
-                    all(item == {"contents": "read"} for item in values(document, "permissions")),
-                    path.name,
-                )
+                for job_name, job in document.get("jobs", {}).items():
+                    permissions = job.get("permissions", {"contents": "read"})
+                    if path.name == "experimental-modeling-sandbox.yml" and job_name == "live-lamp-proposal":
+                        # Only the explicitly gated manual lane reads environment
+                        # protection and prior Actions history. No write scopes.
+                        self.assertEqual(permissions, {"contents": "read", "actions": "read"})
+                        self.assertIn("github.event_name == 'workflow_dispatch'", job["if"])
+                        self.assertIn("inputs.trial_mode == 'live-propose'", job["if"])
+                        self.assertEqual(job["environment"], {"name": "hbcb-live-provider"})
+                    else:
+                        self.assertEqual(permissions, {"contents": "read"}, (path.name, job_name))
+                    self.assertTrue(all(item == permissions for item in values(job, "permissions")), path.name)
                 self.assertNotIn("pull_request_target", document.get("on", {}))
                 self.assertTrue(document.get("jobs"))
                 if path.name == "ci.yml":
