@@ -150,12 +150,30 @@
           }
         },
         {
+          "name": "Check and bind dedicated BYOK evidence",
+          "id": "byok_proof",
+          "if": "${{ always() }}",
+          "run": "python3 - <<'PYCODE'\nimport hashlib, json, os, stat, subprocess\nfrom pathlib import Path\nroot = Path(os.environ['RUNNER_TEMP']) / 'modeling-byok-ui'\nif not root.is_dir() or root.is_symlink():\n    raise SystemExit('No BYOK evidence directory was produced.')\nfiles, total = {}, 0\nfor path in sorted(root.rglob('*')):\n    info = path.lstat()\n    if stat.S_ISDIR(info.st_mode):\n        continue\n    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:\n        raise SystemExit('BYOK proof contains a linked or special file.')\n    total += info.st_size\n    if len(files) >= 2048 or total > 24 * 1024 * 1024:\n        raise SystemExit('BYOK proof exceeds the dedicated artifact limit.')\n    data = path.read_bytes()\n    if len(data) != info.st_size:\n        raise SystemExit('BYOK proof changed during packing.')\n    files[path.relative_to(root).as_posix()] = {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}\nmanifest = {'schema_version': 1, 'scope': 'Mock HTTP provider and real isolated Blender evidence; no live API or credential',\n            'checked_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),\n            'source_tree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(),\n            'uncompressed_bytes': total, 'files': files}\nwith (root / 'proof-manifest.json').open('x') as stream:\n    json.dump(manifest, stream, indent=2, sort_keys=True)\n    stream.write('\\n')\nprint(json.dumps({'files': len(files), 'bytes': total, 'source_tree': manifest['source_tree']}))\nPYCODE"
+        },
+        {
+          "name": "Retain bounded BYOK evidence",
+          "if": "${{ always() && steps.byok_proof.outcome == 'success' }}",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "name": "byok-proof-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "${{ runner.temp }}/modeling-byok-ui",
+            "if-no-files-found": "error",
+            "retention-days": 7,
+            "include-hidden-files": true
+          }
+        },
+        {
           "name": "Retain bounded experimental evidence",
           "if": "${{ always() }}",
           "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
           "with": {
             "name": "modeling-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
-            "path": "${{ runner.temp }}/modeling-benchmark\n${{ runner.temp }}/modeling-desk-benchmark\n${{ runner.temp }}/modeling-review-ui\n${{ runner.temp }}/modeling-water-relations\n${{ runner.temp }}/modeling-review-project\n${{ runner.temp }}/modeling-request-bridge\n${{ runner.temp }}/modeling-verifier-validation\n${{ runner.temp }}/modeling-workbench-ui\n${{ runner.temp }}/modeling-byok-ui",
+            "path": "${{ runner.temp }}/modeling-benchmark\n${{ runner.temp }}/modeling-desk-benchmark\n${{ runner.temp }}/modeling-review-ui\n${{ runner.temp }}/modeling-water-relations\n${{ runner.temp }}/modeling-review-project\n${{ runner.temp }}/modeling-request-bridge\n${{ runner.temp }}/modeling-verifier-validation\n${{ runner.temp }}/modeling-workbench-ui",
             "if-no-files-found": "ignore",
             "retention-days": 7,
             "include-hidden-files": true
