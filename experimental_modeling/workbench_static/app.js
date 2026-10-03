@@ -80,7 +80,7 @@
   }
   function renderRoots() {
     const roots = $('roots-list'); roots.replaceChildren();
-    for (const [key, label] of [['handoffs', 'Prepared handoffs'], ['proposals', 'External proposals'], ['rules', 'Policies and requirements']]) roots.append(node('dt', '', label), node('dd', '', state.data?.roots?.[key] || 'Not configured'));
+    for (const [key, label] of [['handoffs', 'Prepared handoffs'], ['proposals', 'Source proposals'], ['rules', 'Policies and requirements']]) roots.append(node('dt', '', label), node('dd', '', state.data?.roots?.[key] || 'Not configured'));
   }
   function requestPreview() {
     const request = state.requests.find(item => item.request_id === $('saved-request').value);
@@ -90,7 +90,7 @@
   function renderChoices() {
     const choices = state.data?.choices || {};
     selectOptions('handoff', choices.handoffs, array(choices.handoffs).length ? 'Choose a prepared handoff…' : 'No prepared handoffs found');
-    selectOptions('proposal', choices.proposals, array(choices.proposals).length ? 'Choose an external proposal…' : 'No external proposals found');
+    selectOptions('proposal', choices.proposals, array(choices.proposals).length ? 'Choose a source proposal…' : 'No external proposals found');
     selectOptions('policy', choices.rules, array(choices.rules).length ? 'Choose a policy JSON file…' : 'No rule files found');
     selectOptions('requirements', choices.rules, 'Keep project requirements (none for a new project)');
     selectOptions('saved-inspection', [...array(state.data?.inspections)].reverse().map(item => ({ id: item.id, label: `${item.revision || 'Revision pending'} · ${item.id}` })), 'Choose a saved inspection…', state.inspection?.id || inspectionFromHash());
@@ -190,7 +190,7 @@
   function scheduleRefresh() {
     clearTimeout(state.timer);
     if (document.hidden) return;
-    const delay = array(state.data?.operations).some(operation => activeStates.has(operation.state)) ? 3000 : 15000;
+    const delay = array(state.data?.authoring?.calls).some(call => call.can_cancel) ? 1000 : array(state.data?.operations).some(operation => activeStates.has(operation.state)) ? 3000 : 15000;
     state.timer = setTimeout(() => refresh(false), delay);
   }
   async function refresh(includeRequests = true) {
@@ -200,6 +200,7 @@
         const data = await api('/api/workbench');
         if (!data || !Array.isArray(data.operations) || !Array.isArray(data.inspections)) throw new Error('The workbench state is incomplete. No run can be started.');
         state.data = data; state.online = true;
+        window.dispatchEvent(new CustomEvent("workbench-state", { detail: data }));
         if (includeRequests) {
           try {
             const requests = await api('/api/requests');
@@ -212,7 +213,7 @@
         text('project-name', data.project_name || 'Your authoring workspace'); renderRoots(); renderChoices(); renderOperations();
         text('sync-status', `Records checked at ${new Date().toLocaleTimeString()}. Read-only refresh.`);
         if (state.inspection && !inspectionIsCurrent()) { resetAcknowledgments(); status('run-status', 'The selected inspection no longer matches the server record. Reload that inspection before proceeding.', true); }
-      } catch (error) { state.online = false; text('sync-status', 'Connection unavailable. Displayed records may be stale.'); notice(`${error.message} Mutating controls are disabled until records reconnect. No automatic run retry will occur.`); }
+      } catch (error) { state.online = false; window.dispatchEvent(new CustomEvent("workbench-offline")); text('sync-status', 'Connection unavailable. Displayed records may be stale.'); notice(`${error.message} Mutating controls are disabled until records reconnect. No automatic run retry will occur.`); }
       finally { state.refreshing = null; controls(); scheduleRefresh(); }
     })();
     controls(); return state.refreshing;
@@ -285,6 +286,7 @@
   $('run').addEventListener('click', run);
   $('refresh').addEventListener('click', async () => { notice(); await refresh(true); requestPreview(); });
   for (const [button, other, show, hide] of [['show-inputs', 'show-diffs', 'inputs-panel', 'diffs-panel'], ['show-diffs', 'show-inputs', 'diffs-panel', 'inputs-panel']]) $(button).addEventListener('click', () => { $(button).setAttribute('aria-pressed', 'true'); $(other).setAttribute('aria-pressed', 'false'); $(show).hidden = false; $(hide).hidden = true; });
+  window.addEventListener('workbench-refresh', () => refresh(false));
   window.addEventListener('popstate', () => loadInspection(inspectionFromHash(), false));
   document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(state.timer); else refresh(false); });
   window.addEventListener('pageshow', event => { if (event.persisted) { resetAcknowledgments(); refresh(true); } });

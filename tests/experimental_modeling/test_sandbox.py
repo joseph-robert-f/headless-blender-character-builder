@@ -135,6 +135,40 @@ class SandboxTests(unittest.TestCase):
         lamp=next(s for s in workflow['jobs']['docker-boundary-and-benchmark']['steps'] if s.get('name')=='Retain external author lamp evidence')
         self.assertTrue(lamp['with']['include-hidden-files'])
         self.assertEqual(lamp['with']['path'], '${{ runner.temp }}/modeling-external-lamp')
+        proof=next(s for s in workflow['jobs']['docker-boundary-and-benchmark']['steps'] if s.get('name')=='Retain bounded BYOK evidence')
+        self.assertEqual(proof['with']['path'], '${{ runner.temp }}/modeling-byok-ui')
+        self.assertTrue(proof['with']['include-hidden-files'])
+        self.assertIn("steps.byok_proof.outcome == 'success'", proof['if'])
+        bound=next(s for s in workflow['jobs']['docker-boundary-and-benchmark']['steps'] if s.get('id')=='byok_proof')
+        for control in ('24 * 1024 * 1024', '2048', 'stat.S_ISREG', 'st_nlink != 1', 'sha256', 'proof-manifest.json', 'HEAD^{tree}'):
+            self.assertIn(control, bound['run'])
+
+
+    def test_dedicated_byok_proof_hashes_and_rejects_unsafe_inputs(self):
+        from contextlib import redirect_stdout
+        import hashlib
+        root=Path(__file__).resolve().parents[2]
+        workflow=json.loads((root/'.github/workflows/experimental-modeling-sandbox.yml').read_text())
+        command=next(step['run'] for step in workflow['jobs']['docker-boundary-and-benchmark']['steps'] if step.get('id')=='byok_proof')
+        program=command.split("\n",1)[1].rsplit("\nPYCODE",1)[0]
+        for case in ('valid','symlink','hardlink','oversized'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                base=Path(temporary); evidence=base/'modeling-byok-ui'; evidence.mkdir()
+                sample=evidence/'summary.json'; sample.write_bytes(b'{"scope":"mocked provider"}')
+                if case=='symlink': (evidence/'unsafe').symlink_to(sample)
+                if case=='hardlink': os.link(sample,evidence/'unsafe')
+                if case=='oversized':
+                    with (evidence/'large').open('wb') as stream: stream.truncate(24*1024*1024+1)
+                with patch.dict(os.environ,{'RUNNER_TEMP':temporary}), patch('subprocess.check_output',return_value='b'*40+'\n'), redirect_stdout(io.StringIO()):
+                    if case=='valid': exec(compile(program,'byok-proof-workflow','exec'),{})
+                    else:
+                        with self.assertRaises(SystemExit): exec(compile(program,'byok-proof-workflow','exec'),{})
+                if case=='valid':
+                    manifest=json.loads((evidence/'proof-manifest.json').read_text())
+                    self.assertEqual(manifest['source_tree'],'b'*40)
+                    self.assertEqual(manifest['files']['summary.json']['sha256'],hashlib.sha256(sample.read_bytes()).hexdigest())
+                    self.assertEqual(manifest['uncompressed_bytes'],sample.stat().st_size)
+                else: self.assertFalse((evidence/'proof-manifest.json').exists())
 
 
 @unittest.skipUnless(os.environ.get('MODELING_SANDBOX_IMAGE'), 'NOT VERIFIED: opt-in Linux Docker runtime required')
