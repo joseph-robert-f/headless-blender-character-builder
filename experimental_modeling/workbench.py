@@ -1,4 +1,4 @@
-"""Opt-in Linux source-only external-author workbench. Never a model provider."""
+"""Opt-in Linux source-only proposal workbench with explicit model authoring."""
 from __future__ import annotations
 
 import argparse
@@ -48,7 +48,7 @@ def text_or_binary(data):
 
 
 class Workbench:
-    def __init__(self, project, selection, handoffs, proposals, rules, python):
+    def __init__(self, project, selection, handoffs, proposals, rules, python, *, author_config=None, provider=None):
         requests.supported()
         project.validate_folders()
         self.project = project
@@ -84,6 +84,8 @@ class Workbench:
         self.stopped_process = None
         self.monitor = None
         self.stopping = False
+        from .authoring import Authoring
+        self.authoring = Authoring(self, author_config, provider) if author_config is not None else None
 
     def stop_owned(self, process):
         with self.lock:
@@ -193,6 +195,7 @@ class Workbench:
         with self.lock:
             self.pinned()
             return {"csrf_token": self.token, "project_name": self.project.name,
+                    "authoring": self.authoring.state() if self.authoring else {"enabled": False},
                     "roots": {key: str(value) for key, value in self.roots.items()},
                     "choices": self.catalogue(),
                     "operations": [self.operation(row["id"]) for row in self.records("operation")],
@@ -356,6 +359,8 @@ class Workbench:
             return self.operation(item_id)
 
     def close(self):
+        if self.authoring is not None:
+            self.authoring.close()
         with self.lock:
             self.stopping = True
             process = self.child
@@ -398,12 +403,14 @@ class WorkbenchHandler(ReviewHandler):
             workbench = self.server.workbench
             if path == "/api/workbench":
                 return self.json(200, workbench.state())
+            if path.startswith("/api/workbench/model/previews/"):
+                return self.json(200, workbench.record("modelpreview", opaque(path.rsplit("/", 1)[-1])))
             for kind in ("operations", "inspections"):
                 prefix = "/api/workbench/" + kind + "/"
                 if path.startswith(prefix):
                     item_id = opaque(path[len(prefix):])
                     return self.json(200, workbench.operation(item_id) if kind == "operations" else workbench.record("inspection", item_id))
-            files = {"/workbench": "index.html", "/workbench/static/app.js": "app.js", "/workbench/static/style.css": "style.css"}
+            files = {"/workbench": "index.html", "/workbench/static/app.js": "app.js", "/workbench/static/style.css": "style.css", "/workbench/static/authoring.js": "authoring.js"}
             if path in files:
                 file = STATIC / files[path]
                 data = read_bytes(file, 512 * 1024)
@@ -436,6 +443,15 @@ class WorkbenchHandler(ReviewHandler):
                 from .contracts import identifier
                 revision = identifier(path[len("/api/revisions/"):-len("/accept")])
                 return self.json(200, workbench.review.accept(revision, payload))
+            if path.startswith("/api/workbench/model/"):
+                if workbench.authoring is None:
+                    raise ValueError("Direct model authoring is disabled. Configure it explicitly at startup.")
+                actions = {"/api/workbench/model/preview": workbench.authoring.preview,
+                           "/api/workbench/model/submit": workbench.authoring.submit,
+                           "/api/workbench/model/cancel": workbench.authoring.interrupt}
+                if path not in actions:
+                    raise ValueError("Unknown model authoring action.")
+                return self.json(200, actions[path](payload))
             if path == "/api/workbench/prepare":
                 return self.json(200, workbench.prepare(payload))
             if path == "/api/workbench/inspect":
@@ -457,16 +473,33 @@ def main(argv=None):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--sandbox-image", required=True)
     parser.add_argument("--port", type=int, default=0)
+    from .authoring import AuthorConfig, MODELS
+    parser.add_argument("--author-provider", choices=("openai",))
+    parser.add_argument("--author-model", choices=MODELS)
+    parser.add_argument("--author-input-usd-per-million")
+    parser.add_argument("--author-output-usd-per-million")
+    parser.add_argument("--author-budget-usd")
+    parser.add_argument("--author-max-output-tokens", type=int, default=8192)
+    parser.add_argument("--author-max-calls", type=int, default=8)
     args = parser.parse_args(argv)
     if not 0 <= args.port <= 65535:
         parser.error("port must be 0..65535")
+    author_config = None
+    author_values = (args.author_model, args.author_input_usd_per_million,
+                     args.author_output_usd_per_million, args.author_budget_usd)
+    if args.author_provider:
+        if not all(author_values):
+            parser.error("Direct authoring requires model, current input/output prices and a local estimated budget.")
+        author_config = AuthorConfig(*author_values, args.author_max_output_tokens, args.author_max_calls)
+    elif any(value is not None for value in author_values):
+        parser.error("Select --author-provider openai to enable direct authoring.")
     project = Project.open(args.project)
     with operation_lock(project, "workbench"), interruptible():
         workbench = Workbench(project, RuntimeSelection(docker=args.docker, socket=args.docker_socket, image=args.sandbox_image),
-                              args.handoff_root, args.proposal_root, args.rules_root, args.python)
+                              args.handoff_root, args.proposal_root, args.rules_root, args.python, author_config=author_config)
         server = WorkbenchServer(workbench, args.port)
         print(f"External author workbench: {server.origin}/workbench", flush=True)
-        print("Linux source-only. External author required. Each Run consumes one inspected permission. Ctrl-C stops the owned bridge.", flush=True)
+        print("Linux source-only. Model calls require separate explicit approval. Each Run consumes one inspected permission. Ctrl-C stops owned work.", flush=True)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

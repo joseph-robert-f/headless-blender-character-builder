@@ -6,6 +6,7 @@
   <title>Authoring workbench · Experimental modeling</title>
   <link rel="stylesheet" href="/workbench/static/style.css">
   <script src="/workbench/static/app.js" defer></script>
+  <script src="/workbench/static/authoring.js" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -14,26 +15,40 @@
   </header>
   <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
   <main>
-    <div class="page-heading"><div><p class="eyebrow">LOCAL LINUX · SOURCE-ONLY EXPERIMENT</p><h1 id="project-name">Your authoring workspace</h1><p class="intro">Prepare a brief. Bring back an externally authored proposal. Inspect it before you run.</p></div><button id="refresh" class="button secondary" type="button">Refresh records</button></div>
-    <section class="boundary" aria-label="Execution boundary"><span class="boundary-icon" aria-hidden="true">i</span><div><strong>No model or AI author is built in.</strong><p>An external author creates the source proposal. Preparing a handoff or inspecting files does not execute that source. A run uses the server’s configured execution mode; review the complete source, policy, and requirements first. Machine checks and human acceptance are separate decisions.</p></div></section>
+    <div class="page-heading"><div><p class="eyebrow">LOCAL LINUX · SOURCE-ONLY EXPERIMENT</p><h1 id="project-name">Your authoring workspace</h1><p class="intro">Prepare a brief. Request a proposal or bring one from an external author. Inspect it before you run.</p></div><button id="refresh" class="button secondary" type="button">Refresh records</button></div>
+    <section class="boundary" aria-label="Execution boundary"><span class="boundary-icon" aria-hidden="true">i</span><div><strong>Source execution always needs separate approval.</strong><p>An optional direct model provider or an external author creates the source proposal. Preparing a handoff or inspecting files does not execute that source. A run uses the server’s configured execution mode; review the complete source, policy, and requirements first. Machine checks and human acceptance are separate decisions.</p></div></section>
     <div class="layout">
       <div class="workflow">
         <section class="card" aria-labelledby="prepare-heading">
-          <div class="step-heading"><span class="step">01</span><div><p class="eyebrow">EXTERNAL AUTHOR HANDOFF</p><h2 id="prepare-heading">Describe the next model</h2></div></div>
-          <p class="subtle">Prepare an initial brief, or use a saved refinement from model review. Give the resulting handoff to your external coding agent.</p>
+          <div class="step-heading"><span class="step">01</span><div><p class="eyebrow">PREPARE AUTHORING CONTEXT</p><h2 id="prepare-heading">Describe the next model</h2></div></div>
+          <p class="subtle">Prepare an initial brief, or use a saved refinement from model review. Preview it for the optional direct model author below, or give it to an external author.</p>
           <div class="prepare-grid">
             <form id="brief-form"><label for="brief">Initial model brief</label><textarea id="brief" rows="5" maxlength="8000" placeholder="Describe the object, dimensions, and what the model must do…" required></textarea><button id="prepare-brief" class="button secondary" type="submit" disabled>Prepare initial handoff</button></form>
             <form id="request-form"><label for="saved-request">Or choose a saved refinement</label><select id="saved-request" disabled><option value="">Saved requests loading…</option></select><p id="request-preview" class="request-preview subtle">Saved refinements keep their parent revision and original request.</p><button id="prepare-request" class="button secondary" type="submit" disabled>Prepare refinement handoff</button></form>
           </div>
           <p id="prepare-status" class="status-line" role="status"></p>
-          <details id="handoff-result" class="record" hidden><summary>Prepared handoff · complete record</summary><p class="subtle">The paths and instructions below are for the external author. Return its proposal under the configured proposals root, then refresh the file choices.</p><pre id="handoff-json" tabindex="0"></pre></details>
+          <details id="handoff-result" class="record" hidden><summary>Prepared handoff · complete record</summary><p class="subtle">Use this handoff in the direct model preview below. For an external author, place its returned proposal under the configured proposals root and refresh the choices.</p><pre id="handoff-json" tabindex="0"></pre></details>
+        </section>
+        <section class="card" aria-labelledby="model-heading">
+          <h2 id="model-heading">Optional direct model author</h2>
+          <p id="model-config" class="subtle">Direct authoring is disabled unless configured at startup.</p>
+          <p class="subtle">Only text context is supported. The exact payload below is sent to OpenAI after your approval. OpenAI account retention controls apply; store:false does not mean zero retention. Model output is untrusted. Policies and requirements remain under your separate control.</p>
+          <label for="model-handoff">Handoff to preview</label><select id="model-handoff" disabled><option value="">Choose a prepared handoff…</option></select>
+          <button id="model-preview" class="button secondary" type="button" disabled>Preview outbound model request</button>
+          <label for="model-saved-preview">Saved outbound previews</label><select id="model-saved-preview" disabled><option value="">Choose a preview…</option></select>
+          <details id="model-preview-record" class="record" hidden><summary>Exact outbound payload, recipient and estimate</summary><pre id="model-preview-json" tabindex="0"></pre></details>
+          <p class="subtle">The local USD estimate uses your configured prices and a conservative text-token allowance. It is not a provider-enforced spending cap or an invoice. Each attempt retains its full reservation, including failures and cancellations. Set separate limits in your provider account.</p>
+          <label class="checkbox-row"><input id="model-consent" type="checkbox" disabled><span>I reviewed this exact payload and approve sending it to OpenAI with the displayed model, token limit and local estimated cost.</span></label>
+          <button id="model-submit" class="button primary" type="button" disabled>Send one model request</button>
+          <p id="model-status" class="status-line" role="status"></p>
+          <div id="model-calls"></div>
         </section>
         <section class="card" aria-labelledby="inspect-heading">
           <div class="step-heading"><span class="step">02</span><div><p class="eyebrow">EXPLICIT INPUT SELECTION</p><h2 id="inspect-heading">Choose what will run</h2></div></div>
           <p class="subtle">Choose server-listed files from the configured roots. Policies and requirements come from the separately managed rules root. Nothing is run when you select a file.</p>
           <form id="inspect-form"><div class="input-grid">
             <div><label for="handoff">Prepared handoff</label><select id="handoff" required disabled><option value="">Loading…</option></select></div>
-            <div><label for="proposal">External proposal</label><select id="proposal" required disabled><option value="">Loading…</option></select></div>
+            <div><label for="proposal">Source proposal</label><select id="proposal" required disabled><option value="">Loading…</option></select></div>
             <div><label for="policy">Independently reviewed policy</label><select id="policy" required disabled><option value="">Loading…</option></select></div>
             <div><label for="requirements">Requirements file</label><select id="requirements" disabled><option value="">Keep project requirements (none for a new project)</option></select></div>
           </div><div class="form-footer"><p class="subtle">Inspection records the exact inputs and reserves a stable revision.</p><button id="inspect-submit" class="button secondary" type="submit" disabled>Inspect selected inputs</button></div></form>

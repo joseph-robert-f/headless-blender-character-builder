@@ -1,11 +1,12 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# Experimental external-author workbench
+# Experimental authoring workbench
 
 This source-only program connects the browser to the existing
 [external request bridge](model-request-bridge.md).
 It requires Linux x64, Python 3.11+, a trusted source checkout, and the existing
 [isolated Docker runtime](EXPERIMENTAL_MODELING_SANDBOX.md).
-It does not call a model provider, store credentials, or run saved prompts automatically.
+Direct model calls are optional and disabled by default.
+The workbench never runs saved prompts automatically.
 Windows and Mac review packages do not include an authoring execution adapter.
 The ordinary review server does not execute source.
 
@@ -99,6 +100,7 @@ Appearance and requirements without declared checks still need human review.
 
 ## Stop and recovery
 
+
 Closing the browser does not stop the active operation.
 Use its **Request interruption** button, or push Ctrl-C in the workbench terminal.
 The server signals only its currently owned child and waits for bridge cleanup.
@@ -127,3 +129,113 @@ requests, stale inputs, crash records, filesystem constraints, and HTTP boundari
 The opt-in experimental CI workflow exercises the browser with the real Docker
 request bridge. A passing earlier commit does not certify this increment.
 Mocked controller tests do not prove Blender execution or AI generation.
+
+
+## Optional direct OpenAI authoring
+
+This source-only Linux option does not require Codex or Claude Code to be installed.
+
+It makes one OpenAI Responses API request for each approved outbound preview.
+It returns a source proposal and parameters. It cannot select or change the
+operator's execution policy or locked requirements. It cannot use model tools,
+a shell, repository access, or the Docker socket. The normal inspect and run
+steps remain necessary. Windows and Mac packages remain read-only.
+
+Add all of these options to the startup command to enable it:
+
+```text
+--author-provider openai
+--author-model gpt-4.1-mini
+--author-input-usd-per-million YOUR_CURRENT_INPUT_PRICE
+--author-output-usd-per-million YOUR_CURRENT_OUTPUT_PRICE
+--author-budget-usd YOUR_LOCAL_ESTIMATED_BUDGET
+--author-max-output-tokens 8192
+--author-max-calls 8
+```
+
+The supported model selections are `gpt-4.1-mini` and `gpt-4.1`.
+Check availability and current prices in your own OpenAI account.
+
+The app does not change models after an error. These options are fixed for a
+server session. The browser shows them but cannot change them.
+No price is supplied by default. Input estimates use the full serialized request
+byte size plus a protocol allowance. They do not use the provider's tokenizer.
+
+The local budget is only an estimate based on the prices you enter. It is not a
+provider-enforced hard spending limit. Set separate account limits with OpenAI.
+Reported usage is a token count, not an invoice. Missing usage stays unknown.
+
+Every attempt retains its full estimated reservation, even after refusal,
+cancellation, or a local failure. The journal and call count survive a restart.
+
+### Credentials and disclosure
+
+The operator must configure a dedicated OpenAI key outside this app, in an
+existing unlocked Linux Secret Service store.
+The optional [SecretStorage 3.5.0](https://pypi.org/project/SecretStorage/3.5.0/)
+Python library and the desktop's running Secret Service must be available.
+Install that library in the trusted Python environment before starting the app.
+This app does not install it. Fixture tests do not certify your store setup. There is no
+plaintext, environment-variable, command-line, or web-form key fallback.
+
+The app reads only the existing designated entry. It does not create or unlock
+a collection, create a credential, or change account access. If the store or
+entry is missing or locked, generation fails closed.
+The existing default collection must contain exactly one unlocked item with
+attributes `service=hbcb-authoring` and `username=openai`.
+Configure it with your trusted desktop credential manager.
+
+Do not paste a key into the brief, project, browser, or terminal command arguments.
+The app never gives the key to Blender, a project export, a browser response, or
+a model prompt. Provider error bodies are not displayed or saved.
+
+Before sending, select a prepared handoff and select **Preview outbound model request**.
+Read the complete payload and the displayed provider, model, token limit and
+local cost estimate. This includes the initial brief or saved refinement and its
+exported text context.
+
+Binary context and images are not supported in this first
+version. An unsupported asset stops preparation. It is not silently omitted.
+The provider receives the displayed data only after you select the consent box
+and **Send one model request**. Do not approve data you are not permitted to share.
+
+The request uses `store:false`. This is not a promise of zero provider retention.
+OpenAI's account-level data controls and abuse-monitoring policy still apply.
+
+### Outcomes and recovery
+
+Each preview can be sent once. A duplicate click, lost response, browser reload,
+or server restart cannot send that preview again. The app makes no automatic
+retry or repair request. A fresh preview requires another explicit approval.
+
+The provider response must finish and pass strict local validation before the
+app saves a proposal. Refusals, partial output, unsupported fields, unsafe file
+names and oversized responses do not become proposals. Model code remains
+untrusted even after format validation.
+
+Select the saved `model-...` proposal and the separately reviewed rule files in
+the existing inspection step. Examine the source and parameters before you run.
+A provider success is not Blender execution, machine verification, or human acceptance.
+
+**Cancel model request** stops local waiting and publication. The provider may
+still process or charge for a sent request. A timeout or lost server ownership
+has the same uncertainty.
+The journal retains the reservation and blocks another
+model request if the outcome is uncertain. Keep this journal for examination.
+There is no browser reset or automatic recovery that can erase these records.
+
+Closing the browser does not cancel a request. Ctrl-C stops the server's owned work.
+
+### Validation scope and upstream references
+
+Provider unit tests use fixtures and mock HTTP responses. Browser tests use a
+simulated provider and, in CI, the existing real isolated Blender execution path.
+These checks do not prove live provider compatibility, output quality, account
+permissions, credential-store readiness, or actual billing. A live trial requires
+operator credential setup and separate approval for a bounded paid request.
+
+The adapter follows the official [Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create),
+[structured output](https://developers.openai.com/api/docs/guides/structured-outputs),
+[image input](https://developers.openai.com/api/docs/guides/images-vision), and
+[data controls](https://developers.openai.com/api/docs/guides/your-data) documentation.
+Images are intentionally excluded from this first request contract.

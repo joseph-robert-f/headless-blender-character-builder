@@ -80,7 +80,8 @@
     "experimental_modeling/requests.py": "CLI guidance and exported author contract. Preserve identifiers and commands.",
     "experimental_modeling/request_contract.py": "Request contract diagnostic guidance. Preserve schema identifiers and field names.",
     "experimental_modeling/workbench_static/index.html": "Visible workbench guidance and accessibility labels. Preserve element identifiers and execution boundaries.",
-    "experimental_modeling/workbench_static/app.js": "Visible workbench guidance and operation status. Preserve exact-input approval and recovery behavior."
+    "experimental_modeling/workbench_static/app.js": "Visible workbench guidance and operation status. Preserve exact-input approval and recovery behavior.",
+    "experimental_modeling/workbench_static/authoring.js": "Visible direct model authoring guidance. Preserve exact-payload consent, cost uncertainty, and separate execution review."
   },
   "generated_documentation": {
     "package_README": "scripts/build-review-preview copies docs/review-preview.md without changes.",
