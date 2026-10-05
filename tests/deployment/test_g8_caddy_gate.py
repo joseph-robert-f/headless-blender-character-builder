@@ -4,6 +4,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -30,6 +31,68 @@ def completed(
     returncode: int = 0, stdout: bytes = b"", stderr: bytes = b""
 ) -> subprocess.CompletedProcess[bytes]:
     return subprocess.CompletedProcess(("docker",), returncode, stdout, stderr)
+
+
+class CaddySourceBuildTests(unittest.TestCase):
+    def test_reviewed_upstream_module_versions_have_no_legacy_overrides(self) -> None:
+        recipe = (ROOT / "docker/caddy.Dockerfile").read_text(encoding="utf-8")
+        self.assertNotIn("    go get ", recipe)
+        for module, version in (
+            ("github.com/caddyserver/caddy/v2", gate.CADDY_OCI_VERSION),
+            ("cel.dev/cel-go", "v0.32.0"),
+            ("github.com/go-chi/chi/v5", "v5.3.2"),
+            ("github.com/klauspost/compress", "v1.20.1"),
+            ("go.opentelemetry.io/otel", "v1.46.0"),
+            ("go.opentelemetry.io/otel/sdk", "v1.46.0"),
+            ("golang.org/x/crypto", "v0.57.0"),
+            ("golang.org/x/net", "v0.59.0"),
+            ("golang.org/x/text", "v0.42.0"),
+            ("google.golang.org/grpc", "v1.83.2"),
+        ):
+            with self.subTest(module=module):
+                self.assertIn(f"    check_module {module} {version};", recipe)
+        self.assertIn("    go mod verify;", recipe)
+        self.assertIn("    go mod vendor;", recipe)
+        self.assertIn("go build -mod=vendor -buildvcs=false -trimpath", recipe)
+
+    def test_upstream_cel_checks_fail_closed_without_changing_source(self) -> None:
+        recipe = (ROOT / "docker/caddy.Dockerfile").read_text(encoding="utf-8")
+        start = recipe.index("    cel_matcher=")
+        end = recipe.index("    check_module()", start)
+        checks = recipe[start:end].replace("\\\n", "\n")
+        self.assertNotIn("sed ", checks)
+        source = (
+            '\t"cel.dev/cel-go/interpreter"\n'
+            + "[]interpreter.InterpretableV2{reqAttr}\n" * 2
+        )
+        cases = (
+            ("current", source, True),
+            ("old-import", source.replace("cel.dev/cel-go", "github.com/google/cel-go"), False),
+            ("mixed-import", source + '"github.com/google/cel-go/interpreter"\n', False),
+            ("old-slices", source.replace("InterpretableV2", "Interpretable"), False),
+            ("mixed-slices", source + "[]interpreter.Interpretable{reqAttr}\n", False),
+            ("one-call", source.replace("[]interpreter.InterpretableV2{reqAttr}\n", "", 1), False),
+            ("missing", None, False),
+        )
+        for name, content, expected in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                matcher = root / "vendor/github.com/caddyserver/caddy/v2/modules/caddyhttp/celmatcher.go"
+                matcher.parent.mkdir(parents=True)
+                if content is not None:
+                    matcher.write_text(content, encoding="utf-8")
+                result = subprocess.run(
+                    ["/bin/sh", "-eu", "-c", checks],
+                    cwd=root,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                    timeout=10,
+                )
+                self.assertEqual(result.returncode == 0, expected, result.stderr)
+                if content is not None:
+                    self.assertEqual(matcher.read_text(encoding="utf-8"), content)
 
 
 class CaddyDigestInspectionTests(unittest.TestCase):
@@ -167,14 +230,14 @@ class CaddyRuntimeIdentityTests(unittest.TestCase):
 
     def test_runtime_identity_mutations_fail_closed(self) -> None:
         invalid = (
-            b"v2.11.3\nv2.11.4 h1:ok\nLinux\nx86_64\n",
-            b"v2.11.4\nv2.11.3 h1:wrong\nLinux\nx86_64\n",
-            b"v2.11.4\n\nLinux\nx86_64\n",
-            b"v2.11.4\nv2.11.4 h1:ok\nDarwin\nx86_64\n",
-            b"v2.11.4\nv2.11.4 h1:ok\nLinux\naarch64\n",
-            b"v2.11.4\nv2.11.4 h1:ok\nLinux\n",
-            b"v2.11.4\nv2.11.4 h1:ok\nLinux\nx86_64\nextra\n",
-            b"\xff\nv2.11.4 h1:ok\nLinux\nx86_64\n",
+            b"v2.11.3\nv2.11.7 h1:ok\nLinux\nx86_64\n",
+            b"v2.11.7\nv2.11.3 h1:wrong\nLinux\nx86_64\n",
+            b"v2.11.7\n\nLinux\nx86_64\n",
+            b"v2.11.7\nv2.11.7 h1:ok\nDarwin\nx86_64\n",
+            b"v2.11.7\nv2.11.7 h1:ok\nLinux\naarch64\n",
+            b"v2.11.7\nv2.11.7 h1:ok\nLinux\n",
+            b"v2.11.7\nv2.11.7 h1:ok\nLinux\nx86_64\nextra\n",
+            b"\xff\nv2.11.7 h1:ok\nLinux\nx86_64\n",
         )
         for stdout in invalid:
             with self.subTest(stdout=stdout), mock.patch.object(
@@ -271,7 +334,9 @@ class CaddyCustomBuildTests(unittest.TestCase):
 
     def test_failed_build_still_removes_temporary_tag(self) -> None:
         tag = "hbcb-caddy-g8:scan-" + "b" * 24
-        with mock.patch.object(gate, "_inspect_digest"), mock.patch.object(
+        with mock.patch.object(gate.shutil, "which", return_value="/usr/bin/docker"), mock.patch.object(
+            gate, "_inspect_digest"
+        ), mock.patch.object(
             gate, "_runtime_identity"
         ), mock.patch.object(gate.secrets, "token_hex", return_value="b" * 24), mock.patch.object(
             gate, "_build_custom", side_effect=gate.GateFailure("custom Caddy build failed")
@@ -286,14 +351,16 @@ class CaddyCustomBuildTests(unittest.TestCase):
 
         def run(command: list[str], *, label: str, timeout: int = 120):
             if label == "custom Caddy version":
-                return completed(stdout=b"v2.11.4 h1:reviewed-runtime-hash\n")
+                return completed(stdout=b"v2.11.7 h1:reviewed-runtime-hash\n")
             if label == "custom Caddy binary provenance":
                 self.assertIn(image_id, command)
                 self.assertIn("sha256sum -c /usr/share/licenses/caddy/caddy.sha256", command)
                 return completed(stdout=b"/usr/bin/caddy: FAILED\n")
             self.fail(f"unexpected validation after bad binary: {label}")
 
-        with mock.patch.object(gate, "_inspect_digest"), mock.patch.object(
+        with mock.patch.object(gate.shutil, "which", return_value="/usr/bin/docker"), mock.patch.object(
+            gate, "_inspect_digest"
+        ), mock.patch.object(
             gate, "_runtime_identity"
         ), mock.patch.object(gate.secrets, "token_hex", return_value="b" * 24), mock.patch.object(
             gate, "_build_custom", return_value=image_id

@@ -201,14 +201,14 @@ class DependencyAuditTests(unittest.TestCase):
         mutations = (
             (
                 "docker/caddy.Dockerfile",
-                "releases/download/v2.11.4/caddy_2.11.4_buildable-artifact.tar.gz",
+                "releases/download/v2.11.7/caddy_2.11.7_buildable-artifact.tar.gz",
                 "releases/download/v2.11.3/caddy_2.11.3_buildable-artifact.tar.gz",
                 "custom Caddy recipe source or version is stale",
             ),
             (
                 "deploy/vps/release.lock.env.example",
-                "ghcr.io/joseph-robert-f/hbcb-caddy:v2.11.4-hbcb.1@sha256:",
-                "caddy:2.11.4-alpine@sha256:",
+                "ghcr.io/joseph-robert-f/hbcb-caddy:v2.11.7-hbcb.1@sha256:",
+                "caddy:2.11.7-alpine@sha256:",
                 "does not preserve the reviewed tag",
             ),
         )
