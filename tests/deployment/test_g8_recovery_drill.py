@@ -411,7 +411,7 @@ class RecoveryDrillTests(unittest.TestCase):
         )
         self.assertIn(
             "redis:8.2.10-alpine3.22@sha256:"
-            "8d02c1dc547ea659066d2ca18fce4e80f0a84cfe56a61af2ced2c2a48de3597c",
+            "b51665e66f00759be7c3152ad5ac3c66fb2f619c13ef62dea7cc1f9914524635",
             text,
         )
         for policy in (
