@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -54,6 +55,35 @@ def valid_document() -> dict[str, object]:
 
 
 class MinioSecurityGateTests(unittest.TestCase):
+    def test_checked_in_recipe_labels_match_independent_runtime_contract(self) -> None:
+        dockerfile = (ROOT / "docker" / "minio.Dockerfile").read_text(encoding="utf-8")
+        document = valid_document()
+        labels = document["Config"]["Labels"]  # type: ignore[index]
+        # Exercise the gate with the recipe's labels, rather than a fixture
+        # populated from the gate's own expectations. Runtime expectations
+        # remain independently pinned and are never read from the image.
+        for key in labels:
+            values = re.findall(
+                rf'^\s*(?:LABEL\s+)?{re.escape(key)}="([^"\n]+)"(?:\s*\\)?$',
+                dockerfile,
+                re.MULTILINE,
+            )
+            self.assertEqual(len(values), 1, key)
+            labels[key] = values[0]
+        self.assertEqual(GATE._validate_image(document), document["Id"])
+
+    def test_stale_missing_and_unknown_security_module_labels_fail_closed(self) -> None:
+        for value in ("2026-08-12", None, "unreviewed-security-modules"):
+            with self.subTest(value=value):
+                document = valid_document()
+                labels = document["Config"]["Labels"]  # type: ignore[index]
+                if value is None:
+                    del labels["io.hbcb.security-modules"]
+                else:
+                    labels["io.hbcb.security-modules"] = value
+                with self.assertRaisesRegex(GATE.GateError, "labels do not match"):
+                    GATE._validate_image(document)
+
     def test_image_contract_is_exact_and_mutations_fail(self) -> None:
         expected_id = "sha256:" + "a" * 64
         self.assertEqual(GATE._validate_image(valid_document()), expected_id)

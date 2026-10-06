@@ -25,7 +25,7 @@ IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 SERVER_REVISION = "7aac2a2c5b7c882e68c1ce017d8256be2feea27f"
 CLIENT_REVISION = "77f82e18b5401a65958f1619df6ebb994634bd88"
 FIXTURE_VERSION = "final-community-20260212-hbcb.1"
-SECURITY_MODULE_DATE = "2026-08-12"
+SECURITY_MODULE_DATE = "2026-09-23"
 
 
 def _safe_tool_selector(value: str) -> bool:
