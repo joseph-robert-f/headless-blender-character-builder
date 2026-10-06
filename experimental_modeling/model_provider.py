@@ -440,6 +440,11 @@ def direct_https_request(*, body: bytes, key: str, cancel_event,
             chunks, size = [], 0
             while True:
                 remaining = check()
+                # HTTPResponse closes its file after the last Content-Length
+                # byte. With Connection: close, that also closes our saved
+                # socket. Do not touch it again after a complete response.
+                if response.isclosed():
+                    break
                 transport_socket.settimeout(remaining)
                 chunk = response.read1(min(65536, MAX_RESPONSE_BYTES - size + 1))
                 if not chunk:
