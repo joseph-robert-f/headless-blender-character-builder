@@ -3,6 +3,7 @@ import copy
 from email.message import Message
 import json
 import os
+import socket
 import ssl
 import sys
 import threading
@@ -344,6 +345,7 @@ class HTTPSFixtureTests(unittest.TestCase):
         self.connection = Mock()
         self.socket = self.connection.sock
         self.reply = Mock(status=200)
+        self.reply.isclosed.return_value = False
         self.reply.headers = Message()
         self.reply.getheader.side_effect = lambda name, default="": {"Content-Type": "application/json", "Content-Encoding": "identity"}.get(name, default)
         self.reply.read1.side_effect = [encoded(response()), b""]
@@ -467,6 +469,89 @@ class HTTPSFixtureTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 0.5)
         self.assertTrue(provider._TRANSPORT_FLIGHT.acquire(timeout=1))
         provider._TRANSPORT_FLIGHT.release()
+
+
+class HTTPResponseLifecycleTests(unittest.TestCase):
+    """Real HTTPResponse ownership over a local socket pair, never provider I/O."""
+
+    def exchange(self, headers, body, *, eof=True, timeout=1):
+        client, peer = socket.socketpair()
+        self.addCleanup(client.close)
+        self.addCleanup(peer.close)
+        # A response can exceed the socket buffer on some platforms. Feed it
+        # concurrently so fixture setup cannot block before the read deadline.
+        peer.settimeout(1)
+        peer.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 8192)
+        sender_errors = []
+        def send():
+            try:
+                peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" +
+                             headers + b"\r\n" + body)
+                if eof:
+                    peer.shutdown(socket.SHUT_WR)
+            except Exception as error:
+                sender_errors.append(type(error).__name__)
+        sender = threading.Thread(target=send, daemon=True)
+        sender.start()
+        connection = provider.http.client.HTTPConnection("offline-fixture.invalid")
+        connection.sock = client
+        connection.connect = Mock()  # The socket pair is already connected.
+        connection.request = Mock(wraps=connection.request)
+        with patch.object(provider.http.client, "HTTPSConnection", return_value=connection) as factory, \
+                patch.object(provider, "_system_tls_context", return_value=None), \
+                patch.object(provider.socket, "create_connection", side_effect=AssertionError("External network forbidden")):
+            try:
+                return provider.direct_https_request(body=b"{}", key=FIXTURE_KEY,
+                    cancel_event=threading.Event(), timeout=timeout)
+            finally:
+                # A timeout can return before its worker observes shutdown.
+                self.assertTrue(provider._TRANSPORT_FLIGHT.acquire(timeout=1))
+                provider._TRANSPORT_FLIGHT.release()
+                sender.join(2)
+                self.assertFalse(sender.is_alive())
+                self.assertEqual(sender_errors, [])
+                factory.assert_called_once()
+                connection.connect.assert_called_once()
+                connection.request.assert_called_once()
+                self.assertEqual(connection.auto_open, 0)
+
+    def test_complete_content_length_connection_close_preserves_body_and_usage(self):
+        body = encoded(response())
+        status, actual = self.exchange(
+            b"Content-Length: " + str(len(body)).encode() + b"\r\nConnection: close\r\n", body)
+        self.assertEqual((status, actual), (200, body))
+        result = provider._response_proposal(actual, FIXTURE_KEY)
+        self.assertEqual(result["proposal"], PROPOSAL)
+        self.assertEqual(result["usage"], {"input_tokens": 100, "output_tokens": 25,
+                                        "cached_input_tokens": 40})
+
+    def test_content_length_multiple_reads_and_empty_body(self):
+        for body in (b"", b"x" * 70000):
+            with self.subTest(size=len(body)):
+                self.assertEqual(self.exchange(
+                    b"Content-Length: " + str(len(body)).encode() + b"\r\nConnection: close\r\n", body),
+                    (200, body))
+
+    def test_complete_chunked_and_close_delimited_bodies(self):
+        self.assertEqual(self.exchange(b"Transfer-Encoding: chunked\r\nConnection: close\r\n",
+                                       b"1\r\n{\r\n1\r\n}\r\n0\r\n\r\n"), (200, b"{}"))
+        self.assertEqual(self.exchange(b"Connection: close\r\n", b"{}"), (200, b"{}"))
+
+    def test_early_close_fails_without_accepting_partial_body(self):
+        for headers, body, code in (
+                (b"Content-Length: 8\r\nConnection: close\r\n", b"{}", "invalid_response"),
+                (b"Transfer-Encoding: chunked\r\nConnection: close\r\n", b"4\r\n{}", "network_error")):
+            with self.subTest(headers=headers), self.assertRaises(provider.ProviderError) as error:
+                self.exchange(headers, body)
+            self.assertEqual(error.exception.code, code)
+            self.assertNotIn(FIXTURE_KEY, str(error.exception))
+
+    def test_stalled_body_still_obeys_total_deadline_without_retry(self):
+        started = time.monotonic()
+        with self.assertRaises(provider.ProviderError) as error:
+            self.exchange(b"Content-Length: 8\r\nConnection: close\r\n", b"{}", eof=False, timeout=0.05)
+        self.assertEqual(error.exception.code, "timeout")
+        self.assertLess(time.monotonic() - started, 0.5)
 
 
 class TLSContextTests(unittest.TestCase):
