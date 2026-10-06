@@ -1,1 +1,4 @@
-{"accessory":"sunglasses","body_shift_x":0.08}
+{
+  "accessory": "sunglasses",
+  "cat_shift": 0.15
+}

@@ -1,1 +1,4 @@
-{"accessory":"hat","body_shift_x":0.0}
+{
+  "accessory": "hat",
+  "cat_shift": 0
+}

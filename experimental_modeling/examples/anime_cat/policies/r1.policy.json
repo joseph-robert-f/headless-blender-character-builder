@@ -1,25 +1,7 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "parts": [
-    "body",
-    "belly",
-    "head",
-    "ears",
-    "inner_ears",
-    "paws",
-    "tail",
-    "tail_tip",
-    "eyes",
-    "irises",
-    "pupils",
-    "highlights",
-    "muzzle",
-    "nose",
-    "mouth",
-    "whiskers",
-    "cheeks",
-    "collar",
-    "bell",
+    "cat",
     "accessory"
   ],
   "changed_parts": [
@@ -27,112 +9,12 @@
   ],
   "constraints": [
     {
-      "kind": "manifold",
-      "part": "body",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "belly",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "head",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "ears",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "inner_ears",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "paws",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "tail",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "tail_tip",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "eyes",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "irises",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "pupils",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "highlights",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "muzzle",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "nose",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "mouth",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "whiskers",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "cheeks",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "collar",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "bell",
-      "data": {}
-    },
-    {
-      "kind": "manifold",
-      "part": "accessory",
-      "data": {}
-    },
-    {
       "kind": "extent",
       "part": "accessory",
       "data": {
         "axis": 0,
-        "min": 0.88,
-        "max": 0.92
+        "min": 1.11,
+        "max": 1.13
       }
     },
     {
@@ -140,8 +22,8 @@
       "part": "accessory",
       "data": {
         "axis": 2,
-        "min": 0.45,
-        "max": 0.49
+        "min": 0.54,
+        "max": 0.56
       }
     }
   ],

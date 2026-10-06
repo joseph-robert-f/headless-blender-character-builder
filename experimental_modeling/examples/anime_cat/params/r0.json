@@ -1,1 +1,4 @@
-{"accessory":"none","body_shift_x":0.0}
+{
+  "accessory": "none",
+  "cat_shift": 0
+}

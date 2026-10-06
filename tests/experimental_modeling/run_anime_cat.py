@@ -118,6 +118,7 @@ def run(
             "jobs": result["jobs"],
         })
 
+    assert all(result["source_files"] == results[0]["source_files"] for result in results), "Source snapshot changed between revisions"
     geometry = verify(observations)
 
     # The reviewed bad parameter state changes a protected cat part while the
@@ -171,6 +172,8 @@ def run(
         "github_head_ref": os.environ.get("GITHUB_HEAD_REF"),
         "execution_mode": rebuild["execution_mode"],
         "security_boundary": rebuild["security_boundary"],
+        "policy_schema_version": 2,
+        "same_source_snapshot_across_revisions": True,
         "geometry": geometry,
         "last_good_preserved_after_rejection": True,
         "bad_edit_failures": bad["failures"],
