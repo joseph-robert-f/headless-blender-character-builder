@@ -309,11 +309,25 @@ The dependency scan makes and scans the resulting image.
 `make g8-caddy` does checks of the upstream base identity and custom binary.
 It validates the Caddyfile with the custom image.
 
-The recipe vendors verified Go modules. It applies one specified compatibility
-change to the two Caddy CEL `NewCall` argument slices.
-Thus, the specified release source can compile with the patched CEL module.
-Before the change, the recipe makes sure that the two initial call sites are in the source.
-It compiles only the updated vendor tree.
+The recipe verifies and vendors the reviewed upstream Go module graph.
+Caddy 2.11.7 includes the two CEL `NewCall` argument-slice fixes.
+It uses `cel.dev/cel-go` 0.32.0.
+The recipe checks both fixed call sites and the new CEL import path.
+It rejects the old call sites and import path without changing the source.
+
+The earlier module overrides and CEL source patch are no longer necessary.
+The recipe checks specified module versions and compiles only the verified vendor tree.
+
+The [Caddy 2.11.6 release notes](https://github.com/caddyserver/caddy/releases/tag/v2.11.6)
+list changes from 2.11.4 that also apply to 2.11.7.
+The default request-header limit is 16 KiB.
+Idle request reads and response writes have a one-minute timeout.
+Header names with dots are dropped unless explicitly permitted.
+
+The [Caddy 2.11.7 release notes](https://github.com/caddyserver/caddy/releases/tag/v2.11.7)
+describe the related HTTP/2 and streaming-timeout corrections.
+Before deployment, test representative uploads, headers, and streaming responses.
+The pinned Go 1.26.8 toolchain meets the upstream Go 1.26 minimum.
 
 Update the source, Go modules, build recipe, runtime base, notice, and the two
 checks together. The build stage records the binary SHA-256.

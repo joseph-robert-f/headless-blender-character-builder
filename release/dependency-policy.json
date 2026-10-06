@@ -66,7 +66,7 @@
       "dockerfile": "docker/caddy.Dockerfile",
       "example_file": "deploy/vps/release.lock.env.example",
       "example_repository": "ghcr.io/joseph-robert-f/hbcb-caddy",
-      "example_tag": "v2.11.4-hbcb.1",
+      "example_tag": "v2.11.7-hbcb.1",
       "example_variable": "HBCB_CADDY_IMAGE",
       "file": "tests/deployment/g8_caddy_gate.py",
       "id": "caddy",
