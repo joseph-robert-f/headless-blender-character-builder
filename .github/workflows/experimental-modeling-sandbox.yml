@@ -89,6 +89,10 @@
           "run": "python3 tests/experimental_modeling/run_anime_cat_print.py --store \"$RUNNER_TEMP/modeling-anime-cat-print\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
         },
         {
+          "name": "Full cat STL roundtrip, protected surfaces, rejected exports and history",
+          "run": "python3 tests/experimental_modeling/run_anime_cat_print_export.py --store \"$RUNNER_TEMP/modeling-anime-cat-stl\" --candidates \"$RUNNER_TEMP/modeling-anime-cat-print\" --history \"$RUNNER_TEMP/modeling-anime-cat/primary\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
+        },
+        {
           "name": "Reusable relation positive and negative Blender fixtures",
           "run": "python3 tests/experimental_modeling/run_water_relations.py --store \"$RUNNER_TEMP/modeling-water-relations\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
         },
@@ -248,6 +252,17 @@
           "with": {
             "name": "anime-cat-print-${{ github.run_id }}-${{ github.run_attempt }}",
             "path": "${{ runner.temp }}/modeling-anime-cat-print/print-candidate-*.json\n${{ runner.temp }}/modeling-anime-cat-print/geometry-probes/*.json\n${{ runner.temp }}/modeling-anime-cat-print/r*/inspection/solid-observation.json\n${{ runner.temp }}/modeling-anime-cat-print/r*/base-inspection/solid-observation.json\n${{ runner.temp }}/modeling-anime-cat-print/r*/render/views/*.png\n${{ runner.temp }}/modeling-anime-cat-print/r*/render/render-binding.json\n${{ runner.temp }}/modeling-anime-cat-print/r*/*.log\n${{ runner.temp }}/modeling-anime-cat-print/geometry-probes.log",
+            "if-no-files-found": "error",
+            "retention-days": 7
+          }
+        },
+        {
+          "name": "Retain complete cat STLs and compact roundtrip evidence",
+          "if": "${{ always() }}",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "name": "anime-cat-stl-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "${{ runner.temp }}/modeling-anime-cat-stl/print-export-*.json\n${{ runner.temp }}/modeling-anime-cat-stl/stl-probes/*.json\n${{ runner.temp }}/modeling-anime-cat-stl/r*/export/model.stl\n${{ runner.temp }}/modeling-anime-cat-stl/r*/export/export-observation.json\n${{ runner.temp }}/modeling-anime-cat-stl/r*/inspection/solid-observation.json\n${{ runner.temp }}/modeling-anime-cat-stl/r*/assessment.json\n${{ runner.temp }}/modeling-anime-cat-stl/r*/render/views/*.png\n${{ runner.temp }}/modeling-anime-cat-stl/r*/render/render-binding.json\n${{ runner.temp }}/modeling-anime-cat-stl/r*/*.log\n${{ runner.temp }}/modeling-anime-cat-stl/negative/*/*.json\n${{ runner.temp }}/modeling-anime-cat-stl/negative/*.log\n${{ runner.temp }}/modeling-anime-cat-stl/clean-rebuild/*.log\n${{ runner.temp }}/modeling-anime-cat-stl/clean-rebuild/export/export-observation.json\n${{ runner.temp }}/modeling-anime-cat-stl/stl-probes.log",
             "if-no-files-found": "error",
             "retention-days": 7
           }
