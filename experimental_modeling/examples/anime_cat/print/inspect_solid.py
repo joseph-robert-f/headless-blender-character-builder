@@ -21,6 +21,11 @@ from mathutils.bvhtree import BVHTree
 MAX_TRIANGLES = 500000
 MAX_REPORT_BYTES = 4 * 1024**2
 SCALE = 100.0 / 3.15  # Independently fixed by provisional_fdm_v1.
+DEFAULT_PROFILE_ID = 'anime-cat-fdm-provisional-v1'
+X1C_PROFILE_ID = 'anime-cat-x1c-pla-04-bare100-v2'
+PROFILE_ID = DEFAULT_PROFILE_ID
+PROFILE_SHA256 = '0c718776d23213ce6182ca0cf302b6e48827a2205d6a9f8fe69f381e4b646f32'
+FINAL_SCALE = 1.0
 
 
 # Coordinates below are millimeters. Tests use this explicit numerical tolerance.
@@ -30,6 +35,38 @@ PROTECTED_EXCLUSIONS_MM = {
     'r1': ((-20,-20,80),(20,20,103)),
     'r2': ((-26,-32,54),(26,2,76)),
 }
+
+
+def configure_profile(profile_id=DEFAULT_PROFILE_ID):
+    """Select independently reviewed fixed policy; never derive it from a mesh."""
+    global PROFILE_ID, PROFILE_SHA256, FINAL_SCALE, PROTECTED_EXCLUSIONS_MM
+    if profile_id == DEFAULT_PROFILE_ID:
+        PROFILE_SHA256 = '0c718776d23213ce6182ca0cf302b6e48827a2205d6a9f8fe69f381e4b646f32'
+        FINAL_SCALE = 1.0
+        PROTECTED_EXCLUSIONS_MM = {'r1':((-20,-20,80),(20,20,103)),
+                                   'r2':((-26,-32,54),(26,2,76))}
+    elif profile_id == X1C_PROFILE_ID:
+        PROFILE_SHA256 = '7c7f84e3749e08d24bb163e3364e4831278ba3908f780f1b44ac2b0a928da915'
+        FINAL_SCALE = 1.0854632543541882
+        # Fixed float32-scaled endpoints retain exact boundary facets.
+        PROTECTED_EXCLUSIONS_MM = {
+            'r1':((-21.709264755249023,-21.709264755249023,86.8370590209961),
+                  (21.709264755249023,21.709264755249023,111.8027114868164)),
+            'r2':((-28.222043991088867,-34.734825134277344,58.61501693725586),
+                  (28.222043991088867,2.170926570892334,82.49520874023438)),
+        }
+    else:
+        raise ValueError('Unknown independently reviewed print profile')
+    PROFILE_ID = profile_id
+
+
+def profile_binding():
+    return {'profile_id':PROFILE_ID,'profile_sha256':PROFILE_SHA256}
+
+
+def require_profile_binding(report):
+    if any(report.get(key) != value for key,value in profile_binding().items()):
+        raise ValueError('Observation uses a different print profile')
 
 
 def _cross2(a, b):
@@ -313,6 +350,9 @@ def thickness(bvh, revision):
     results = []
     for name, xyz, axis in probes:
         center = Vector(xyz) * SCALE
+        if FINAL_SCALE != 1.0:
+            center = Vector(tuple(struct.unpack('<f',struct.pack('<f',float(v)*FINAL_SCALE))[0]
+                                  for v in center))
         chords = []
         directions = [Vector((0, 0, 1))] if axis == 'z' else [
             Vector((0, math.cos(i*math.pi/8), math.sin(i*math.pi/8))) for i in range(8)]
@@ -395,6 +435,7 @@ def observe(obj, revision, include_protected=False, allow_missing_features=False
 
 
 def render_binding(obj, report, revision, input_sha256):
+    require_profile_binding(report)
     if (report['revision'] != revision or report['unit'] != 'millimeter' or
             report['input_sha256'] != input_sha256):
         raise ValueError('Render reference does not bind to this saved candidate')
@@ -412,7 +453,7 @@ def render_binding(obj, report, revision, input_sha256):
                   'max':[max(p[i] for p in points) for i in range(3)]}
         if bounds != measured['bounds_mm']:
             raise ValueError('Render bounds differ from the observed surface')
-    return {'input_sha256':input_sha256,'surface_sha256':measured['surface_sha256'],
+    return {**profile_binding(),'input_sha256':input_sha256,'surface_sha256':measured['surface_sha256'],
             'exact_surface_sha256':measured['exact_surface_sha256'],
             'measured_triangles':measured['measured_triangles'],'bounds_mm':bounds}
 
@@ -453,6 +494,9 @@ def validate_inventory():
         raise ValueError('Unsupported geometry or instances are not permitted in print candidates')
     if any(item.is_instance for item in bpy.context.evaluated_depsgraph_get().object_instances):
         raise ValueError('Instanced evaluated geometry is not permitted')
+    for obj in bpy.context.scene.objects:
+        if obj.type == 'MESH' and obj.get('print_profile_id',DEFAULT_PROFILE_ID) != PROFILE_ID:
+            raise ValueError('Saved mesh uses a different print profile')
 
 
 def main():
@@ -464,7 +508,9 @@ def main():
     parser.add_argument('--render-reference')
     parser.add_argument('--stl', action='store_true')
     parser.add_argument('--target', choices=('PrintBase','PrintCandidate'))
+    parser.add_argument('--profile-id', choices=(DEFAULT_PROFILE_ID,X1C_PROFILE_ID),default=DEFAULT_PROFILE_ID)
     args = parser.parse_args(sys.argv[sys.argv.index('--')+1:])
+    configure_profile(args.profile_id)
     if args.render_reference and (args.no_renders or args.target != 'PrintCandidate'):
         raise ValueError('Render reference requires the visible candidate render stage')
     if args.stl:
@@ -484,7 +530,7 @@ def main():
         measured = observe(obj,args.revision,include_protected=True,allow_missing_features=True)
         if measured['evaluated_triangles'] != count or measured['measured_triangles'] != count:
             raise ValueError('STL measurement omitted input triangles')
-        report = {'schema_version':1,'revision':args.revision,'unit':'millimeter',
+        report = {**profile_binding(),'schema_version':1,'revision':args.revision,'unit':'millimeter',
                   'measurement_source':'reimported_final_stl','stl_triangle_count':count,
                   'input_sha256':hashlib.sha256(data).hexdigest(),'blender_version':bpy.app.version_string,
                   'promotion_eligible':False,'physical_validation':'pending',
@@ -521,7 +567,7 @@ def main():
         render_views(meshes['PrintCandidate'],output/'views',binding['bounds_mm'])
         (output/'render-binding.json').write_text(json.dumps(binding,indent=2,allow_nan=False)+'\n')
         return
-    report = {'schema_version': 1, 'revision': args.revision, 'unit': 'millimeter',
+    report = {**profile_binding(),'schema_version': 1, 'revision': args.revision, 'unit': 'millimeter',
               'measurement_source': 'evaluated_saved_blend',
               'blender_version': bpy.app.version_string, 'promotion_eligible': False,
               'physical_validation': 'pending', 'feature_coverage': 'unknown',

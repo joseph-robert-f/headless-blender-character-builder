@@ -1,0 +1,22 @@
+{
+  "export_unit": "millimeter",
+  "height_tolerance_mm": 1.5,
+  "layer_height_mm": 0.2,
+  "material": "PLA",
+  "maximum_dimension_mm": 120.0,
+  "maximum_triangles": 500000,
+  "minimum_feature_mm": 1.35,
+  "nozzle_diameter_mm": 0.4,
+  "profile_id": "anime-cat-x1c-pla-04-bare100-v2",
+  "reference_height_m": 2.901986766815185,
+  "reference_height_mm": 100.0,
+  "revision_heights_mm": {
+    "r0": 100.0,
+    "r1": 108.54632543541882,
+    "r2": 100.0
+  },
+  "schema_version": 1,
+  "source_scale_length": 1.0,
+  "source_unit": "meter",
+  "status": "provisional"
+}

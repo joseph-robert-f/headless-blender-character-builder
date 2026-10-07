@@ -94,7 +94,7 @@ try:
 finally:
     bm.free()
 measured = observer.observe(obj,'r0')
-reference = {'revision':'r0','unit':'millimeter','input_sha256':'a'*64,
+reference = {**observer.profile_binding(),'revision':'r0','unit':'millimeter','input_sha256':'a'*64,
              'meshes':{'PrintCandidate':measured}}
 observer.render_binding(obj,reference,'r0','a'*64)
 results.append({'fixture':'render-complete-surface-binding','status':'passed'})

@@ -80,7 +80,7 @@ with observer.evaluated_surface(obj) as (_,bm):
               'exact_surface_sha256':observer.geometry_hash(bm,exact=True),
               'bounds_mm':{'min':[min(p[i] for p in points) for i in range(3)],
                            'max':[max(p[i] for p in points) for i in range(3)]}}
-reference={'revision':'r0','unit':'millimeter','input_sha256':'a'*64,'meshes':{'PrintCandidate':measured}}
+reference={**observer.profile_binding(),'revision':'r0','unit':'millimeter','input_sha256':'a'*64,'meshes':{'PrintCandidate':measured}}
 binding=observer.render_binding(obj,reference,'r0','a'*64)
 assert binding['exact_surface_sha256']==measured['exact_surface_sha256']
 measured['exact_surface_sha256']='b'*64

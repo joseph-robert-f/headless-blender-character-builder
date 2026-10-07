@@ -33,6 +33,8 @@ class PrintPreservationTests(unittest.TestCase):
                        'input_sha256':'a'*64,'stl_triangle_count':1000,'meshes':{'PrintCandidate':copy.deepcopy(mesh)}}
         self.baseline = copy.deepcopy(self.result)
         self.baseline['revision'] = 'r0'
+        for report in (self.source,self.exported,self.result,self.baseline):
+            report.update(profile_id=self.profile.profile_id,profile_sha256=self.profile.sha256)
         self.hashes = {'stl_sha256':'a'*64,'source_observation_sha256':'f'*64,
                        'observer_sha256':'1'*64,'derivation_sha256':'2'*64}
 

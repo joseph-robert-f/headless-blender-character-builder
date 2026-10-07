@@ -15,13 +15,18 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
 from experimental_modeling.contracts import read_json
 from experimental_modeling.controller import build, digest, regular_tree, safe_path, snapshot, verify_accepted, write_json
-from experimental_modeling.print_contract import PrintProfile
-from experimental_modeling.print_preservation import assess
+from experimental_modeling.print_contract import PrintProfile, DEFAULT_PROFILE_ID, X1C_PROFILE_ID
+from experimental_modeling.print_preservation import assess, require_profile_binding
 from experimental_modeling.sandbox import DockerSandbox
 from run_anime_cat_print import run as run_candidates, verify as verify_candidates
 
 FIXTURE = ROOT/'experimental_modeling/examples/anime_cat/print'
 ORIGINAL = ROOT/'experimental_modeling/examples/anime_cat'
+V1_CANONICAL_STL_SHA256 = {
+    'r0':'201e21f6161ad3774840ba65b48d560674da139bfb810cf76f6176c9056d0a03',
+    'r1':'a49088cb4c7dccd45bef2a92ca7b532d345d91e9e74194fac05e563e045ceb46',
+    'r2':'8d444f00bf66466931d1e78cb5741e88affb0fefa90545362584d5a17434fe5b',
+}
 
 
 def history_fingerprints(history):
@@ -42,8 +47,9 @@ def history_fingerprints(history):
     return {str(path.relative_to(history)):digest(path) for path in regular_tree(history)}
 
 
-def negative_stls(source, output):
+def negative_stls(source, output, *, profile=None):
     """Mutate all encoded facets; the independent observer measures each result."""
+    scale = profile.final_scale if profile else 1.0
     data = source.read_bytes()
     count = struct.unpack_from('<I',data,80)[0]
     if not 4 <= count <= 500000 or len(data) != 84+50*count:
@@ -68,13 +74,14 @@ def negative_stls(source, output):
         # Enlarge so existing valid microscopic facets stay measurable. The
         # fixed-height contract must reject scale without weakening area QA.
         if kind == 'wrong-scale': return tuple(v*2 for v in point)
-        if kind == 'shifted-body': return (x+.5*max(0,min(1,(52-z)/12)),y,z)
-        cx,cy,cz = .72*100/3.15,-.55*100/3.15,1.68*100/3.15
-        factor = 1-.75*max(0,1-abs(x-cx)/3)*max(0,1-abs(z-cz)/4)
+        if kind == 'shifted-body': return (x+.5*scale*max(0,min(1,(52*scale-z)/(12*scale))),y,z)
+        cx,cy,cz = .72*100/3.15*scale,-.55*100/3.15*scale,1.68*100/3.15*scale
+        factor = 1-.75*max(0,1-abs(x-cx)/(3*scale))*max(0,1-abs(z-cz)/(4*scale))
         return (x,cy+(y-cy)*factor,cz+(z-cz)*factor)
 
     result = {'open-seam':write('open-seam',triangles[1:])}
     tetra = [(45,-35,50),(47,-35,50),(45,-33,50),(45,-35,52)]
+    tetra = [tuple(value*scale for value in point) for point in tetra]
     detached = [tuple(tetra[i] for i in row) for row in ((0,2,1),(0,1,3),(0,3,2),(1,2,3))]
     result['detached-shell'] = write('detached-shell',triangles+detached)
     for name in ('wrong-scale','thin-whisker','shifted-body'):
@@ -82,12 +89,14 @@ def negative_stls(source, output):
     return result
 
 
-def run(store, *, sandbox_image, candidates=None, history=None, docker=None):
+def run(store, *, sandbox_image, candidates=None, history=None, docker=None, profile_id=DEFAULT_PROFILE_ID):
     store = safe_path(Path(store).absolute())
     if store.exists() and any(store.iterdir()): raise ValueError('Use a fresh empty STL evidence store')
     store.mkdir(parents=True,exist_ok=True)
     if shutil.disk_usage(store).free < 1024**3: raise ValueError('At least 1 GiB free disk space is required')
-    profile = PrintProfile.load(FIXTURE/'provisional_fdm_v1.json')
+    profile = PrintProfile.load(FIXTURE/PrintProfile.reviewed(profile_id).fixture_name)
+    policy_args = ['--profile-id',profile.profile_id]
+    derivation_file = 'solids.py' if profile.profile_id==DEFAULT_PROFILE_ID else 'x1c_solids.py'
     sandbox = DockerSandbox(sandbox_image,docker_executable=Path(docker) if docker else None)
     runtime = sandbox.verify_runtime()
     source_hashes = snapshot(FIXTURE/'source',store/'source')
@@ -97,9 +106,10 @@ def run(store, *, sandbox_image, candidates=None, history=None, docker=None):
     original_hash = digest(ORIGINAL/'source/builder.py')
     if candidates is None:
         candidates = store/'candidates'
-        run_candidates(candidates,sandbox_image=sandbox_image,docker=docker)
+        run_candidates(candidates,sandbox_image=sandbox_image,docker=docker,profile_id=profile.profile_id)
     candidates = safe_path(Path(candidates).absolute())
     summary = read_json(candidates/'print-candidate-summary.json')
+    require_profile_binding(profile,summary)
     if summary['status'] != 'closed_candidates' or summary['source_files'] != source_hashes or summary['observer_sha256'] != digest(observer):
         raise ValueError('Candidates must be completely observed with these exact frozen sources and observer')
     if history is None:
@@ -126,6 +136,7 @@ def run(store, *, sandbox_image, candidates=None, history=None, docker=None):
             blend = candidates/revision/'authored/model.blend'
             if source['input_sha256'] != digest(blend) or base['input_sha256'] != source['input_sha256']:
                 raise ValueError('Complete source observations no longer bind to the saved blend')
+            require_profile_binding(profile,source,base)
             source['meshes']['PrintBase'] = base['meshes']['PrintBase']
             observations.append(source)
             current = store/revision
@@ -133,19 +144,22 @@ def run(store, *, sandbox_image, candidates=None, history=None, docker=None):
             inspected = current/'inspection'; inspected.mkdir()
             rendered = current/'render'; rendered.mkdir()
             jobs[revision] = {}
-            jobs[revision]['export'] = sandbox.run('roundtrip',['--python','/inputs/inspector','--','--input','/inputs/input','--observer','/inputs/reference','--output','/output'],{'inspector':exporter,'input':blend,'reference':observer},exported,current/'export.log')
+            jobs[revision]['export'] = sandbox.run('roundtrip',['--python','/inputs/inspector','--','--input','/inputs/input','--observer','/inputs/reference','--output','/output']+policy_args,{'inspector':exporter,'input':blend,'reference':observer},exported,current/'export.log')
             stl = exported/'model.stl'
-            jobs[revision]['inspect'] = sandbox.run('inspect',['--python','/inputs/inspector','--','--stl','--input','/inputs/input','--output','/output','--revision',revision,'--no-renders'],{'inspector':observer,'input':stl},inspected,current/'inspect.log')
+            if profile.profile_id==DEFAULT_PROFILE_ID and digest(stl)!=V1_CANONICAL_STL_SHA256[revision]:
+                raise ValueError('Default v1 canonical STL bytes changed')
+            jobs[revision]['inspect'] = sandbox.run('inspect',['--python','/inputs/inspector','--','--stl','--input','/inputs/input','--output','/output','--revision',revision,'--no-renders']+policy_args,{'inspector':observer,'input':stl},inspected,current/'inspect.log')
             reimported = read_json(inspected/'solid-observation.json')
             exported_report = read_json(exported/'export-observation.json')
             if revision == 'r0': baseline = reimported
             assessment = assess(profile,revision,source,exported_report,reimported,baseline,
                                 stl_sha256=digest(stl),source_observation_sha256=digest(candidates/revision/'inspection/solid-observation.json'),
-                                observer_sha256=digest(observer),derivation_sha256=digest(store/'source/solids.py'))
+                                observer_sha256=digest(observer),derivation_sha256=digest(store/'source'/derivation_file))
             write_json(current/'assessment.json',assessment)
             if assessment['failures']: raise ValueError(f'{revision} STL gates failed: {assessment["failures"]}')
-            jobs[revision]['render'] = sandbox.run('reopen',['--python','/inputs/inspector','--','--stl','--input','/inputs/input','--output','/output','--revision',revision,'--target','PrintCandidate','--render-reference','/inputs/reference'],{'inspector':observer,'input':stl,'reference':inspected/'solid-observation.json'},rendered,current/'render.log')
+            jobs[revision]['render'] = sandbox.run('reopen',['--python','/inputs/inspector','--','--stl','--input','/inputs/input','--output','/output','--revision',revision,'--target','PrintCandidate','--render-reference','/inputs/reference']+policy_args,{'inspector':observer,'input':stl,'reference':inspected/'solid-observation.json'},rendered,current/'render.log')
             binding = read_json(rendered/'render-binding.json')
+            require_profile_binding(profile,binding)
             if binding['input_sha256'] != digest(stl) or binding['observation_sha256'] != digest(inspected/'solid-observation.json') or len(list((rendered/'views').glob('*.png'))) != 4:
                 raise ValueError('STL preview does not bind to its complete observation')
             records[revision] = {'stl_sha256':digest(stl),'assessment':assessment,'triangles':reimported['stl_triangle_count'],
@@ -154,24 +168,24 @@ def run(store, *, sandbox_image, candidates=None, history=None, docker=None):
         rebuilt = store/'clean-rebuild'; rebuilt.mkdir()
         params = rebuilt/'params.json'; write_json(params,{'revision':'r2'})
         authored = rebuilt/'authored'; authored.mkdir(); exported = rebuilt/'export'; exported.mkdir()
-        jobs['clean_rebuild_author'] = sandbox.run('author',['--python','/inputs/source/builder.py','--','--params','/inputs/params','--output','/output/model.blend'],{'source':store/'source','params':params},authored,rebuilt/'author.log')
-        jobs['clean_rebuild_export'] = sandbox.run('roundtrip',['--python','/inputs/inspector','--','--input','/inputs/input','--observer','/inputs/reference','--output','/output'],{'inspector':exporter,'input':authored/'model.blend','reference':observer},exported,rebuilt/'export.log')
+        jobs['clean_rebuild_author'] = sandbox.run('author',['--python','/inputs/source/'+profile.author_entry,'--','--params','/inputs/params','--output','/output/model.blend'],{'source':store/'source','params':params},authored,rebuilt/'author.log')
+        jobs['clean_rebuild_export'] = sandbox.run('roundtrip',['--python','/inputs/inspector','--','--input','/inputs/input','--observer','/inputs/reference','--output','/output']+policy_args,{'inspector':exporter,'input':authored/'model.blend','reference':observer},exported,rebuilt/'export.log')
         if digest(exported/'model.stl') != records['r2']['stl_sha256']:
             raise ValueError('Clean glasses rebuild produced different STL bytes')
         negative = store/'negative'; negative.mkdir()
-        negatives = negative_stls(store/'r2/export/model.stl',negative)
+        negatives = negative_stls(store/'r2/export/model.stl',negative,profile=profile)
         failures = {}
         required = {'open-seam':'boundary_edges','detached-shell':'connected_shells',
                     'wrong-scale':'fixed_scale_height','thin-whisker':'minimum_feature_mm','shifted-body':'protected_regions'}
         for name,stl in negatives.items():
             current=negative/name;current.mkdir()
-            jobs[name] = sandbox.run('inspect',['--python','/inputs/inspector','--','--stl','--input','/inputs/input','--output','/output','--revision','r2','--no-renders'],{'inspector':observer,'input':stl},current,negative/(name+'.log'))
+            jobs[name] = sandbox.run('inspect',['--python','/inputs/inspector','--','--stl','--input','/inputs/input','--output','/output','--revision','r2','--no-renders']+policy_args,{'inspector':observer,'input':stl},current,negative/(name+'.log'))
             report = read_json(current/'solid-observation.json')
             original_source = observations[-1]
             exported_report = read_json(store/'r2/export/export-observation.json')
             result = assess(profile,'r2',original_source,exported_report,report,baseline,
                             stl_sha256=digest(stl),source_observation_sha256=digest(candidates/'r2/inspection/solid-observation.json'),
-                            observer_sha256=digest(observer),derivation_sha256=digest(store/'source/solids.py'))
+                            observer_sha256=digest(observer),derivation_sha256=digest(store/'source'/derivation_file))
             write_json(current/'assessment.json',result)
             if result['measurement_gate'] != 'rejected' or required[name] not in result['failures']:
                 raise ValueError(f'Negative STL {name} did not fail its independently measured gate')
@@ -181,7 +195,7 @@ def run(store, *, sandbox_image, candidates=None, history=None, docker=None):
         if frozen_files != source_hashes or digest(observer) != digest(FIXTURE/'inspect_solid.py') or digest(exporter) != digest(FIXTURE/'export_stl.py') or digest(ORIGINAL/'source/builder.py') != original_hash:
             raise ValueError('Source, observer, exporter or original fixture changed during the experiment')
         result = {'status':'provisional_STL_geometry_verified','promotion_eligible':False,'physical_validation':'pending',
-                  'feature_coverage':'unknown','visual_fidelity':'pending_independent_review','profile_sha256':profile.sha256,
+                  'feature_coverage':'unknown','visual_fidelity':'pending_independent_review','profile_id':profile.profile_id,'profile_sha256':profile.sha256,
                   'source_files':source_hashes,'observer_sha256':digest(observer),'exporter_sha256':digest(exporter),
                   'original_fixture_sha256':original_hash,'runtime':runtime,'github_sha':os.environ.get('GITHUB_SHA'),
                   'revisions':records,'jobs':jobs,'negative_failures':failures,'clean_rebuild_stl_bytes_equal':True,
@@ -201,5 +215,6 @@ if __name__ == '__main__':
     parser.add_argument('--candidates',type=Path)
     parser.add_argument('--history',type=Path)
     parser.add_argument('--docker')
+    parser.add_argument('--profile-id',choices=(DEFAULT_PROFILE_ID,X1C_PROFILE_ID),default=DEFAULT_PROFILE_ID)
     result=run(**vars(parser.parse_args()))
     print(json.dumps({key:result[key] for key in ('status','promotion_eligible','physical_validation')}))

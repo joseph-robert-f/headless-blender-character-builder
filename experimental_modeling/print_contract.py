@@ -30,6 +30,18 @@ _PROFILE_JSON = '''{"schema_version":1,"profile_id":"anime-cat-fdm-provisional-v
 "minimum_feature_mm":1.35,"maximum_triangles":500000}'''
 _PROFILE_CANONICAL = json.dumps(json.loads(_PROFILE_JSON), sort_keys=True,
                                 separators=(",", ":"), allow_nan=False).encode("utf-8")
+DEFAULT_PROFILE_ID = "anime-cat-fdm-provisional-v1"
+X1C_PROFILE_ID = "anime-cat-x1c-pla-04-bare100-v2"
+# Frozen against the repaired dd5c8b4 bare-cat geometry, never a fresh revision's
+# bounds. This modeling policy is separate from Bambu's machine/process presets.
+BARE_REFERENCE_MM = 92.1265640258789
+X1C_FINAL_SCALE = 100.0 / BARE_REFERENCE_MM
+_X1C_CANONICAL = json.dumps(json.loads(_PROFILE_JSON) | {
+    "profile_id": X1C_PROFILE_ID,
+    "reference_height_m": 2.901986766815185,
+    "revision_heights_mm": {"r0": 100.0, "r1": 108.54632543541882, "r2": 100.0},
+}, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+_REVIEWED_PROFILES = {DEFAULT_PROFILE_ID: _PROFILE_CANONICAL, X1C_PROFILE_ID: _X1C_CANONICAL}
 _CHECKS = {"self_intersections", "feature_coverage", "roundtrip_surface", "protected_regions", "visual_fidelity"}
 _PROFILE_FIELDS = {
     "schema_version", "profile_id", "status", "source_unit", "export_unit",
@@ -87,7 +99,7 @@ class PrintProfile:
     _json: bytes
 
     def __post_init__(self) -> None:
-        if type(self._json) is not bytes or self._json != _PROFILE_CANONICAL:
+        if type(self._json) is not bytes or self._json not in _REVIEWED_PROFILES.values():
             raise ValueError("Only the reviewed canonical profile is supported")
 
     @property
@@ -113,8 +125,11 @@ class PrintProfile:
             raise ValueError("print profile fields mismatch")
         if raw["schema_version"] != 1 or type(raw["schema_version"]) is not int:
             raise ValueError("unsupported print profile version")
-        if raw["profile_id"] != "anime-cat-fdm-provisional-v1" or raw["status"] != "provisional":
+        if (not isinstance(raw["profile_id"], str) or raw["profile_id"] not in _REVIEWED_PROFILES
+                or raw["status"] != "provisional"):
             raise ValueError("unknown print profile or status")
+        canonical = _REVIEWED_PROFILES[raw["profile_id"]]
+        expected = json.loads(canonical)
         if (raw["source_unit"], raw["export_unit"], raw["material"]) != ("meter", "millimeter", "PLA"):
             raise ValueError("unexpected print profile units or material")
         _number(raw["source_scale_length"], "source_scale_length", 1, 1)
@@ -124,8 +139,10 @@ class PrintProfile:
         if not isinstance(heights, dict) or set(heights) != set(_REVISIONS):
             raise ValueError("revision height targets mismatch")
         for revision in _REVISIONS:
-            _number(heights[revision], revision + " height", 10, target_height)
-        if heights["r1"] != target_height or heights["r0"] != heights["r2"]:
+            _number(heights[revision], revision + " height", 10,
+                    max(expected["revision_heights_mm"].values()))
+        reference_revision = "r1" if raw["profile_id"] == DEFAULT_PROFILE_ID else "r0"
+        if heights[reference_revision] != target_height or heights["r0"] != heights["r2"]:
             raise ValueError("shared scale and accessory height targets mismatch")
         tolerance = _number(raw["height_tolerance_mm"], "height_tolerance_mm", 0.01, 5)
         maximum = _number(raw["maximum_dimension_mm"], "maximum_dimension_mm", target_height, 300)
@@ -135,10 +152,31 @@ class PrintProfile:
         _integer(raw["maximum_triangles"], "maximum_triangles", 1000, 2_000_000)
         if source_height * target_height * tolerance * maximum <= 0:
             raise ValueError("invalid print dimensions")
-        expected = json.loads(_PROFILE_JSON)
         if raw != expected:
             raise ValueError("Preset changes require a new reviewed profile version")
-        return cls(_PROFILE_CANONICAL)
+        return cls(canonical)
+
+    @property
+    def profile_id(self) -> str:
+        return self.raw["profile_id"]
+
+    @property
+    def fixture_name(self) -> str:
+        return "provisional_fdm_v1.json" if self.profile_id == DEFAULT_PROFILE_ID else "x1c_pla_bare100_v2.json"
+
+    @property
+    def author_entry(self) -> str:
+        return "builder.py" if self.profile_id == DEFAULT_PROFILE_ID else "builder_x1c.py"
+
+    @property
+    def final_scale(self) -> float:
+        return 1.0 if self.profile_id == DEFAULT_PROFILE_ID else X1C_FINAL_SCALE
+
+    @classmethod
+    def reviewed(cls, profile_id: str = DEFAULT_PROFILE_ID) -> "PrintProfile":
+        if not isinstance(profile_id, str) or profile_id not in _REVIEWED_PROFILES:
+            raise ValueError("unknown print profile")
+        return cls(_REVIEWED_PROFILES[profile_id])
 
     @property
     def mm_per_source_meter(self) -> float:

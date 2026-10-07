@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Experimental anime-cat print optimization
 
-This experiment extends draft [PR #39](https://github.com/joseph-robert-f/headless-blender-character-builder/pull/39).
+This experiment extends [PR #39](https://github.com/joseph-robert-f/headless-blender-character-builder/pull/39), merged on 2026-10-07.
 Its baseline head is `b8f3af4e80278a962d87d1e029e7a28afcd56abd`.
 The original cat, hat, sunglasses, edit policies, and rejected-edit evidence stay intact.
 Scene acceptance does not establish print acceptance.
@@ -21,7 +21,9 @@ The maximum dimension is 120 mm, and the height tolerance is 1.5 mm.
 The final export budget is 500,000 triangles.
 These values support repeatable software tests. They do not certify a physical print.
 
-The user's printer, build volume, material, finished size, colors, and support preferences are unknown.
+At the start of this v1 experiment, the user's printer, build volume, material, finished size, colors, and support preferences were unknown.
+A later owner selection of X1C, PLA, a 0.4 mm nozzle, and a 100 mm bare cat uses a [separate v2 profile](experimental-x1c-print-profile.md).
+
 A preset change requires a new reviewed profile version.
 The parser rejects changes under the existing profile identifier.
 The parsed profile stores immutable canonical bytes. Each `raw` access returns a separate copy.

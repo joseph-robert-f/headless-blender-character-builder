@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "setup_id": "bambu-x1c-generic-pla-textured-inspection-v1",
+  "status": "inspection_only",
+  "modeling_profile_id": "anime-cat-x1c-pla-04-bare100-v2",
+  "official_release": "v02.08.02.61",
+  "official_source_commit": "926a7192574bcb9b3a732e1ec59a46d79cb45466",
+  "official_release_url": "https://github.com/bambulab/BambuStudio/releases/tag/v02.08.02.61",
+  "official_profile_paths": {
+    "machine": "resources/profiles/BBL/machine/Bambu Lab X1 Carbon 0.4 nozzle.json",
+    "filament": "resources/profiles/BBL/filament/Generic PLA.json",
+    "process": "resources/profiles/BBL/process/0.20mm Standard @BBL X1C.json"
+  },
+  "user_parameters": {
+    "printer": "Bambu Lab X1 Carbon",
+    "material": "PLA",
+    "nozzle_mm": 0.4,
+    "bare_cat_height_mm": 100.0
+  },
+  "assumptions": {
+    "filament": "Generic PLA; brand unconfirmed",
+    "plate": "Textured PEI Plate; plate unconfirmed",
+    "firmware_and_calibration": "unconfirmed"
+  },
+  "local_process_overrides": {
+    "wall_loops": "3",
+    "sparse_infill_pattern": "gyroid",
+    "enable_support": "1",
+    "enable_arc_fitting": "0",
+    "curr_bed_type": "Textured PEI Plate"
+  },
+  "selected_inherited_values": {
+    "layer_height": "0.2",
+    "initial_layer_print_height": "0.2",
+    "sparse_infill_density": "15%",
+    "support_type": "tree(auto)",
+    "support_threshold_angle": "30",
+    "support_top_z_distance": "0.2",
+    "support_bottom_z_distance": "0.2",
+    "support_object_xy_distance": "0.35",
+    "elefant_foot_compensation": "0.15",
+    "nozzle_temperature": [
+      "220"
+    ],
+    "nozzle_temperature_initial_layer": [
+      "220"
+    ],
+    "textured_plate_temp": [
+      "55"
+    ],
+    "textured_plate_temp_initial_layer": [
+      "55"
+    ],
+    "filament_max_volumetric_speed": [
+      "12"
+    ],
+    "printable_height": "250",
+    "bed_exclude_area": [
+      "0x0",
+      "18x0",
+      "18x28",
+      "0x28"
+    ]
+  },
+  "offline_cli_requirements": {
+    "fresh_outputs": true,
+    "load_cached_data": false,
+    "update_presets": false,
+    "orient": 0,
+    "scale": 1.0,
+    "native_checks_enabled": true,
+    "network_denied": true
+  },
+  "acceptance_limits": "Printer setup metadata is separate from geometry acceptance. Complete features, native consumed-buffer fidelity, support removal and physical validation remain unresolved. No printer or cloud operation is authorized."
+}

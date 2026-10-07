@@ -93,6 +93,14 @@
           "run": "python3 tests/experimental_modeling/run_anime_cat_print_export.py --store \"$RUNNER_TEMP/modeling-anime-cat-stl\" --candidates \"$RUNNER_TEMP/modeling-anime-cat-print\" --history \"$RUNNER_TEMP/modeling-anime-cat/primary\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
         },
         {
+          "name": "X1C100mm bare cat candidates and transactional hat repair rejection probes",
+          "run": "python3 tests/experimental_modeling/run_anime_cat_print.py --store \"$RUNNER_TEMP/modeling-x1c-print\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\" --profile-id anime-cat-x1c-pla-04-bare100-v2"
+        },
+        {
+          "name": "X1C complete STL roundtrip protected base rejected exports and history",
+          "run": "python3 tests/experimental_modeling/run_anime_cat_print_export.py --store \"$RUNNER_TEMP/modeling-x1c-stl\" --candidates \"$RUNNER_TEMP/modeling-x1c-print\" --history \"$RUNNER_TEMP/modeling-anime-cat/primary\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\" --profile-id anime-cat-x1c-pla-04-bare100-v2"
+        },
+        {
           "name": "Reusable relation positive and negative Blender fixtures",
           "run": "python3 tests/experimental_modeling/run_water_relations.py --store \"$RUNNER_TEMP/modeling-water-relations\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
         },
@@ -264,6 +272,17 @@
             "name": "anime-cat-stl-${{ github.run_id }}-${{ github.run_attempt }}",
             "path": "${{ runner.temp }}/modeling-anime-cat-stl/print-export-*.json\n${{ runner.temp }}/modeling-anime-cat-stl/stl-probes/*.json\n${{ runner.temp }}/modeling-anime-cat-stl/r*/export/model.stl\n${{ runner.temp }}/modeling-anime-cat-stl/r*/export/export-observation.json\n${{ runner.temp }}/modeling-anime-cat-stl/r*/inspection/solid-observation.json\n${{ runner.temp }}/modeling-anime-cat-stl/r*/assessment.json\n${{ runner.temp }}/modeling-anime-cat-stl/r*/render/views/*.png\n${{ runner.temp }}/modeling-anime-cat-stl/r*/render/render-binding.json\n${{ runner.temp }}/modeling-anime-cat-stl/r*/*.log\n${{ runner.temp }}/modeling-anime-cat-stl/negative/*/*.json\n${{ runner.temp }}/modeling-anime-cat-stl/negative/*.log\n${{ runner.temp }}/modeling-anime-cat-stl/clean-rebuild/*.log\n${{ runner.temp }}/modeling-anime-cat-stl/clean-rebuild/export/export-observation.json\n${{ runner.temp }}/modeling-anime-cat-stl/stl-probes.log",
             "if-no-files-found": "error",
+            "retention-days": 7
+          }
+        },
+        {
+          "name": "Retain complete X1C STLs and compact profile-bound evidence",
+          "if": "${{ always() }}",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "name": "x1c-print-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "${{ runner.temp }}/modeling-x1c-print/print-candidate-*.json\n${{ runner.temp }}/modeling-x1c-print/resize-probes/*.json\n${{ runner.temp }}/modeling-x1c-print/geometry-probes/*.json\n${{ runner.temp }}/modeling-x1c-print/r*/inspection/solid-observation.json\n${{ runner.temp }}/modeling-x1c-print/r*/base-inspection/solid-observation.json\n${{ runner.temp }}/modeling-x1c-print/r*/render/views/*.png\n${{ runner.temp }}/modeling-x1c-print/r*/render/render-binding.json\n${{ runner.temp }}/modeling-x1c-print/*.log\n${{ runner.temp }}/modeling-x1c-print/r*/*.log\n${{ runner.temp }}/modeling-x1c-stl/print-export-*.json\n${{ runner.temp }}/modeling-x1c-stl/stl-probes/*.json\n${{ runner.temp }}/modeling-x1c-stl/r*/export/model.stl\n${{ runner.temp }}/modeling-x1c-stl/r*/export/export-observation.json\n${{ runner.temp }}/modeling-x1c-stl/r*/inspection/solid-observation.json\n${{ runner.temp }}/modeling-x1c-stl/r*/assessment.json\n${{ runner.temp }}/modeling-x1c-stl/r*/render/views/*.png\n${{ runner.temp }}/modeling-x1c-stl/r*/render/render-binding.json\n${{ runner.temp }}/modeling-x1c-stl/r*/*.log\n${{ runner.temp }}/modeling-x1c-stl/negative/*/*.json\n${{ runner.temp }}/modeling-x1c-stl/negative/*.log\n${{ runner.temp }}/modeling-x1c-stl/clean-rebuild/*.log\n${{ runner.temp }}/modeling-x1c-stl/clean-rebuild/export/export-observation.json\n${{ runner.temp }}/modeling-x1c-stl/*.log",
+            "if-no-files-found": "ignore",
             "retention-days": 7
           }
         }

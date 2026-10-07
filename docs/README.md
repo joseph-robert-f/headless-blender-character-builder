@@ -61,6 +61,8 @@ Read the applicable guide before use:
 - [Local model review](local-model-review.md): geometry inspection, requirements, decisions, and change requests
 - [Local project launcher](local-project-launcher.md): portable project metadata, runtime readiness, and Linux-only generation
 - [HBCB REVIEW PREVIEW](review-preview.md): the unsigned, read-only Windows x64 and Mac arm64 packages.
+- [Experimental print optimization](experimental-print-optimization-plan.md): the provisional cat geometry and four-sprint acceptance limits
+- [Experimental X1C PLA profile](experimental-x1c-print-profile.md): the versioned 100 mm bare cat and offline slicer inspection.
 
 ## Policies
 
