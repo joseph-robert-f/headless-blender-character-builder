@@ -319,6 +319,13 @@ The source planar surface, vertices and bounds remain identical, but v3 freezes 
 Historical v1 and v2 author files, profile bytes and canonical STLs remain immutable.
 This change does not relax observer limits, grant controller print promotion, or measure native consumed slicing buffers.
 
+The separate [head comparison](experimental-cat-head-comparison.md) uses a trusted fixed builder and the unchanged complete geometry observer.
+It deforms a copy of an identified v3 bare mesh inside a fixed box and pins all exterior triangles.
+Fresh offline Docker jobs measure the saved geometry and reimported STL with the existing limits.
+The comparison has its own identifier and cannot enter the controller print-profile route.
+Its gray renders bind to the complete saved-source measurements.
+Feature, support, native consumed-buffer, owner visual, and physical acceptance remain separate pending gates.
+
 ### Local experimental review program
 
 The operator selects one trusted project store for the local review process.
