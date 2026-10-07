@@ -23,6 +23,7 @@ MAX_REPORT_BYTES = 4 * 1024**2
 SCALE = 100.0 / 3.15  # Independently fixed by provisional_fdm_v1.
 DEFAULT_PROFILE_ID = 'anime-cat-fdm-provisional-v1'
 X1C_PROFILE_ID = 'anime-cat-x1c-pla-04-bare100-v2'
+X1C_BAMBU_PROFILE_ID = 'anime-cat-x1c-pla-04-bare100-v3'
 PROFILE_ID = DEFAULT_PROFILE_ID
 PROFILE_SHA256 = '0c718776d23213ce6182ca0cf302b6e48827a2205d6a9f8fe69f381e4b646f32'
 FINAL_SCALE = 1.0
@@ -45,8 +46,9 @@ def configure_profile(profile_id=DEFAULT_PROFILE_ID):
         FINAL_SCALE = 1.0
         PROTECTED_EXCLUSIONS_MM = {'r1':((-20,-20,80),(20,20,103)),
                                    'r2':((-26,-32,54),(26,2,76))}
-    elif profile_id == X1C_PROFILE_ID:
-        PROFILE_SHA256 = '7c7f84e3749e08d24bb163e3364e4831278ba3908f780f1b44ac2b0a928da915'
+    elif profile_id in (X1C_PROFILE_ID,X1C_BAMBU_PROFILE_ID):
+        PROFILE_SHA256 = ('7c7f84e3749e08d24bb163e3364e4831278ba3908f780f1b44ac2b0a928da915'
+                          if profile_id == X1C_PROFILE_ID else '8283c21798d388a16f979b085ca0940707bf0f0367630ec59b5643464efe0f7b')
         FINAL_SCALE = 1.0854632543541882
         # Fixed float32-scaled endpoints retain exact boundary facets.
         PROTECTED_EXCLUSIONS_MM = {
@@ -508,7 +510,7 @@ def main():
     parser.add_argument('--render-reference')
     parser.add_argument('--stl', action='store_true')
     parser.add_argument('--target', choices=('PrintBase','PrintCandidate'))
-    parser.add_argument('--profile-id', choices=(DEFAULT_PROFILE_ID,X1C_PROFILE_ID),default=DEFAULT_PROFILE_ID)
+    parser.add_argument('--profile-id', choices=(DEFAULT_PROFILE_ID,X1C_PROFILE_ID,X1C_BAMBU_PROFILE_ID),default=DEFAULT_PROFILE_ID)
     args = parser.parse_args(sys.argv[sys.argv.index('--')+1:])
     configure_profile(args.profile_id)
     if args.render_reference and (args.no_renders or args.target != 'PrintCandidate'):

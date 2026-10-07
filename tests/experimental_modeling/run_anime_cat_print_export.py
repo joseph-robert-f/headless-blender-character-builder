@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
 from experimental_modeling.contracts import read_json
 from experimental_modeling.controller import build, digest, regular_tree, safe_path, snapshot, verify_accepted, write_json
-from experimental_modeling.print_contract import PrintProfile, DEFAULT_PROFILE_ID, X1C_PROFILE_ID
+from experimental_modeling.print_contract import PrintProfile, DEFAULT_PROFILE_ID, X1C_PROFILE_ID, X1C_BAMBU_PROFILE_ID
 from experimental_modeling.print_preservation import assess, require_profile_binding
 from experimental_modeling.sandbox import DockerSandbox
 from run_anime_cat_print import run as run_candidates, verify as verify_candidates
@@ -28,6 +28,12 @@ V1_CANONICAL_STL_SHA256 = {
     'r2':'8d444f00bf66466931d1e78cb5741e88affb0fefa90545362584d5a17434fe5b',
 }
 
+
+V2_CANONICAL_STL_SHA256 = {
+    'r0':'49d7301922ecdae3316909a0bdae55675cfb1f1b01131131e131fc61f9766cf1',
+    'r1':'3b8622114539e3790351d65cd5f0f8ae5885912f2ed1fee2afb89a80ad83c53e',
+    'r2':'516b2e3425b0a96505724c7841453aaea94d56beccf31001d0204ca5bfe766f2',
+}
 
 def history_fingerprints(history):
     """Verify the real accepted controller tree before retaining its hashes."""
@@ -96,7 +102,7 @@ def run(store, *, sandbox_image, candidates=None, history=None, docker=None, pro
     if shutil.disk_usage(store).free < 1024**3: raise ValueError('At least 1 GiB free disk space is required')
     profile = PrintProfile.load(FIXTURE/PrintProfile.reviewed(profile_id).fixture_name)
     policy_args = ['--profile-id',profile.profile_id]
-    derivation_file = 'solids.py' if profile.profile_id==DEFAULT_PROFILE_ID else 'x1c_solids.py'
+    derivation_file = profile.derivation_entry
     sandbox = DockerSandbox(sandbox_image,docker_executable=Path(docker) if docker else None)
     runtime = sandbox.verify_runtime()
     source_hashes = snapshot(FIXTURE/'source',store/'source')
@@ -148,6 +154,8 @@ def run(store, *, sandbox_image, candidates=None, history=None, docker=None, pro
             stl = exported/'model.stl'
             if profile.profile_id==DEFAULT_PROFILE_ID and digest(stl)!=V1_CANONICAL_STL_SHA256[revision]:
                 raise ValueError('Default v1 canonical STL bytes changed')
+            if profile.profile_id==X1C_PROFILE_ID and digest(stl)!=V2_CANONICAL_STL_SHA256[revision]:
+                raise ValueError('Published v2 canonical STL bytes changed')
             jobs[revision]['inspect'] = sandbox.run('inspect',['--python','/inputs/inspector','--','--stl','--input','/inputs/input','--output','/output','--revision',revision,'--no-renders']+policy_args,{'inspector':observer,'input':stl},inspected,current/'inspect.log')
             reimported = read_json(inspected/'solid-observation.json')
             exported_report = read_json(exported/'export-observation.json')
@@ -215,6 +223,6 @@ if __name__ == '__main__':
     parser.add_argument('--candidates',type=Path)
     parser.add_argument('--history',type=Path)
     parser.add_argument('--docker')
-    parser.add_argument('--profile-id',choices=(DEFAULT_PROFILE_ID,X1C_PROFILE_ID),default=DEFAULT_PROFILE_ID)
+    parser.add_argument('--profile-id',choices=(DEFAULT_PROFILE_ID,X1C_PROFILE_ID,X1C_BAMBU_PROFILE_ID),default=DEFAULT_PROFILE_ID)
     result=run(**vars(parser.parse_args()))
     print(json.dumps({key:result[key] for key in ('status','promotion_eligible','physical_validation')}))

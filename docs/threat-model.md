@@ -307,10 +307,17 @@ The accepted original scene chain receives separate integrity checks before and 
 This experiment does not implement controller print promotion or rejection rollback.
 Partial feature coverage and unresolved physical validation keep the evidence ineligible for promotion.
 
-The observers accept only the fixed v1 and [X1C v2](experimental-x1c-print-profile.md) modeling profiles.
+The observers accept only the fixed v1, [X1C v2](experimental-x1c-print-profile.md), and [Bambu floor v3](experimental-x1c-bambu-repair.md) modeling profiles.
 Every source, export, reimport, render, and preservation baseline must carry the selected profile identifier and canonical hash.
 Unknown or mixed profile bindings cause rejection.
-The v1 profile remains the default. A printer setup record cannot change either profile's geometry acceptance limits.
+The v1 profile remains the default. A printer setup record cannot change any profile's geometry acceptance limits.
+
+The additive v3 author first uses the unchanged completed v2 geometry.
+It then replaces exactly two identified planar floor facets in each candidate and its hidden base.
+Exact coordinate, oriented-boundary, convexity, area, incidence, complete-facet and topology guards run before either prepared mesh or profile tag is replaced.
+The source planar surface, vertices and bounds remain identical, but v3 freezes a distinct shared-base triangulation and profile identity.
+Historical v1 and v2 author files, profile bytes and canonical STLs remain immutable.
+This change does not relax observer limits, grant controller print promotion, or measure native consumed slicing buffers.
 
 ### Local experimental review program
 

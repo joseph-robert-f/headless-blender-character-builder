@@ -101,6 +101,14 @@
           "run": "python3 tests/experimental_modeling/run_anime_cat_print_export.py --store \"$RUNNER_TEMP/modeling-x1c-stl\" --candidates \"$RUNNER_TEMP/modeling-x1c-print\" --history \"$RUNNER_TEMP/modeling-anime-cat/primary\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\" --profile-id anime-cat-x1c-pla-04-bare100-v2"
         },
         {
+          "name": "Additive Bambu v3 floor transaction and complete candidate geometry",
+          "run": "python3 tests/experimental_modeling/run_anime_cat_print.py --store \"$RUNNER_TEMP/modeling-x1c-v3-print\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\" --profile-id anime-cat-x1c-pla-04-bare100-v3"
+        },
+        {
+          "name": "Additive Bambu v3 complete STL preservation rejection history and rebuild",
+          "run": "python3 tests/experimental_modeling/run_anime_cat_print_export.py --store \"$RUNNER_TEMP/modeling-x1c-v3-stl\" --candidates \"$RUNNER_TEMP/modeling-x1c-v3-print\" --history \"$RUNNER_TEMP/modeling-anime-cat/primary\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\" --profile-id anime-cat-x1c-pla-04-bare100-v3"
+        },
+        {
           "name": "Reusable relation positive and negative Blender fixtures",
           "run": "python3 tests/experimental_modeling/run_water_relations.py --store \"$RUNNER_TEMP/modeling-water-relations\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
         },
@@ -282,6 +290,17 @@
           "with": {
             "name": "x1c-print-${{ github.run_id }}-${{ github.run_attempt }}",
             "path": "${{ runner.temp }}/modeling-x1c-print/print-candidate-*.json\n${{ runner.temp }}/modeling-x1c-print/resize-probes/*.json\n${{ runner.temp }}/modeling-x1c-print/geometry-probes/*.json\n${{ runner.temp }}/modeling-x1c-print/r*/inspection/solid-observation.json\n${{ runner.temp }}/modeling-x1c-print/r*/base-inspection/solid-observation.json\n${{ runner.temp }}/modeling-x1c-print/r*/render/views/*.png\n${{ runner.temp }}/modeling-x1c-print/r*/render/render-binding.json\n${{ runner.temp }}/modeling-x1c-print/*.log\n${{ runner.temp }}/modeling-x1c-print/r*/*.log\n${{ runner.temp }}/modeling-x1c-stl/print-export-*.json\n${{ runner.temp }}/modeling-x1c-stl/stl-probes/*.json\n${{ runner.temp }}/modeling-x1c-stl/r*/export/model.stl\n${{ runner.temp }}/modeling-x1c-stl/r*/export/export-observation.json\n${{ runner.temp }}/modeling-x1c-stl/r*/inspection/solid-observation.json\n${{ runner.temp }}/modeling-x1c-stl/r*/assessment.json\n${{ runner.temp }}/modeling-x1c-stl/r*/render/views/*.png\n${{ runner.temp }}/modeling-x1c-stl/r*/render/render-binding.json\n${{ runner.temp }}/modeling-x1c-stl/r*/*.log\n${{ runner.temp }}/modeling-x1c-stl/negative/*/*.json\n${{ runner.temp }}/modeling-x1c-stl/negative/*.log\n${{ runner.temp }}/modeling-x1c-stl/clean-rebuild/*.log\n${{ runner.temp }}/modeling-x1c-stl/clean-rebuild/export/export-observation.json\n${{ runner.temp }}/modeling-x1c-stl/*.log",
+            "if-no-files-found": "ignore",
+            "retention-days": 7
+          }
+        },
+        {
+          "name": "Retain additive Bambu v3 source and STL evidence",
+          "if": "${{ always() }}",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "name": "x1c-bambu-v3-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "${{ runner.temp }}/modeling-x1c-v3-print/print-candidate-*.json\n${{ runner.temp }}/modeling-x1c-v3-print/floor-probes/*.json\n${{ runner.temp }}/modeling-x1c-v3-print/geometry-probes/*.json\n${{ runner.temp }}/modeling-x1c-v3-print/r*/inspection/solid-observation.json\n${{ runner.temp }}/modeling-x1c-v3-print/r*/base-inspection/solid-observation.json\n${{ runner.temp }}/modeling-x1c-v3-print/r*/render/views/*.png\n${{ runner.temp }}/modeling-x1c-v3-print/r*/render/render-binding.json\n${{ runner.temp }}/modeling-x1c-v3-print/*.log\n${{ runner.temp }}/modeling-x1c-v3-print/r*/*.log\n${{ runner.temp }}/modeling-x1c-v3-stl/print-export-*.json\n${{ runner.temp }}/modeling-x1c-v3-stl/stl-probes/*.json\n${{ runner.temp }}/modeling-x1c-v3-stl/r*/export/model.stl\n${{ runner.temp }}/modeling-x1c-v3-stl/r*/export/export-observation.json\n${{ runner.temp }}/modeling-x1c-v3-stl/r*/inspection/solid-observation.json\n${{ runner.temp }}/modeling-x1c-v3-stl/r*/assessment.json\n${{ runner.temp }}/modeling-x1c-v3-stl/r*/render/views/*.png\n${{ runner.temp }}/modeling-x1c-v3-stl/r*/render/render-binding.json\n${{ runner.temp }}/modeling-x1c-v3-stl/r*/*.log\n${{ runner.temp }}/modeling-x1c-v3-stl/negative/*/*.json\n${{ runner.temp }}/modeling-x1c-v3-stl/negative/*.log\n${{ runner.temp }}/modeling-x1c-v3-stl/clean-rebuild/*.log\n${{ runner.temp }}/modeling-x1c-v3-stl/clean-rebuild/export/export-observation.json\n${{ runner.temp }}/modeling-x1c-v3-stl/*.log\n${{ runner.temp }}/modeling-x1c-v3-stl/clean-rebuild/export/model.stl",
             "if-no-files-found": "ignore",
             "retention-days": 7
           }

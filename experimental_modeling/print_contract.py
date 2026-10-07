@@ -32,6 +32,7 @@ _PROFILE_CANONICAL = json.dumps(json.loads(_PROFILE_JSON), sort_keys=True,
                                 separators=(",", ":"), allow_nan=False).encode("utf-8")
 DEFAULT_PROFILE_ID = "anime-cat-fdm-provisional-v1"
 X1C_PROFILE_ID = "anime-cat-x1c-pla-04-bare100-v2"
+X1C_BAMBU_PROFILE_ID = "anime-cat-x1c-pla-04-bare100-v3"
 # Frozen against the repaired dd5c8b4 bare-cat geometry, never a fresh revision's
 # bounds. This modeling policy is separate from Bambu's machine/process presets.
 BARE_REFERENCE_MM = 92.1265640258789
@@ -41,7 +42,10 @@ _X1C_CANONICAL = json.dumps(json.loads(_PROFILE_JSON) | {
     "reference_height_m": 2.901986766815185,
     "revision_heights_mm": {"r0": 100.0, "r1": 108.54632543541882, "r2": 100.0},
 }, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
-_REVIEWED_PROFILES = {DEFAULT_PROFILE_ID: _PROFILE_CANONICAL, X1C_PROFILE_ID: _X1C_CANONICAL}
+_X1C_BAMBU_CANONICAL = json.dumps(json.loads(_X1C_CANONICAL) | {"profile_id": X1C_BAMBU_PROFILE_ID},
+    sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+_REVIEWED_PROFILES = {DEFAULT_PROFILE_ID: _PROFILE_CANONICAL, X1C_PROFILE_ID: _X1C_CANONICAL,
+                      X1C_BAMBU_PROFILE_ID: _X1C_BAMBU_CANONICAL}
 _CHECKS = {"self_intersections", "feature_coverage", "roundtrip_surface", "protected_regions", "visual_fidelity"}
 _PROFILE_FIELDS = {
     "schema_version", "profile_id", "status", "source_unit", "export_unit",
@@ -162,11 +166,18 @@ class PrintProfile:
 
     @property
     def fixture_name(self) -> str:
-        return "provisional_fdm_v1.json" if self.profile_id == DEFAULT_PROFILE_ID else "x1c_pla_bare100_v2.json"
+        return {DEFAULT_PROFILE_ID:"provisional_fdm_v1.json", X1C_PROFILE_ID:"x1c_pla_bare100_v2.json",
+                X1C_BAMBU_PROFILE_ID:"x1c_pla_bare100_v3.json"}[self.profile_id]
 
     @property
     def author_entry(self) -> str:
-        return "builder.py" if self.profile_id == DEFAULT_PROFILE_ID else "builder_x1c.py"
+        return {DEFAULT_PROFILE_ID:"builder.py", X1C_PROFILE_ID:"builder_x1c.py",
+                X1C_BAMBU_PROFILE_ID:"builder_x1c_v3.py"}[self.profile_id]
+
+    @property
+    def derivation_entry(self) -> str:
+        return {DEFAULT_PROFILE_ID:"solids.py", X1C_PROFILE_ID:"x1c_solids.py",
+                X1C_BAMBU_PROFILE_ID:"x1c_bambu_solids.py"}[self.profile_id]
 
     @property
     def final_scale(self) -> float:

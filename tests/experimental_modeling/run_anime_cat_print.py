@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from experimental_modeling.contracts import read_json
 from experimental_modeling.controller import digest, regular_tree, run_job, safe_path, snapshot, write_json
-from experimental_modeling.print_contract import PrintProfile, DEFAULT_PROFILE_ID, X1C_PROFILE_ID
+from experimental_modeling.print_contract import PrintProfile, DEFAULT_PROFILE_ID, X1C_PROFILE_ID, X1C_BAMBU_PROFILE_ID
 from experimental_modeling.print_preservation import require_profile_binding
 from experimental_modeling.sandbox import DockerSandbox
 
@@ -111,6 +111,16 @@ def run(store, *, trusted_reviewed_source=False, sandbox_image=None, blender='bl
                 jobs['resize_probes']=sandbox.run('author',['--python','/inputs/source/verify_x1c_resize.py','--','--params','/inputs/params','--output','/output'],{'source':resize_source,'params':resize_params},resize_probe,store/'resize-probes.log')
             else:
                 jobs['resize_probes']=run_job([blender,'--background','--factory-startup','--disable-autoexec','--threads','2','--python-exit-code','1','--python',str(resize_source/'verify_x1c_resize.py'),'--','--params',str(resize_params),'--output',str(resize_probe)],store,store/'resize-probes.log',budget_root=store)
+        if profile.profile_id==X1C_BAMBU_PROFILE_ID:
+            floor_probe=store/'floor-probes';floor_probe.mkdir()
+            floor_source=store/'floor-probe-source'
+            snapshot(store/'source',floor_source)
+            shutil.copyfile(ROOT/'tests/experimental_modeling/verify_x1c_bambu_floor.py',floor_source/'verify_x1c_bambu_floor.py')
+            floor_params=store/'floor-probe-params.json';write_json(floor_params,{'revision':'r0'})
+            if sandbox:
+                jobs['floor_probes']=sandbox.run('author',['--python','/inputs/source/verify_x1c_bambu_floor.py','--','--params','/inputs/params','--output','/output'],{'source':floor_source,'params':floor_params},floor_probe,store/'floor-probes.log')
+            else:
+                jobs['floor_probes']=run_job([blender,'--background','--factory-startup','--disable-autoexec','--threads','2','--python-exit-code','1','--python',str(floor_source/'verify_x1c_bambu_floor.py'),'--','--params',str(floor_params),'--output',str(floor_probe)],store,store/'floor-probes.log',budget_root=store)
         probe = store/'geometry-probes'
         probe.mkdir()
         probe_script = store/'verify_print_intersections.py'
@@ -181,7 +191,7 @@ def main():
     mode.add_argument('--sandbox-image')
     parser.add_argument('--blender',default='blender')
     parser.add_argument('--docker')
-    parser.add_argument('--profile-id',choices=(DEFAULT_PROFILE_ID,X1C_PROFILE_ID),default=DEFAULT_PROFILE_ID)
+    parser.add_argument('--profile-id',choices=(DEFAULT_PROFILE_ID,X1C_PROFILE_ID,X1C_BAMBU_PROFILE_ID),default=DEFAULT_PROFILE_ID)
     args = parser.parse_args()
     result = run(**vars(args))
     print(json.dumps({key:result[key] for key in ('status','promotion_eligible','feature_coverage','physical_validation')}))
