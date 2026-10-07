@@ -256,7 +256,7 @@ This was trusted native slicer execution, not a Docker security boundary.
 It did not communicate with a printer.
 
 The preset SHA-256 was `1ec85622ee198b76b26c45621aa4085f4c79c7c78b767852882b871bc3f50129`.
-The complete 347-setting effective snapshot had SHA-256 `d84e7ecb0b2f16c0151c7812cd426ebd9a22b6d4d7b0a2ba9edc8dfe11347c8c`.
+The complete 346-setting effective snapshot had SHA-256 `d84e7ecb0b2f16c0151c7812cd426ebd9a22b6d4d7b0a2ba9edc8dfe11347c8c`.
 Save that snapshot with the identified slicer version. Partial presets inherit version-specific defaults.
 
 Use a separate data directory and reject unknown configuration substitutions:
