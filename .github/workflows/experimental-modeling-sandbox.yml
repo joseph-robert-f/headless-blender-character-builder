@@ -81,6 +81,10 @@
           "run": "python3 tests/experimental_modeling/run_desk_creature.py --store \"$RUNNER_TEMP/modeling-desk-benchmark\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
         },
         {
+          "name": "Anime cat accessory revisions and rejected edit through sandbox stages",
+          "run": "python3 tests/experimental_modeling/run_anime_cat.py --store \"$RUNNER_TEMP/modeling-anime-cat\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
+        },
+        {
           "name": "Reusable relation positive and negative Blender fixtures",
           "run": "python3 tests/experimental_modeling/run_water_relations.py --store \"$RUNNER_TEMP/modeling-water-relations\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
         },
@@ -208,6 +212,17 @@
             "if-no-files-found": "ignore",
             "retention-days": 7,
             "include-hidden-files": true
+          }
+        },
+        {
+          "name": "Retain compact anime cat review evidence",
+          "if": "${{ always() }}",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "name": "anime-cat-review-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "${{ runner.temp }}/modeling-anime-cat/anime-cat-summary.json\n${{ runner.temp }}/modeling-anime-cat/primary/last_good.json\n${{ runner.temp }}/modeling-anime-cat/primary/attempts/bad-base/result.json\n${{ runner.temp }}/modeling-anime-cat/primary/accepted/r*/result.json\n${{ runner.temp }}/modeling-anime-cat/primary/accepted/r*/inspection/views/*.png\n${{ runner.temp }}/modeling-anime-cat/primary/accepted/r*/inspection/observation.json\n${{ runner.temp }}/modeling-anime-cat/primary/accepted/r*/inspection/scene.blend\n${{ runner.temp }}/modeling-anime-cat/primary/accepted/r*/inspection/model.glb\n${{ runner.temp }}/modeling-anime-cat/primary/attempts/*/result.json\n${{ runner.temp }}/modeling-anime-cat/primary/attempts/*/*.log\n${{ runner.temp }}/modeling-anime-cat/clean-rebuild/accepted/rebuild/result.json",
+            "if-no-files-found": "ignore",
+            "retention-days": 7
           }
         },
         {

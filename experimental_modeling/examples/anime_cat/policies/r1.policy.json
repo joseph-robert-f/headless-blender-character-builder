@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "parts": [
+    "cat",
+    "accessory"
+  ],
+  "changed_parts": [
+    "accessory"
+  ],
+  "constraints": [
+    {
+      "kind": "extent",
+      "part": "accessory",
+      "data": {
+        "axis": 0,
+        "min": 1.11,
+        "max": 1.13
+      }
+    },
+    {
+      "kind": "extent",
+      "part": "accessory",
+      "data": {
+        "axis": 2,
+        "min": 0.54,
+        "max": 0.56
+      }
+    }
+  ],
+  "profile": "scene"
+}

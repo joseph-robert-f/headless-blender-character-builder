@@ -1,0 +1,9 @@
+{
+  "schema_version": 2,
+  "parts": [
+    "cat"
+  ],
+  "changed_parts": [],
+  "constraints": [],
+  "profile": "scene"
+}
