@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "profile_id": "anime-cat-fdm-provisional-v1",
+  "status": "provisional",
+  "source_unit": "meter",
+  "source_scale_length": 1.0,
+  "export_unit": "millimeter",
+  "reference_height_m": 3.15,
+  "reference_height_mm": 100.0,
+  "revision_heights_mm": {
+    "r0": 92.2,
+    "r1": 100.0,
+    "r2": 92.2
+  },
+  "height_tolerance_mm": 1.5,
+  "maximum_dimension_mm": 120.0,
+  "nozzle_diameter_mm": 0.4,
+  "layer_height_mm": 0.2,
+  "material": "PLA",
+  "minimum_feature_mm": 1.35,
+  "maximum_triangles": 500000
+}

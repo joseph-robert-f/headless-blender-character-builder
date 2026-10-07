@@ -84,6 +84,10 @@ rigging, animation, mechanical-strength, manufacturing, or print-readiness claim
 One passing fixture does not establish general text-to-3D or editing quality.
 Numeric coordinates use the controller's meter convention, not a practical scale.
 
+The separate [print optimization experiment](../../../docs/experimental-print-optimization-plan.md)
+defines a provisional shared scale and measurement contract.
+Its report checks do not enable print acceptance or change this decorative fixture.
+
 The reconciled fixture was executed on source tree
 `8daa587d4ac6600e402a0fc8a41bfff4345a690d`, corresponding to main
 `5025be4d444018eb7c5371048990e513e8a459c4`, with Blender 4.5.12.
