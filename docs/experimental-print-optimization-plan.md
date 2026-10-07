@@ -82,6 +82,70 @@ Provide a stable bed contact and orientation.
 The final candidate must contain one connected solid, including its accessory.
 The `r1` candidate must show a hat. The `r2` candidate must show sunglasses with no hat geometry.
 
+
+The separate source is [print/source](../experimental_modeling/examples/anime_cat/print/source/builder.py).
+It uses rounded closed primitives, thicker whiskers, raised face details, and a flat foot contact.
+A voxel grid at 0.011 source meters joins the cat surfaces. The grid is approximately 0.349 mm after scaling.
+
+No disconnected component is discarded. The observer rejects every extra shell, including microscopic internal surfaces.
+The glasses use the same voxel grid to join closed lenses, rims, and capsule joints.
+The cat and each accessory are scaled before final unions.
+Boolean operations use Blender's manifold solver on explicitly triangulated closed operands.
+
+Finalization welds duplicate cut vertices within 0.00001 mm and dissolves degenerate edges at that distance.
+This is author-side numerical cleanup, far below the voxel grid spacing. The observer does not repair geometry.
+
+Cleanup must retain the face-connected component count. A microscopic-component collapse regression must be rejected.
+The author saves explicit triangles. Inspection, rendering, and later export therefore use the same facets.
+
+The neutral candidate retains the primary eye-highlight relief. The smaller secondary highlight is omitted.
+The glasses omit the decorative lens glints.
+Cheek details are less visible in gray behind the thicker whiskers.
+
+Some head and body faceting remains visible in the side and isometric previews.
+These differences require review of the actual print surface. These are not physical test results.
+
+The [independent observer](../experimental_modeling/examples/anime_cat/print/inspect_solid.py) opens each saved candidate in a separate process.
+It measures every evaluated triangle in `PrintCandidate` and the hidden pre-union `PrintBase`.
+Unsupported geometry, instances, and remaining modifiers cause rejection.
+Non-triangular evaluated polygons also cause rejection.
+This prevents a render-only modifier from substituting unmeasured geometry.
+
+Each complete mesh has a separate bounded inspection stage. Docker limits and the 4 MiB report bound are unchanged.
+Rendering uses a separate bounded job that checks the saved-file digest, every triangle's surface hash, and the measured bounds.
+Each preview must bind to the complete observation before the runner can pass.
+
+Intersection checks use bounding spheres, radius buckets, and AABB overlap to include coplanar candidate pairs.
+Double-precision triangle checks distinguish valid shared edges and vertices from overlapping interiors.
+Triangle areas also use double precision, to retain valid thin facets that float32 BMesh area calculations can classify as zero.
+Coplanar checks clip triangle interiors with strict double-precision signs. Near-contact alone does not establish overlap.
+
+The numerical contact tolerance is 0.00001 mm, and the candidate-pair budget is 20 million.
+Exceeding a bound causes failure. A truncated intersection search cannot pass.
+Real Blender regressions cover coplanar overlap, contained triangles, shared-vertex crossings, valid adjacency, and unsupported curves.
+
+Feature evidence uses opposing first-exit surface rays at fixed whisker, brim, and bridge centers.
+These local chords do not establish a global minimum thickness or full feature coverage.
+The summary keeps feature coverage and final protected-region checks unresolved.
+A pre-union base hash does not establish preservation of the final fused surface.
+Sprint 3 must check that surface directly.
+
+Set `MODELING_SANDBOX_IMAGE` to the full SHA-256 identity of an existing reviewed builder image.
+Then run the complete offline Docker regression:
+
+```sh
+python3 tests/experimental_modeling/run_anime_cat_print.py \
+  --store /absolute/new/print-evidence \
+  --sandbox-image "$MODELING_SANDBOX_IMAGE"
+```
+
+The store must be new and empty. Keep at least 1 GiB of disk space free.
+
+On macOS, use Docker. The native harness cannot enforce its address-space limit.
+The runner does not call a model provider or enable the reserved controller print profile.
+It records source hashes, runtime identity, independent observations, and four neutral preview views per revision.
+A `closed_candidates` result has `promotion_eligible: false` and physical validation pending.
+
 Acceptance requires measured bounds, topology, volume, attachments, and feature evidence.
 Review front, side, top, and isometric images of the actual neutral-material print surface alongside the baseline.
 Complete independent review, a dependent draft PR, and exact-head CI before sprint 3.

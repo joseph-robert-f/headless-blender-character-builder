@@ -85,6 +85,10 @@
           "run": "python3 tests/experimental_modeling/run_anime_cat.py --store \"$RUNNER_TEMP/modeling-anime-cat\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
         },
         {
+          "name": "Separate closed anime cat print candidates and adversarial geometry checks",
+          "run": "python3 tests/experimental_modeling/run_anime_cat_print.py --store \"$RUNNER_TEMP/modeling-anime-cat-print\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
+        },
+        {
           "name": "Reusable relation positive and negative Blender fixtures",
           "run": "python3 tests/experimental_modeling/run_water_relations.py --store \"$RUNNER_TEMP/modeling-water-relations\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
         },
@@ -235,6 +239,17 @@
             "if-no-files-found": "ignore",
             "retention-days": 7,
             "include-hidden-files": true
+          }
+        },
+        {
+          "name": "Retain compact closed cat print evidence",
+          "if": "${{ always() }}",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "name": "anime-cat-print-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "${{ runner.temp }}/modeling-anime-cat-print/print-candidate-*.json\n${{ runner.temp }}/modeling-anime-cat-print/geometry-probes/*.json\n${{ runner.temp }}/modeling-anime-cat-print/r*/inspection/solid-observation.json\n${{ runner.temp }}/modeling-anime-cat-print/r*/base-inspection/solid-observation.json\n${{ runner.temp }}/modeling-anime-cat-print/r*/render/views/*.png\n${{ runner.temp }}/modeling-anime-cat-print/r*/render/render-binding.json\n${{ runner.temp }}/modeling-anime-cat-print/r*/*.log\n${{ runner.temp }}/modeling-anime-cat-print/geometry-probes.log",
+            "if-no-files-found": "error",
+            "retention-days": 7
           }
         }
       ],
