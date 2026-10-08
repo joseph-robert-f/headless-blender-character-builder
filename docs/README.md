@@ -63,6 +63,7 @@ Read the applicable guide before use:
 - [HBCB REVIEW PREVIEW](review-preview.md): the unsigned, read-only Windows x64 and Mac arm64 packages.
 - [Experimental print optimization](experimental-print-optimization-plan.md): the provisional cat geometry and four-sprint acceptance limits
 - [Experimental X1C PLA profile](experimental-x1c-print-profile.md): the versioned 100 mm bare cat and offline slicer inspection.
+- [Experimental cat head comparison](experimental-cat-head-comparison.md): a separate gray head comparison and the physical test handoff.
 
 ## Policies
 

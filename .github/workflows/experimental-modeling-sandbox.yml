@@ -371,6 +371,47 @@
           }
         }
       ]
+    },
+    "head-comparison": {
+      "name": "Offline sculpted head comparison",
+      "if": "${{ github.event_name != 'workflow_dispatch' || inputs.trial_mode != 'live-propose' }}",
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 120,
+      "steps": [
+        {
+          "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+          "with": {
+            "persist-credentials": false
+          }
+        },
+        {
+          "name": "Build existing pinned builder image without publishing",
+          "run": "docker build --target builder -f docker/builder.Dockerfile -t modeling-sandbox-test ."
+        },
+        {
+          "name": "Resolve immutable local image identity",
+          "run": "echo \"MODELING_SANDBOX_IMAGE=$(docker image inspect --format '{{.Id}}' modeling-sandbox-test)\" >> \"$GITHUB_ENV\""
+        },
+        {
+          "name": "Generate and completely inspect unchanged v3 comparison baselines",
+          "run": "python3 tests/experimental_modeling/run_anime_cat_print.py --store \"$RUNNER_TEMP/modeling-x1c-v3-print\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\" --profile-id anime-cat-x1c-pla-04-bare100-v3"
+        },
+        {
+          "name": "Separate head comparison complete geometry STL roundtrip and matched gray views",
+          "run": "python3 tests/experimental_modeling/run_anime_cat_head_comparison.py --store \"$RUNNER_TEMP/modeling-head-comparison\" --candidates \"$RUNNER_TEMP/modeling-x1c-v3-print\" --sandbox-image \"$MODELING_SANDBOX_IMAGE\""
+        },
+        {
+          "name": "Retain complete source and STL head comparisons",
+          "if": "always()",
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "name": "head-comparison-v1-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "${{ runner.temp }}/modeling-head-comparison/summary.json\n${{ runner.temp }}/modeling-head-comparison/checkpoint-*.json\n${{ runner.temp }}/modeling-head-comparison/r*/authored/*\n${{ runner.temp }}/modeling-head-comparison/r*/*-inspection/observation.json\n${{ runner.temp }}/modeling-head-comparison/r*/*-render/views/*.png\n${{ runner.temp }}/modeling-head-comparison/r*/*-render/render-binding.json\n${{ runner.temp }}/modeling-head-comparison/r*/*.log\n${{ runner.temp }}/modeling-head-comparison/source/**\n${{ runner.temp }}/modeling-x1c-v3-print/r*/authored/model.blend\n${{ runner.temp }}/modeling-x1c-v3-print/r*/inspection/solid-observation.json",
+            "if-no-files-found": "warn",
+            "retention-days": 7
+          }
+        }
+      ]
     }
   },
   "run-name": "${{ inputs.trial_mode == 'live-propose' && format('HBCB live lamp proposal {0}', github.sha) || 'Experimental modeling sandbox' }}"
