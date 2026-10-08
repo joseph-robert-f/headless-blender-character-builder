@@ -3,7 +3,7 @@
 from __future__ import annotations
 import re
 
-from .print_contract import PrintProfile, X1C_PROFILE_ID, assess_final_stl
+from .print_contract import PrintProfile, X1C_PROFILE_ID, X1C_BAMBU_PROFILE_ID, assess_final_stl
 
 BOXES = {'r1':{'min':[-20,-20,80],'max':[20,20,103]},
          'r2':{'min':[-26,-32,54],'max':[26,2,76]}}
@@ -12,7 +12,7 @@ SHA256 = re.compile(r'[0-9a-f]{64}\Z')
 
 
 def protected_boxes(profile):
-    if profile.profile_id == X1C_PROFILE_ID:
+    if profile.profile_id in (X1C_PROFILE_ID, X1C_BAMBU_PROFILE_ID):
         return {'r1':{'min':[-21.709264755249023,-21.709264755249023,86.8370590209961],
                       'max':[21.709264755249023,21.709264755249023,111.8027114868164]},
                 'r2':{'min':[-28.222043991088867,-34.734825134277344,58.61501693725586],
