@@ -165,6 +165,66 @@ A shifted protected cat must leave the last-good history byte-identical.
 Do not increase the observer limit or infer export safety from an unchanged construction mesh.
 Complete independent artifact review, a dependent draft PR, and exact-head CI, including the offline Docker regression.
 
+### Final STL observation and preservation implementation
+
+[export_stl.py](../experimental_modeling/examples/anime_cat/print/export_stl.py) writes all evaluated, explicit source triangles as deterministic binary STL facets.
+Coordinates already represent millimeters. The exporter does not multiply them by Blender's display-unit scale.
+The independent observer reads the complete file with exact length and triangle-budget checks.
+It rejects malformed counts, trailing bytes, nonfinite coordinates or normals, nonzero facet attributes, and collapsed facets.
+It joins only identical encoded float32 coordinates and performs no tolerance repair.
+
+Duplicate facets remain part of the complete measured triangle set and fail topology checks.
+
+Source observation, export, and reimport must agree on every oriented facet using an exact float32 surface fingerprint.
+The fingerprint normalizes signed zero. Vertex indices, face ordering, and cyclic vertex order do not affect it.
+Reversed winding and a one-ULP coordinate change do affect it.
+
+The prior six-decimal fingerprint remains available for earlier fixture evidence.
+It does not establish exact roundtrip equality.
+All file SHA-256 values and complete triangle counts are checked separately.
+Every reimport receives complete topology, intersection, shell, winding, volume, bounds, and feature-probe measurements under the existing limits.
+
+Accessory construction retains the finalized base facets outside fixed edit boxes:
+
+| Revision | Minimum XYZ, mm | Maximum XYZ, mm |
+| --- | --- | --- |
+| `r1`, hat | `[-20, -20, 80]` | `[20, 20, 103]` |
+| `r2`, glasses | `[-26, -32, 54]` | `[26, 2, 76]` |
+
+A facet is excluded from the protected fingerprint only when all three vertices lie strictly inside the box.
+Facets crossing or touching its exterior remain protected.
+Construction uses the base's protected facets and the union's wholly interior facets.
+Both operands must already contain one closed, consistently oriented shell.
+The assembled result must retain that property through exact coordinate joins.
+This prevents accessory Boolean retessellation from changing remote ground facets and fails on a changed interface or discarded component.
+
+The independent final STL observer checks the actual fused result against the independently reimported hat-free `r0` baseline.
+The hidden base is also linked through its separate complete source observation and the exporter to the same exact baseline.
+The `r2` exclusion ends at Z=76 mm, so the former hat region remains protected.
+These checks do not prove that every interior accessory detail matches a visual design.
+
+Run the Docker regression with an immutable image and a fresh store:
+
+```sh
+python3 tests/experimental_modeling/run_anime_cat_print_export.py \
+  --store /absolute/new/stl-evidence \
+  --sandbox-image sha256:REVIEWED_IMAGE_DIGEST
+```
+
+The runner can reuse fully observed candidates with `--candidates` and an existing accepted original scene history with `--history`.
+Otherwise it builds both from the deterministic local fixtures.
+It compares a clean `r2` rebuild's complete STL bytes, renders four independently bound views of each actual STL, and measures damaged exports.
+Open seams, detached shells, wrong scale, narrowed whiskers, and a shifted protected body must fail their specific measured gates.
+
+After each rejection, the original scene controller's last-good pointer and complete accepted history must remain byte-identical and pass integrity verification.
+That history belongs to the original decorative fixture. The runner does not promote STLs to it.
+This verifies that standalone STL assessment leaves the accepted scene history intact.
+It does not implement controller print acceptance or rejection rollback.
+
+Successful geometry evidence remains `needs_review` because feature coverage is partial and visual fidelity needs independent review.
+Physical validation remains `pending` until the user completes the tests.
+The controller's print profile remains unavailable.
+
 ## Sprint 4: slicer evidence and physical handoff
 
 Slice all three accepted STLs with an identified local slicer and a recorded provisional preset.

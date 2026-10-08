@@ -281,6 +281,32 @@ The implemented Docker backend has tests, but these tests are not a security aud
 Print acceptance stops until generic print-profile gates exist.
 See [the experimental design and limitations](experimental-source-modeling.md).
 
+### Offline cat STL measurement
+
+The [cat print experiment](experimental-print-optimization-plan.md) adds a bounded binary-STL reader for offline fixture measurements.
+The runner uses reviewed local source and an immutable Docker image.
+It does not add an uploaded-STL API route or enable the controller's reserved print profile.
+The Docker daemon, image, host, and observer code remain trusted components.
+
+The reader requires a regular file with 4 to 500,000 complete facets and an exact byte length of `84 + 50 * facet_count`.
+The maximum STL size is 25,000,084 bytes.
+It rejects links, truncated or trailing bytes, nonfinite coordinates or normals, nonzero facet attributes, and collapsed facets.
+It joins only identical encoded coordinates and retains duplicate facets for topology rejection.
+It performs no tolerance repair or component deletion.
+
+Each full STL measurement uses a fresh existing Docker stage with no network, a read-only root, dropped capabilities, and no-new-privileges.
+The existing limits remain 120 seconds, 4 GiB memory, 2 CPUs, 128 PIDs, 512 MiB output, 512 files, and 128 KiB logs per stage.
+JSON observations remain bounded to 4 MiB.
+Parser validation and these resource limits decrease accidental and malformed-input failures.
+They do not rule out Blender, Python, container-runtime, or kernel vulnerabilities.
+
+The runner binds complete source, export, and reimport geometry through file SHA-256 values, full facet counts, and exact oriented float32 surface fingerprints.
+It checks the actual final STL's protected surface against the fully measured hat-free baseline.
+Separate preview jobs verify the same input file and exact complete surface, then bind their receipt to the observation's file hash.
+The accepted original scene chain receives separate integrity checks before and after standalone rejected STL assessments.
+This experiment does not implement controller print promotion or rejection rollback.
+Partial feature coverage and unresolved physical validation keep the evidence ineligible for promotion.
+
 ### Local experimental review program
 
 The operator selects one trusted project store for the local review process.

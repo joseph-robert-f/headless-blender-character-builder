@@ -248,6 +248,57 @@ def triangulated(obj, weld_mm=False):
     return closed(obj)
 
 
+def restore_protected(obj, base, revision):
+    """Construct the union using the exact finalized base outside its edit box.
+
+    Retain every base triangle touching the box boundary. Use union triangles
+    only when all three vertices lie inside it. Exact coordinate joins must
+    produce a single closed consistently oriented solid without a tolerance
+    weld; any changed interface therefore fails construction.
+    """
+    boxes = {'r1':((-20,-20,80),(20,20,103)),
+             'r2':((-26,-32,54),(26,2,76))}
+    low,high = boxes[revision]
+    vertices, faces, indices = [], [], {}
+    for mesh, keep_inside in ((obj.data,True),(base.data,False)):
+        original = bmesh.new()
+        try:
+            original.from_mesh(mesh)
+            if (face_components(original) != 1 or
+                    any(not edge.is_manifold or not edge.is_contiguous for edge in original.edges) or
+                    any(not vertex.is_manifold for vertex in original.verts)):
+                raise ValueError('Protected assembly must retain every component of closed single-shell operands')
+        finally:
+            original.free()
+        for face in mesh.polygons:
+            points = [tuple(mesh.vertices[index].co) for index in face.vertices]
+            inside = all(low[i] < point[i] < high[i] for point in points for i in range(3))
+            if inside != keep_inside:
+                continue
+            row = []
+            for point in points:
+                if point not in indices:
+                    indices[point] = len(vertices)
+                    vertices.append(point)
+                row.append(indices[point])
+            faces.append(row)
+    replacement = bpy.data.meshes.new('Preserved base and accessory union')
+    replacement.from_pydata(vertices,[],faces)
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(replacement)
+        if (face_components(bm) != 1 or
+                any(not edge.is_manifold or not edge.is_contiguous for edge in bm.edges) or
+                any(not vertex.is_manifold for vertex in bm.verts)):
+            raise ValueError('Exact protected base must retain one closed consistently oriented solid')
+    finally:
+        bm.free()
+    previous = obj.data
+    obj.data = replacement
+    if previous.users == 0:
+        bpy.data.meshes.remove(previous)
+
+
 def build(revision):
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete(use_global=False)
@@ -258,6 +309,9 @@ def build(revision):
     base.data = obj.data.copy()
     bpy.context.collection.objects.link(base)
     base.name = 'PrintBase'
+    # Finalize the original base once, with the same cleanup as sprint 2.
+    # Accessory unions never author or retessellate this frozen reference.
+    triangulated(base,weld_mm=True)
     base.hide_render = True
     base.hide_set(True)
     if revision == 'r1':
@@ -269,10 +323,12 @@ def build(revision):
         boolean(obj, millimeters(glasses()))
     elif revision != 'r0':
         raise ValueError('Unknown print revision')
+    triangulated(obj,weld_mm=True)
+    if revision != 'r0':
+        restore_protected(obj,base,revision)
     material = bpy.data.materials.new('Neutral print preview')
     material.diffuse_color = (.72,.72,.72,1)
     for mesh in (obj,base):
-        triangulated(mesh,weld_mm=True)
         mesh.data.materials.clear()
         mesh.data.materials.append(material)
         for face in mesh.data.polygons:

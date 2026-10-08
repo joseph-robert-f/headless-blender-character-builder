@@ -9,6 +9,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 import math
+import struct
 import sys
 from pathlib import Path
 
@@ -25,6 +26,10 @@ SCALE = 100.0 / 3.15  # Independently fixed by provisional_fdm_v1.
 # Coordinates below are millimeters. Tests use this explicit numerical tolerance.
 INTERSECTION_TOLERANCE = 1e-5
 MAX_INTERSECTION_PAIRS = 20000000
+PROTECTED_EXCLUSIONS_MM = {
+    'r1': ((-20,-20,80),(20,20,103)),
+    'r2': ((-26,-32,54),(26,2,76)),
+}
 
 
 def _cross2(a, b):
@@ -202,17 +207,79 @@ def intersections(bm):
     return {'count_lower_bound':len(examples),'examples':examples,'complete':True,'pairs_tested':tested}
 
 
-def geometry_hash(bm):
+def geometry_hash(bm, excluded_box=None, exact=False):
     """Hash every oriented world triangle, independent of indices and ordering."""
     rows = []
     for face in bm.faces:
-        points = [tuple(round(float(v), 6) for v in vertex.co) for vertex in face.verts]
+        if excluded_box is not None:
+            low,high = excluded_box
+            if all(low[i] < vertex.co[i] < high[i] for vertex in face.verts for i in range(3)):
+                continue
+        points = [tuple((float(v) if v else 0.0) if exact else round(float(v),6)
+                        for v in vertex.co) for vertex in face.verts]
         rotations = [tuple(points[i:] + points[:i]) for i in range(3)]
-        rows.append(repr(min(rotations)).encode('ascii'))
+        canonical = min(rotations)
+        rows.append(struct.pack('<9f',*(v for point in canonical for v in point)) if exact else repr(canonical).encode('ascii'))
     digest = hashlib.sha256()
     for row in sorted(rows):
-        digest.update(row + b'\n')
+        digest.update(row if exact else row+b'\n')
     return digest.hexdigest()
+
+
+def protected_regions(bm):
+    result = {}
+    for revision,box in PROTECTED_EXCLUSIONS_MM.items():
+        low,high = box
+        count = sum(not all(low[i] < vertex.co[i] < high[i] for vertex in face.verts for i in range(3)) for face in bm.faces)
+        result[revision] = {'excluded_box_mm':{'min':list(low),'max':list(high)},
+                            'triangles':count,'surface_sha256':geometry_hash(bm,box,exact=True),
+                            'method':'canonical_oriented_exact_float32_boundary_facets_retained'}
+    return result
+
+
+def read_stl(path):
+    """Read every binary STL triangle; weld only identical encoded coordinates."""
+    path = Path(path)
+    if path.is_symlink() or not path.is_file() or not 284 <= path.stat().st_size <= 84+50*MAX_TRIANGLES:
+        raise ValueError('STL must be a bounded regular binary file')
+    data = path.read_bytes()
+    count = struct.unpack_from('<I',data,80)[0]
+    if not 4 <= count <= MAX_TRIANGLES or len(data) != 84+50*count:
+        raise ValueError('STL length and complete triangle count disagree')
+    vertices,faces,indices = [],[],{}
+    for row in struct.iter_unpack('<12fH',data[84:]):
+        if row[-1] != 0 or any(not math.isfinite(value) for value in row[:-1]):
+            raise ValueError('Unsupported STL attributes or non-finite coordinate/normal')
+        face = []
+        for start in (3,6,9):
+            point = tuple(row[start:start+3])
+            if point not in indices:
+                indices[point] = len(vertices)
+                vertices.append(point)
+            face.append(indices[point])
+        if len(set(face)) != 3:
+            raise ValueError('STL contains a collapsed triangle')
+        faces.append(face)
+    return data,vertices,faces
+
+
+def stl_object(path):
+    data,vertices,faces = read_stl(path)
+    bpy.ops.object.select_all(action='SELECT')
+    bpy.ops.object.delete(use_global=False)
+    mesh = bpy.data.meshes.new('Complete reimported STL')
+    mesh.from_pydata(vertices,[],faces)
+    obj = bpy.data.objects.new('PrintCandidate',mesh)
+    bpy.context.collection.objects.link(obj)
+    bpy.context.view_layer.objects.active = obj
+    for face in mesh.polygons:
+        face.use_smooth = True
+    material = bpy.data.materials.new('Neutral print preview')
+    material.diffuse_color = (.72,.72,.72,1)
+    mesh.materials.append(material)
+    units = bpy.context.scene.unit_settings
+    units.system,units.scale_length,units.length_unit = 'METRIC',.001,'MILLIMETERS'
+    return data,obj,len(faces)
 
 
 def shells(bm):
@@ -290,7 +357,7 @@ def evaluated_surface(obj):
         evaluated.to_mesh_clear()
 
 
-def observe(obj, revision):
+def observe(obj, revision, include_protected=False, allow_missing_features=False):
     with evaluated_surface(obj) as (mesh,bm):
         bvh = BVHTree.FromBMesh(bm, epsilon=0)
         crossing = intersections(bm)
@@ -301,6 +368,7 @@ def observe(obj, revision):
         result = {
             'evaluated_triangles': len(mesh.loop_triangles), 'measured_triangles': len(bm.faces),
             'vertices': len(bm.verts), 'non_manifold_edges': sum(not edge.is_manifold for edge in bm.edges),
+            'boundary_edges':sum(edge.is_boundary for edge in bm.edges),
             'non_manifold_vertices': sum(not vertex.is_manifold for vertex in bm.verts),
             'loose_vertices': sum(not vertex.link_faces for vertex in bm.verts),
             'inconsistent_winding_edges': sum(edge.is_manifold and not edge.is_contiguous for edge in bm.edges),
@@ -310,9 +378,18 @@ def observe(obj, revision):
             'self_intersections': crossing['count_lower_bound'], 'intersection_measurement': crossing,
             'intersection_tolerance_mm': INTERSECTION_TOLERANCE,
             'surface_sha256': geometry_hash(bm),
+            'exact_surface_sha256': geometry_hash(bm,exact=True),
         }
         if obj.name == 'PrintCandidate':
-            result['feature_probes'] = thickness(bvh, revision)
+            try:
+                result['feature_probes'] = thickness(bvh, revision)
+            except ValueError as exc:
+                if not allow_missing_features:
+                    raise
+                result['feature_probes'] = {'minimum_mm':0,'sample_count':0,'samples':[],
+                                          'coverage':'partial','error':str(exc)}
+        if include_protected:
+            result['protected_regions'] = protected_regions(bm)
         return result
 
 
@@ -327,7 +404,8 @@ def render_binding(obj, report, revision, input_sha256):
     with evaluated_surface(obj) as (mesh,bm):
         if (len(mesh.loop_triangles) != measured['evaluated_triangles'] or
                 len(bm.faces) != measured['measured_triangles'] or
-                geometry_hash(bm) != measured['surface_sha256']):
+                geometry_hash(bm) != measured['surface_sha256'] or
+                geometry_hash(bm,exact=True) != measured['exact_surface_sha256']):
             raise ValueError('Render surface differs from the complete geometry observation')
         points = [vertex.co for vertex in bm.verts]
         bounds = {'min':[min(p[i] for p in points) for i in range(3)],
@@ -335,6 +413,7 @@ def render_binding(obj, report, revision, input_sha256):
         if bounds != measured['bounds_mm']:
             raise ValueError('Render bounds differ from the observed surface')
     return {'input_sha256':input_sha256,'surface_sha256':measured['surface_sha256'],
+            'exact_surface_sha256':measured['exact_surface_sha256'],
             'measured_triangles':measured['measured_triangles'],'bounds_mm':bounds}
 
 
@@ -383,8 +462,40 @@ def main():
     parser.add_argument('--revision', choices=('r0','r1','r2'), required=True)
     parser.add_argument('--no-renders', action='store_true')
     parser.add_argument('--render-reference')
+    parser.add_argument('--stl', action='store_true')
     parser.add_argument('--target', choices=('PrintBase','PrintCandidate'))
     args = parser.parse_args(sys.argv[sys.argv.index('--')+1:])
+    if args.render_reference and (args.no_renders or args.target != 'PrintCandidate'):
+        raise ValueError('Render reference requires the visible candidate render stage')
+    if args.stl:
+        data,obj,count = stl_object(args.input)
+        if args.render_reference:
+            reference = Path(args.render_reference)
+            if reference.is_symlink() or not reference.is_file() or reference.stat().st_size > MAX_REPORT_BYTES:
+                raise ValueError('Render reference must be a bounded regular observation')
+            raw = reference.read_bytes()
+            binding = render_binding(obj,json.loads(raw),args.revision,hashlib.sha256(data).hexdigest())
+            binding['observation_sha256'] = hashlib.sha256(raw).hexdigest()
+            output = Path(args.output)
+            output.mkdir(exist_ok=True)
+            render_views(obj,output/'views',binding['bounds_mm'])
+            (output/'render-binding.json').write_text(json.dumps(binding,indent=2,allow_nan=False)+'\n')
+            return
+        measured = observe(obj,args.revision,include_protected=True,allow_missing_features=True)
+        if measured['evaluated_triangles'] != count or measured['measured_triangles'] != count:
+            raise ValueError('STL measurement omitted input triangles')
+        report = {'schema_version':1,'revision':args.revision,'unit':'millimeter',
+                  'measurement_source':'reimported_final_stl','stl_triangle_count':count,
+                  'input_sha256':hashlib.sha256(data).hexdigest(),'blender_version':bpy.app.version_string,
+                  'promotion_eligible':False,'physical_validation':'pending',
+                  'meshes':{'PrintCandidate':measured}}
+        encoded = json.dumps(report,indent=2,allow_nan=False).encode('utf-8')
+        if len(encoded) > MAX_REPORT_BYTES:
+            raise ValueError('STL observation exceeds the existing 4 MiB bound')
+        output = Path(args.output)
+        output.mkdir(exist_ok=True)
+        (output/'solid-observation.json').write_bytes(encoded)
+        return
     bpy.ops.wm.open_mainfile(filepath=str(Path(args.input).resolve()))
     validate_inventory()
     meshes = {obj.name: obj for obj in bpy.context.scene.objects if obj.type == 'MESH'}
@@ -411,6 +522,7 @@ def main():
         (output/'render-binding.json').write_text(json.dumps(binding,indent=2,allow_nan=False)+'\n')
         return
     report = {'schema_version': 1, 'revision': args.revision, 'unit': 'millimeter',
+              'measurement_source': 'evaluated_saved_blend',
               'blender_version': bpy.app.version_string, 'promotion_eligible': False,
               'physical_validation': 'pending', 'feature_coverage': 'unknown',
               'input_sha256': hashlib.sha256(Path(args.input).read_bytes()).hexdigest(),
