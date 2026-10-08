@@ -114,5 +114,161 @@ for obj,reference in ((bad,base),(base,bad)):
     except ValueError as exc:assert 'operands' in str(exc)
     else:raise AssertionError('Protected assembly discarded an operand component')
 results['both_operand_components_checked_before_selection']=True
+
+# A closed frustum retains the real cut quad and full cat bounding center.
+# The alternate diagonal must preserve vertices, topology and its planar cap.
+quad=[(-15.388243675231934,2.8162667751312256,0),
+      (-15.388137817382812,2.8163833618164062,0),
+      (-15.224020957946777,2.9970552921295166,0),
+      (-14.13800048828125,3.9858973026275635,0)]
+top=[(-30.03129768371582,-25.507780075073242,92.1265640258789),
+     (-30.03129768371582,18.070018768310547,92.1265640258789),
+     (40.66703414916992,18.070018768310547,92.1265640258789),
+     (40.66703414916992,-25.507780075073242,92.1265640258789)]
+frustum_faces=[(0,1,2),(0,2,3),(4,6,5),(4,7,6)]
+for i in range(4):
+    j=(i+1)%4
+    frustum_faces.extend([(j,i,i+4),(j,i+4,j+4)])
+frustum=mesh_object(quad+top,frustum_faces)
+before_points=sorted(tuple(v.co) for v in frustum.data.vertices)
+with observer.evaluated_surface(frustum) as (_,bm):
+    old_hash=observer.geometry_hash(bm,exact=True)
+assert author.stabilize_cut_diagonals(frustum,'ground')==1
+assert sorted(tuple(v.co) for v in frustum.data.vertices)==before_points
+assert len(frustum.data.polygons)==12
+cap={frozenset(tuple(frustum.data.vertices[i].co) for i in face.vertices)
+     for face in frustum.data.polygons if all(frustum.data.vertices[i].co.z==0 for i in face.vertices)}
+assert cap=={frozenset((quad[0],quad[1],quad[3])),frozenset((quad[1],quad[2],quad[3]))}
+with observer.evaluated_surface(frustum) as (_,bm):
+    assert all(edge.is_manifold and edge.is_contiguous for edge in bm.edges)
+    assert observer.geometry_hash(bm,exact=True)!=old_hash
+    new_hash=observer.geometry_hash(bm,exact=True)
+results['ground_rotation_preserves_exact_cap_vertices_and_topology']=True
+for scope in ('ground','glasses','unreviewed'):
+    try:author.stabilize_cut_diagonals(frustum,scope)
+    except ValueError:pass
+    else:raise AssertionError('Unmatched cut-diagonal scope was silently accepted')
+    with observer.evaluated_surface(frustum) as (_,bm):
+        assert observer.geometry_hash(bm,exact=True)==new_hash
+results['cut_rotation_rejects_repeated_missing_and_unknown_targets']=True
+detached=mesh_object(quad+top+vertices,frustum_faces+[tuple(i+8 for i in face) for face in faces])
+with observer.evaluated_surface(detached) as (_,bm):
+    disconnected_hash=observer.geometry_hash(bm,exact=True)
+try:author.stabilize_cut_diagonals(detached,'ground')
+except ValueError as exc:assert 'closed oriented solid' in str(exc)
+else:raise AssertionError('Cut rotation accepted a detached component')
+with observer.evaluated_surface(detached) as (_,bm):
+    assert observer.geometry_hash(bm,exact=True)==disconnected_hash
+results['cut_rotation_rejects_detached_component_before_mutation']=True
+
+# Closed, coherently wound joined prisms expose two scope mistakes: both
+# targets on one side, and an out-of-window fourth vertex on the other facet.
+# Reject transactionally, even when an earlier target could rotate successfully.
+rejection_meshes = [('same_side_two_right',
+  [[8.88880443572998, -23.361297607421875, 59.054161071777344],
+   [8.904789924621582, -23.501811981201172, 59.143253326416016],
+   [8.903944969177246, -23.501750946044922, 59.14345932006836],
+   [8.904609680175781, -23.501798629760742, 59.1432991027832],
+   [8.88880443572998, -22.361297607421875, 60.054161071777344],
+   [8.904789924621582, -22.501811981201172, 60.143253326416016],
+   [8.903944969177246, -22.501750946044922, 60.14345932006836],
+   [8.904609680175781, -22.501798629760742, 60.1432991027832],
+   [8.938804626464844, -23.361297607421875, 59.054161071777344],
+   [8.954790115356445, -23.501811981201172, 59.143253326416016],
+   [8.95394515991211, -23.501750946044922, 59.14345932006836],
+   [8.954609870910645, -23.501798629760742, 59.1432991027832],
+   [8.938804626464844, -22.361297607421875, 60.054161071777344],
+   [8.954790115356445, -22.501811981201172, 60.143253326416016],
+   [8.95394515991211, -22.501750946044922, 60.14345932006836],
+   [8.954609870910645, -22.501798629760742, 60.1432991027832]],
+  [[0, 1, 2],
+   [2, 1, 3],
+   [6, 5, 4],
+   [7, 5, 6],
+   [3, 1, 5],
+   [3, 5, 7],
+   [2, 3, 7],
+   [2, 7, 6],
+   [0, 2, 6],
+   [0, 6, 4],
+   [8, 9, 10],
+   [10, 9, 11],
+   [14, 13, 12],
+   [15, 13, 14],
+   [9, 8, 12],
+   [9, 12, 13],
+   [11, 9, 13],
+   [11, 13, 15],
+   [10, 11, 15],
+   [10, 15, 14],
+   [1, 0, 8],
+   [1, 8, 10],
+   [0, 4, 12],
+   [0, 12, 8],
+   [4, 5, 14],
+   [4, 14, 12],
+   [5, 1, 10],
+   [5, 10, 14]],
+  'Reviewed cut-diagonal side count changed'),
+ ('out_of_window_fourth_vertex',
+  [[-8.88880443572998, -23.361297607421875, 59.054161071777344],
+   [-8.903924942016602, -23.501752853393555, 59.14345932006836],
+   [-8.904789924621582, -23.501813888549805, 59.14324951171875],
+   [-8.9046049118042, -23.501800537109375, 59.14329528808594],
+   [-8.88880443572998, -22.361297607421875, 60.054161071777344],
+   [-8.903924942016602, -22.501752853393555, 60.14345932006836],
+   [-8.904789924621582, -22.501813888549805, 60.14324951171875],
+   [-8.9046049118042, -22.501800537109375, 60.14329528808594],
+   [8.789999961853027, -23.361297607421875, 59.054161071777344],
+   [8.904789924621582, -23.501811981201172, 59.143253326416016],
+   [8.903944969177246, -23.501750946044922, 59.14345932006836],
+   [8.904609680175781, -23.501798629760742, 59.1432991027832],
+   [8.789999961853027, -22.361297607421875, 60.054161071777344],
+   [8.904789924621582, -22.501811981201172, 60.143253326416016],
+   [8.903944969177246, -22.501750946044922, 60.14345932006836],
+   [8.904609680175781, -22.501798629760742, 60.1432991027832]],
+  [[0, 1, 2],
+   [2, 1, 3],
+   [6, 5, 4],
+   [7, 5, 6],
+   [3, 1, 5],
+   [3, 5, 7],
+   [2, 3, 7],
+   [2, 7, 6],
+   [0, 2, 6],
+   [0, 6, 4],
+   [8, 9, 10],
+   [10, 9, 11],
+   [14, 13, 12],
+   [15, 13, 14],
+   [9, 8, 12],
+   [9, 12, 13],
+   [11, 9, 13],
+   [11, 13, 15],
+   [10, 11, 15],
+   [10, 15, 14],
+   [1, 0, 8],
+   [1, 8, 10],
+   [0, 4, 12],
+   [0, 12, 8],
+   [4, 5, 14],
+   [4, 14, 12],
+   [5, 1, 10],
+   [5, 10, 14]],
+  'Reviewed cut-diagonal quadrilateral exceeds its local window')]
+for name,points,rows,diagnostic in rejection_meshes:
+    obj=mesh_object(points,rows)
+    with observer.evaluated_surface(obj) as (_,bm):
+        assert author.face_components(bm)==1 and bm.calc_volume(signed=True)>0
+        assert all(edge.is_manifold and edge.is_contiguous for edge in bm.edges)
+        assert all(vertex.is_manifold for vertex in bm.verts)
+        before=observer.geometry_hash(bm,exact=True)
+    try:author.stabilize_cut_diagonals(obj,'glasses')
+    except ValueError as exc:assert str(exc)==diagnostic, str(exc)
+    else:raise AssertionError('Unreviewed local cut quad accepted: '+name)
+    with observer.evaluated_surface(obj) as (_,bm):
+        assert observer.geometry_hash(bm,exact=True)==before
+    results['cut_rotation_rejects_'+name+'_without_mutation']=True
+
 (output/'stl-probes.json').write_text(json.dumps({'status':'passed','probes':results},indent=2)+'\n')
 print(json.dumps({'status':'passed','probes':len(results)}))

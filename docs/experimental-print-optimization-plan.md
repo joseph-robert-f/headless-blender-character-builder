@@ -236,6 +236,214 @@ Acceptance requires continuous plausible toolpaths without silent repair or miss
 Document any slicer-specific exception. Complete independent review, a dependent draft PR, and exact-head CI.
 Provide physical tests for dimensions, feature survival, accessory attachment, fit, surface quality, and strength in the intended orientation.
 
+### Original slicer evidence and failed export gate
+
+On 2026-10-07, all three complete sprint 3 STLs were sliced with [PrusaSlicer 2.9.6](https://github.com/prusa3d/PrusaSlicer/releases/tag/version_2.9.6).
+The source revision was `fc25d8eccd3fab279cd4afb32f0b7e6d9d501ded`.
+The original decorative fixture and the final STL bytes remained unchanged.
+
+The [provisional preset](../experimental_modeling/examples/anime_cat/print/provisional_prusaslicer_v1.ini) uses PLA, a 0.4 mm nozzle, 0.2 mm layers, three perimeters, five top and bottom layers, and 15% gyroid infill.
+It enables snug supports, three support interface layers, a 0.2 mm contact gap, and a 5 mm brim.
+The 200 by 200 mm bed, 120 mm height, temperatures, Marlin 2 flavor, retraction, speeds, and inherited start and end commands are reference settings.
+The user's printer, material, calibration, target size, and firmware remain unconfirmed.
+Generated G-code is for inspection only. Re-slice a verified STL with the actual printer profile before any physical test.
+
+The official macOS DMG was downloaded to a task-owned temporary directory and mounted read-only.
+Its SHA-256 was `94fd7b8a9f87c9631e1c71739b15b184fc5f4c0ceabd69072f1c78f229a4fe40`, matching the release asset digest.
+macOS signature verification and notarization assessment passed.
+Execution used a separate task data directory, two threads, and a 300-second timeout per CLI action.
+This was trusted native slicer execution, not a Docker security boundary.
+It did not communicate with a printer.
+
+The preset SHA-256 was `1ec85622ee198b76b26c45621aa4085f4c79c7c78b767852882b871bc3f50129`.
+The complete 346-setting effective snapshot had SHA-256 `d84e7ecb0b2f16c0151c7812cd426ebd9a22b6d4d7b0a2ba9edc8dfe11347c8c`.
+Save that snapshot with the identified slicer version. Partial presets inherit version-specific defaults.
+
+Use a separate data directory and reject unknown configuration substitutions:
+
+```sh
+"$PRUSASLICER" --datadir "$TASK_SLICER_DATA" --threads 2 \
+  --config-compatibility disable --load provisional_prusaslicer_v1.ini \
+  --save effective-preset.ini
+"$PRUSASLICER" --datadir "$TASK_SLICER_DATA" --threads 2 \
+  --config-compatibility disable --loglevel 4 --load effective-preset.ini \
+  --center 100,100 --scale 1 --rotate 0 \
+  --export-gcode --output inspection-only.gcode model.stl
+```
+
+Set the executable and task data paths explicitly. The STL coordinates already represent millimeters.
+Keep normal bed placement enabled for slicing.
+Require a nonempty output file, unchanged input SHA-256, and full model-height coverage.
+Exit code zero alone is insufficient.
+
+An earlier invalid relative-extrusion preset returned zero without creating G-code.
+The final preset adds `G92 E0` at each layer.
+An earlier `--no-ensure-on-bed` slice included only half the model height. Those outputs were rejected and retained separately.
+
+The corrected runs produced these complete toolpath inventories:
+
+| Revision | Source height, mm | Model layers | Declared layers including support-only heights | Final model path Z, mm | Positive XY extrusion segments |
+| --- | --- | --- | --- | --- | --- |
+| `r0`, cat | 92.126564 | 460 | 516 | 92.0 | 571,100 |
+| `r1`, hat | 100.0 | 500 | 556 | 100.0 | 612,896 |
+| `r2`, glasses | 92.126564 | 460 | 524 | 92.0 | 627,842 |
+
+Two separate complete G-code readers corroborated the counts and full heights.
+Every declared layer contains positive XY extrusion, and model layers begin at Z=0.2 mm with gaps no greater than one 0.2 mm layer.
+All positive extrusion segments lie within the provisional bed and height envelope.
+The readers account for motion and extrusion modes, per-layer extrusion resets, finite coordinates, and millimeter units.
+They reject unsupported arc or inch motion and exclude pure extrusion retraction recovery from path counts.
+
+Actual layer plots show base contact and brim, supported facial features, four whisker probe regions, the hat brim and crown, and the glasses bridge.
+All three six-panel plots received independent visual review.
+Local signature probes intersect actual model toolpaths at the measured feature centers.
+Separate upper-ear cross sections remain connected below. Support-only heights are included in the full inventory.
+These checks do not prove global feature fidelity, support-removal clearance, interlayer strength, or physical print quality.
+
+**The original sprint 4 exported-mesh geometry gate failed.**
+PrusaSlicer reports one manifold part, but its exported mesh coordinates differ from the input.
+Independent complete oriented-facet and bijective-vertex comparisons found a maximum coordinate change of 0.00000190735 mm on each axis.
+Triangle counts remain 383,540 / 376,362 / 413,492. No facet collapsed and no degenerate facet appeared.
+Exact surface equality is false.
+
+The unchanged Docker observer then measured every re-exported triangle and found 4 / 4 / 7 self-intersections for `r0` / `r1` / `r2`.
+The searches completed after 2,426,383 / 2,466,664 / 2,621,762 candidate pairs.
+The meshes still have one closed shell and zero boundary, non-manifold, inconsistent-winding, or degenerate counts.
+Independent exact rational checks corroborated a ground-facet overlap and the additional glasses-revision crossings.
+Small coordinate displacement and unchanged topology therefore cannot establish geometric validity.
+No observer tolerance, triangle budget, report limit, or acceptance threshold was relaxed.
+
+This failure applies to the exported mesh adapter.
+The exact internal representation consumed by the native slicing path has not been fully measured.
+These exports do not prove that its slice geometry has the same crossings.
+The versioned [model transformations](https://github.com/prusa3d/PrusaSlicer/blob/version_2.9.6/src/libslic3r/Model.cpp) and [slicing transformations](https://github.com/prusa3d/PrusaSlicer/blob/version_2.9.6/src/libslic3r/TriangleMeshSlicer.cpp) use different paths.
+A diagnostic 3MF export also changed coordinates and did not resolve that evidence gap.
+The native slice has not received geometry acceptance.
+
+An isolated one-micron author-side weld and degenerate-edge cleanup prototype failed the closed-manifold guard before export.
+It was rejected without changing the repository author source or accepted baseline.
+A repair must preserve every component and signature feature and establish a new finalized base.
+Rerun complete source, STL, protected-surface, deterministic-rebuild, damaged-export, history, and slicer checks.
+An unchanged construction mesh or a slicer manifold label cannot replace those checks.
+
+Local evidence is retained in `build/print-sprints/s4-final-local-evidence`, with the full post-export observations and independent proofs copied into its review directory.
+It includes actual G-code, source hashes, the effective preset, logs, bound toolpath plots, complete layer inventories, failed-attempt references, and a SHA-256 manifest.
+Generated evidence is ignored by Git.
+Repository CI checks policies, documentation, and the existing geometry regression.
+The task-mounted slicer provides the preset validation and actual slice evidence separately.
+
+### Bounded diagonal repair and remaining evidence limits
+
+A follow-up isolated the coordinate change to float32 centering and restoration.
+The versioned [model loader](https://github.com/prusa3d/PrusaSlicer/blob/version_2.9.6/src/libslic3r/Model.cpp) centers each imported volume.
+The [mesh translation](https://github.com/prusa3d/PrusaSlicer/blob/version_2.9.6/src/libslic3r/TriangleMesh.cpp) operates on float32 coordinates.
+Re-export restores the volume position.
+
+An arithmetic replay matched all 1,173,394 actual exported facets across the original three revisions, with zero coordinate mismatches.
+A closed 12-facet prism retained valid adjacency at its own center.
+The same ground patch with two closed bounding anchors reproduced the overlap at the full cat's center in a 20-facet diagnostic fixture.
+The anchored control has three shells and is not a production candidate.
+
+Exact rational checks independently corroborated the ground sign change and the additional glasses crossings.
+The replay describes measured export behavior. It does not measure the native slicing buffers.
+
+The separate author source now identifies derivation `anime-cat-cut-diagonals-v2`.
+It rotates one ground diagonal and two local glasses diagonals after normal finalization.
+Each rotation replaces two triangles while retaining all four vertices and the oriented quadrilateral boundary.
+The ground quadrilateral is exactly planar and strictly convex, so its surface point set stays identical.
+
+Its oriented-facet fingerprint changes. The new finalized base is frozen once and shared by all three revisions.
+This is an explicit new base, not byte equality with the prior sprint 3 exports.
+
+The two nonplanar glasses changes stay wholly inside the existing `r2` edit box.
+Their conservative source-surface displacement bounds are 0.000003615 mm and 0.000001838 mm.
+Every source vertex coordinate and the nominal model dimensions stay unchanged.
+The complete revisions replace exactly 2 / 2 / 6 oriented facets relative to the original sprint 3 candidates.
+There is no coordinate weld, component removal, facet-count reduction, rescaling, or feature redesign in this repair.
+
+The author requires one reviewed ground target and one glasses target on each side.
+All four patch vertices must lie inside the fixed local window, including the neighbor facet's opposite vertex.
+Ground convexity, a missing replacement edge, improved sliver altitude, source and simulated-centered orientation, unchanged coordinates, closed winding, one shell, and positive volume are mandatory.
+The author writes the replacement mesh only after every check passes.
+Twenty real Blender integrity and scope probes include exact rejection of two right-side targets and an out-of-window fourth vertex.
+Both failures leave the full object surface unchanged, including a failure after an earlier temporary rotation.
+
+All three final candidates passed complete source, frozen-base, STL export, and independent reimport checks.
+Exact protected regions passed against the new `r0` base.
+The clean `r2` rebuild produced identical STL bytes.
+All five damaged exports failed their specific measured gates, and all 65 accepted original-history files remained byte-identical.
+Twelve source views and twelve actual STL views received independent review with no visible regression from the prior STL baseline.
+
+The new canonical STL SHA-256 values are:
+
+| Revision | SHA-256 |
+| --- | --- |
+| `r0` | `201e21f6161ad3774840ba65b48d560674da139bfb810cf76f6176c9056d0a03` |
+| `r1` | `a49088cb4c7dccd45bef2a92ca7b532d345d91e9e74194fac05e563e045ceb46` |
+| `r2` | `8d444f00bf66466931d1e78cb5741e88affb0fefa90545362584d5a17434fe5b` |
+
+All three actual PrusaSlicer re-exports passed the unchanged complete observer with zero intersections and one closed shell.
+The searches tested 2,426,404 / 2,466,685 / 2,621,791 pairs.
+Boundary, nonmanifold, winding, and degenerate counts were zero.
+Triangle counts remained 383,540 / 376,362 / 413,492.
+
+A separate full facet and vertex comparison matched every exported coordinate to the arithmetic replay.
+The maximum coordinate shift remained 0.00000190735 mm on each axis, and exact loader surface equality remained false.
+This measures the exported mesh adapter. It does not establish exact equality or measure the native slicing buffers.
+
+The repaired files also produced full-height toolpaths under the unchanged effective preset:
+
+| Revision | Model layers | Declared layers | Final model path Z, mm | Positive XY extrusion segments |
+| --- | --- | --- | --- | --- |
+| `r0` | 460 | 516 | 92.0 | 571,023 |
+| `r1` | 500 | 556 | 100.0 | 612,849 |
+| `r2` | 460 | 524 | 92.0 | 627,928 |
+
+Two complete G-code readers independently agreed on the inventories, heights, millimeter modes, extrusion resets, and provisional build envelope.
+All local signature probes intersected model paths.
+The three actual six-panel plots received independent review without visible omissions.
+
+The source-to-STL-to-independent-reimport equality and protected-region gates remain exact.
+No observer bound, geometry tolerance, acceptance status, or physical requirement was weakened.
+Native slicing buffers remain unmeasured. Full feature coverage, support removal, strength, fit, and machine compatibility remain unresolved.
+The controller print profile remains unavailable, and promotion remains false.
+
+Original failing evidence remains in `build/print-sprints/s4-final-local-evidence`.
+The reproducer, independent repair review, and rejected cleanup attempts remain separate from it.
+Final repaired evidence uses `build/print-sprints/s4-diagonal-final-local-evidence`.
+The official slicer was mounted read-only in task-owned temporary storage and detached after the final jobs.
+No global installation or printer communication occurred.
+
+### Physical test handoff
+
+Resolve the remaining native-slicing geometry and feature-coverage evidence gaps before advancing to a print test.
+Then identify the actual printer, nozzle, material, firmware, target height, and calibration, and re-slice using that hardware profile.
+Record orientation, supports, temperature, layer height, line width, retraction, speed, cooling, and infill with the resulting G-code digest.
+Review startup and shutdown commands, all layers, support contacts, facial clearances, whiskers, and accessory paths in that slicer.
+
+The fixed-scale nominal dimensions are:
+
+| Revision | Width X, mm | Depth Y, mm | Height Z, mm |
+| --- | --- | --- | --- |
+| `r0` | 70.698332 | 43.577799 | 92.126564 |
+| `r1` | 70.698332 | 43.577799 | 100.000000 |
+| `r2` | 70.698332 | 46.946047 | 92.126564 |
+
+| Physical check | Evidence to record | Current result |
+| --- | --- | --- |
+| Dimensions and scale | Caliper measurements of X, Y, Z, actual scale and calibrated printer tolerances | Pending |
+| Bed contact and orientation | First-layer and full-print photos, adhesion, stability, warping and support behavior | Pending |
+| Feature survival | Before and after support-removal photos of whiskers, ears, eyes, cheeks, paws and tail | Pending |
+| Accessory attachment | Hat and glasses interface photos, gentle handling and intended-use load observations | Pending |
+| Fit and surface quality | Actual clearances, visible facets, blemishes and any sanding or finishing | Pending |
+| Strength and durability | Failure location, intended-use load, orientation and repeated-handling results | Pending |
+
+The hat and glasses are fused into their respective cat revisions. They are not separate removable accessory parts.
+Do not infer mating-part fit or certified strength from their software attachment checks.
+The software height tolerance is a geometry gate, not a measured manufacturing tolerance.
+If a test fails, retain the last verified files and revise the derivation and printer settings before repeating the affected checks.
+Physical results, promotion, and print readiness remain unclaimed.
+
 ## Evidence boundary
 
 Each sprint records its tests, review, draft PR, exact head, and terminal CI results.

@@ -7,6 +7,7 @@ from mathutils import Vector
 
 SCALE = 100.0 / 3.15
 VOXEL = .011
+DERIVATION_VERSION = 'anime-cat-cut-diagonals-v2'
 
 
 def closed(obj):
@@ -299,6 +300,132 @@ def restore_protected(obj, base, revision):
         bpy.data.meshes.remove(previous)
 
 
+def stabilize_cut_diagonals(obj, kind):
+    """Rotate only the three reviewed precision-sensitive cut diagonals.
+
+    The ground rotation preserves the exact planar surface but defines a new
+    frozen base triangulation. The two glasses rotations stay wholly inside
+    the existing r2 edit box. No coordinate, vertex or facet is discarded.
+    """
+    import struct
+    from collections import Counter
+    from fractions import Fraction
+
+    def points(face):
+        return tuple(tuple(vertex.co) for vertex in face.verts)
+
+    def normal(row):
+        a,b,c = row
+        u,v = tuple(b[i]-a[i] for i in range(3)),tuple(c[i]-a[i] for i in range(3))
+        return (u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0])
+
+    def dot(a,b):
+        return sum(x*y for x,y in zip(a,b))
+
+    def altitude(row):
+        return math.sqrt(dot(normal(row),normal(row)))/max(math.dist(a,b) for a,b in zip(row,row[1:]+row[:1]))
+
+    def f32(value):
+        return struct.unpack('<f',struct.pack('<f',value))[0]
+
+    def outer_boundary(rows):
+        edges = Counter((a,b) for row in rows for a,b in zip(row,row[1:]+row[:1]))
+        return {edge for edge,count in edges.items() if count and not edges[(edge[1],edge[0])]}
+
+    if kind not in ('ground','glasses'):
+        raise ValueError('Unknown cut-diagonal scope')
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(obj.data)
+        coordinates = {vertex:tuple(vertex.co) for vertex in bm.verts}
+        original_faces = len(bm.faces)
+        if face_components(bm) != 1 or any(not edge.is_manifold or not edge.is_contiguous for edge in bm.edges):
+            raise ValueError('Cut-diagonal input must be one closed oriented solid')
+        shift = tuple((min(p[i] for p in coordinates.values())+max(p[i] for p in coordinates.values()))/2 for i in range(3))
+        def centered(row):
+            return tuple(tuple(f32(p[i]-f32(shift[i])) for i in range(3)) for p in row)
+
+        candidates = []
+        for face in bm.faces:
+            if len(face.verts) != 3:
+                raise ValueError('Cut-diagonal input must already be triangulated')
+            row = points(face)
+            if kind == 'ground':
+                if not all(-16<x<-14 and 2<y<4 and z==0 for x,y,z in row):
+                    continue
+                if normal(row)[2]*normal(centered(row))[2] > 0:
+                    continue
+            else:
+                if not all(8.8<abs(x)<9 and -23.6<y<-23.3 and 59<z<59.2 for x,y,z in row):
+                    continue
+                precision = 2*max(2**(math.frexp(abs(value))[1]-24) if value else 2**-149 for p in row for value in p)
+                if altitude(row) >= precision:
+                    continue
+            candidates.append(face)
+        expected = 1 if kind == 'ground' else 2
+        if len(candidates) != expected:
+            raise ValueError('Reviewed cut-diagonal count changed')
+        if kind == 'glasses' and sorted(1 if points(face)[0][0]>0 else -1 for face in candidates)!=[-1,1]:
+            raise ValueError('Reviewed cut-diagonal side count changed')
+        for face in sorted(candidates,key=lambda face:tuple(sorted(points(face)))):
+            edge = max(face.edges,key=lambda e:(math.dist(tuple(e.verts[0].co),tuple(e.verts[1].co)),
+                                                tuple(sorted(tuple(v.co) for v in e.verts))))
+            if len(edge.link_faces) != 2:
+                raise ValueError('Reviewed diagonal must have two incident facets')
+            other = next(item for item in edge.link_faces if item is not face)
+            old = [points(face),points(other)]
+            vertices = set(face.verts)|set(other.verts)
+            if len(vertices) != 4:
+                raise ValueError('Reviewed diagonal needs four distinct vertices')
+            opposite = [next(v for v in item.verts if v not in edge.verts) for item in (face,other)]
+            if kind == 'ground':
+                if not all(-16<v.co.x<-14 and 2<v.co.y<4 and v.co.z==0 for v in vertices):
+                    raise ValueError('Reviewed cut-diagonal quadrilateral exceeds its local window')
+                boundary = outer_boundary(old)
+                chain = dict(boundary)
+                first = min(chain);quad = [first]
+                for _ in range(3):quad.append(chain[quad[-1]])
+                if len(chain)!=4 or chain[quad[-1]]!=first:
+                    raise ValueError('Ground boundary is not one quadrilateral')
+                turns=[]
+                for i in range(4):
+                    a,b,c = (tuple(Fraction(v) for v in quad[j%4]) for j in (i,i+1,i+2))
+                    turns.append((b[0]-a[0])*(c[1]-b[1])-(b[1]-a[1])*(c[0]-b[0]))
+                if not (all(v<0 for v in turns) or all(v>0 for v in turns)):
+                    raise ValueError('Ground quad must be strictly convex before rotation')
+            else:
+                side = 1 if points(face)[0][0]>0 else -1
+                if not all(8.8<side*v.co.x<9 and -23.6<v.co.y<-23.3 and 59<v.co.z<59.2 for v in vertices):
+                    raise ValueError('Reviewed cut-diagonal quadrilateral exceeds its local window')
+                if not all(-26<v.co.x<26 and -32<v.co.y<2 and 54<v.co.z<76 for v in vertices):
+                    raise ValueError('Glasses rotation exceeds the exact existing edit box')
+            if any(opposite[1] in e.verts for e in opposite[0].link_edges):
+                raise ValueError('Replacement diagonal already exists')
+            boundary = outer_boundary(old)
+            main_normal = normal(points(other))
+            old_minimum = min(altitude(row) for row in old)
+            changed = bmesh.ops.rotate_edges(bm,edges=[edge],use_ccw=False)['edges']
+            if len(changed)!=1 or set(changed[0].verts)!=set(opposite) or len(changed[0].link_faces)!=2:
+                raise ValueError('Unexpected cut-diagonal rotation result')
+            new = [points(item) for item in changed[0].link_faces]
+            if outer_boundary(new)!=boundary or {p for row in new for p in row}!={p for row in old for p in row}:
+                raise ValueError('Cut-diagonal rotation changed the oriented boundary or vertices')
+            if min(altitude(row) for row in new) <= 4*old_minimum:
+                raise ValueError('Cut-diagonal rotation did not improve the reviewed sliver')
+            if any(dot(normal(row),main_normal)<=0 or dot(normal(centered(row)),main_normal)<=0 for row in new):
+                raise ValueError('Cut-diagonal rotation lost source or centered orientation')
+        if (len(bm.verts)!=len(coordinates) or len(bm.faces)!=original_faces or
+                any(tuple(v.co)!=p for v,p in coordinates.items()) or face_components(bm)!=1 or
+                any(not edge.is_manifold or not edge.is_contiguous for edge in bm.edges) or
+                any(not v.is_manifold for v in bm.verts) or bm.calc_volume(signed=True)<=0):
+            raise ValueError('Cut-diagonal rotation changed solid coordinates or topology')
+        bm.to_mesh(obj.data)
+        obj.data.update()
+        return expected
+    finally:
+        bm.free()
+
+
 def build(revision):
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete(use_global=False)
@@ -309,9 +436,10 @@ def build(revision):
     base.data = obj.data.copy()
     bpy.context.collection.objects.link(base)
     base.name = 'PrintBase'
-    # Finalize the original base once, with the same cleanup as sprint 2.
+    # Freeze the v2 base after the reviewed exact planar ground rotation.
     # Accessory unions never author or retessellate this frozen reference.
     triangulated(base,weld_mm=True)
+    stabilize_cut_diagonals(base,'ground')
     base.hide_render = True
     base.hide_set(True)
     if revision == 'r1':
@@ -324,11 +452,16 @@ def build(revision):
     elif revision != 'r0':
         raise ValueError('Unknown print revision')
     triangulated(obj,weld_mm=True)
+    if revision=='r0':
+        stabilize_cut_diagonals(obj,'ground')
+    elif revision=='r2':
+        stabilize_cut_diagonals(obj,'glasses')
     if revision != 'r0':
         restore_protected(obj,base,revision)
     material = bpy.data.materials.new('Neutral print preview')
     material.diffuse_color = (.72,.72,.72,1)
     for mesh in (obj,base):
+        mesh['print_derivation_version'] = DERIVATION_VERSION
         mesh.data.materials.clear()
         mesh.data.materials.append(material)
         for face in mesh.data.polygons:
