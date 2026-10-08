@@ -30,7 +30,7 @@ def reports():
             samples.append({'feature':'glasses-bridge','minimum_chord_mm':2.4,'chords':8})
         candidate['feature_probes'] = {'minimum_mm':2.3,'sample_count':sum(s['chords'] for s in samples),
                                        'coverage':'partial','samples':samples}
-        result.append({'revision':revision,'unit':'millimeter','promotion_eligible':False,
+        result.append({'profile_id':'anime-cat-fdm-provisional-v1','profile_sha256':PrintProfile.load(FIXTURE/'provisional_fdm_v1.json').sha256,'revision':revision,'unit':'millimeter','promotion_eligible':False,
                        'meshes':{'PrintBase':base,'PrintCandidate':candidate}})
     return result
 

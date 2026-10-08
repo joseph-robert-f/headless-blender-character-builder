@@ -3,12 +3,27 @@
 from __future__ import annotations
 import re
 
-from .print_contract import PrintProfile, assess_final_stl
+from .print_contract import PrintProfile, X1C_PROFILE_ID, assess_final_stl
 
 BOXES = {'r1':{'min':[-20,-20,80],'max':[20,20,103]},
          'r2':{'min':[-26,-32,54],'max':[26,2,76]}}
 METHOD = 'canonical_oriented_exact_float32_boundary_facets_retained'
 SHA256 = re.compile(r'[0-9a-f]{64}\Z')
+
+
+def protected_boxes(profile):
+    if profile.profile_id == X1C_PROFILE_ID:
+        return {'r1':{'min':[-21.709264755249023,-21.709264755249023,86.8370590209961],
+                      'max':[21.709264755249023,21.709264755249023,111.8027114868164]},
+                'r2':{'min':[-28.222043991088867,-34.734825134277344,58.61501693725586],
+                      'max':[28.222043991088867,2.170926570892334,82.49520874023438]}}
+    return {key:{side:list(points) for side,points in box.items()} for key,box in BOXES.items()}
+
+
+def require_profile_binding(profile, *reports):
+    if any(report.get('profile_id') != profile.profile_id or
+           report.get('profile_sha256') != profile.sha256 for report in reports):
+        raise ValueError('Evidence uses a different print profile')
 
 
 def digest(value):
@@ -49,6 +64,7 @@ def intersection_check(mesh):
 
 def assess(profile: PrintProfile, revision, source, exported, reimported, baseline,
            *, stl_sha256, source_observation_sha256, observer_sha256, derivation_sha256):
+    require_profile_binding(profile,source,exported,reimported,baseline)
     if (revision not in ('r0','r1','r2') or source['revision'] != revision or
             reimported['revision'] != revision or source['unit'] != 'millimeter' or
             exported['unit'] != 'millimeter' or reimported['unit'] != 'millimeter' or
@@ -100,7 +116,7 @@ def assess(profile: PrintProfile, revision, source, exported, reimported, baseli
         actual,expected = result['protected_regions'][revision],reference['protected_regions'][revision]
         for row,total in ((actual,result['measured_triangles']),(expected,reference['measured_triangles'])):
             if (set(row) != {'excluded_box_mm','triangles','surface_sha256','method'} or
-                    row['excluded_box_mm'] != BOXES[revision] or row['method'] != METHOD or
+                    row['excluded_box_mm'] != protected_boxes(profile)[revision] or row['method'] != METHOD or
                     type(row['triangles']) is not int or not 0 < row['triangles'] <= total):
                 raise ValueError('Unsupported protected-region scope or incomplete facet fingerprint')
             digest(row['surface_sha256'])

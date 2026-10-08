@@ -15,10 +15,12 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--input',required=True)
 parser.add_argument('--observer',required=True)
 parser.add_argument('--output',required=True)
+parser.add_argument('--profile-id',default='anime-cat-fdm-provisional-v1')
 args = parser.parse_args(sys.argv[sys.argv.index('--')+1:])
 loader = SourceFileLoader('independent_print_observer',args.observer)
 observer = module_from_spec(spec_from_loader(loader.name,loader))
 loader.exec_module(observer)
+observer.configure_profile(args.profile_id)
 bpy.ops.wm.open_mainfile(filepath=str(Path(args.input).resolve()))
 observer.validate_inventory()
 units = bpy.context.scene.unit_settings
@@ -27,7 +29,7 @@ if units.system != 'METRIC' or abs(units.scale_length-.001)>1e-10 or units.lengt
 objects = {obj.name:obj for obj in bpy.context.scene.objects if obj.type=='MESH'}
 if set(objects) != {'PrintCandidate','PrintBase'}:
     raise ValueError('Export requires the candidate and preserved base')
-result = {'unit':'millimeter','input_sha256':hashlib.sha256(Path(args.input).read_bytes()).hexdigest(),
+result = {**observer.profile_binding(),'unit':'millimeter','input_sha256':hashlib.sha256(Path(args.input).read_bytes()).hexdigest(),
           'promotion_eligible':False,'physical_validation':'pending','meshes':{}}
 for name in ('PrintCandidate','PrintBase'):
     with observer.evaluated_surface(objects[name]) as (mesh,bm):

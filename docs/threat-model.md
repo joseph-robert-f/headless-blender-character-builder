@@ -307,6 +307,11 @@ The accepted original scene chain receives separate integrity checks before and 
 This experiment does not implement controller print promotion or rejection rollback.
 Partial feature coverage and unresolved physical validation keep the evidence ineligible for promotion.
 
+The observers accept only the fixed v1 and [X1C v2](experimental-x1c-print-profile.md) modeling profiles.
+Every source, export, reimport, render, and preservation baseline must carry the selected profile identifier and canonical hash.
+Unknown or mixed profile bindings cause rejection.
+The v1 profile remains the default. A printer setup record cannot change either profile's geometry acceptance limits.
+
 ### Local experimental review program
 
 The operator selects one trusted project store for the local review process.
