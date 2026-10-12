@@ -249,7 +249,8 @@ hash in `release/service-dependency-licenses.json`.
 ### Debian base image
 
 Update all literal Debian `FROM` references together in the builder, service,
-and MinIO Dockerfiles. In the same change, update snapshot arguments, builder
+MinIO, and Caddy build Dockerfiles. Keep all four files in the Docker base policy
+inventory. In the same change, update snapshot arguments, builder
 OCI base labels, the embedded SPDX base-package checksum, and Debian notice.
 
 Make the affected final images again. Examine a report-only scan if available.
