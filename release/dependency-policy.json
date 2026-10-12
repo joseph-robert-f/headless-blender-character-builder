@@ -42,6 +42,7 @@
   "docker_base": {
     "dockerfiles": [
       "docker/builder.Dockerfile",
+      "docker/caddy.Dockerfile",
       "docker/minio.Dockerfile",
       "docker/service.Dockerfile"
     ],
