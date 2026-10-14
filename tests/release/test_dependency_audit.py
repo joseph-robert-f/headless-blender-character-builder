@@ -973,6 +973,32 @@ class DependencyAuditTests(unittest.TestCase):
             report = audit_tool.run_audit(root, online=False)
             self.assert_check_failure(report, "docker-base", "OCI base digest is stale")
 
+    def test_caddy_build_stage_debian_digest_cannot_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            baseline = audit_tool.run_audit(root, online=False)
+            base = next(item for item in baseline["images"] if item["id"] == "docker-base")
+            replace_once(
+                root,
+                "docker/caddy.Dockerfile",
+                base["reference"] + " AS caddy-build",
+                base["reference"].split("@", 1)[0] + "@sha256:" + "e" * 64 + " AS caddy-build",
+            )
+            self.assert_check_failure(
+                audit_tool.run_audit(root, online=False), "docker-base", "not identical"
+            )
+
+    def test_debian_policy_cannot_omit_caddy_build_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = fixture_root(Path(temporary))
+            policy_path = root / "release" / "dependency-policy.json"
+            document = json.loads(policy_path.read_text(encoding="utf-8"))
+            document["docker_base"]["dockerfiles"].remove("docker/caddy.Dockerfile")
+            policy_path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+            self.assert_check_failure(
+                audit_tool.run_audit(root, online=False), "docker-base", "expected Dockerfiles"
+            )
+
     def test_local_build_missing_or_non_string_target_fails_closed(self) -> None:
         for surface, mutate in (
             ("missing target", lambda postgres: postgres.pop("target")),

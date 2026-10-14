@@ -108,6 +108,12 @@ EXPECTED_DOCKERFILE_FRONTEND_FILES = {
     "docker/postgres.Dockerfile",
     "docker/service.Dockerfile",
 }
+EXPECTED_DOCKER_BASE_FILES = {
+    "docker/builder.Dockerfile",
+    "docker/caddy.Dockerfile",
+    "docker/minio.Dockerfile",
+    "docker/service.Dockerfile",
+}
 EXPECTED_COMPOSE_IMAGE_FILES = {
     "postgres": {
         "compose.yaml",
@@ -1169,6 +1175,11 @@ def audit_docker_base(root: Path, policy: Mapping[str, object], report: Dict[str
     image_name = str(raw.get("image", ""))
     references: List[str] = []
     snapshots: List[str] = []
+    failures: List[str] = []
+    if len(dockerfiles) != len(set(str(item) for item in dockerfiles)):
+        failures.append("Docker base policy contains duplicate paths")
+    if set(str(item) for item in dockerfiles) != EXPECTED_DOCKER_BASE_FILES:
+        failures.append("Docker base policy does not cover the expected Dockerfiles")
     for relative in dockerfiles:
         text = read_text(root, str(relative))
         found = re.findall(
@@ -1179,7 +1190,6 @@ def audit_docker_base(root: Path, policy: Mapping[str, object], report: Dict[str
             raise AuditInputError("Dockerfile has no literal pinned %s base: %s" % (image_name, relative))
         references.extend(found)
         snapshots.extend(re.findall(r"(?m)^ARG DEBIAN_SNAPSHOT=([^\s]+)$", text))
-    failures: List[str] = []
     if len(set(references)) != 1:
         failures.append("literal Docker base references are not identical")
     if len(snapshots) != len(references) or len(set(snapshots)) != 1:
