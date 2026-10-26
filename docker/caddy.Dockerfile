@@ -86,14 +86,14 @@ RUN set -eux; \
 # Keep the complete official runtime filesystem and image configuration:
 # Caddyfile, welcome page, XDG paths, workdir, exposed TCP/UDP ports, default
 # root user and CMD. The upstream image declares no ENTRYPOINT or VOLUME.
-FROM --platform=linux/amd64 caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f AS caddy
+FROM --platform=linux/amd64 caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f AS caddy
 
 LABEL org.opencontainers.image.title="Caddy v2.11.7 (HBCB source build)" \
       org.opencontainers.image.source="https://github.com/caddyserver/caddy/releases/tag/v2.11.7" \
       org.opencontainers.image.revision="sha256:b430516910839fbaf35c0a9e9df80d1e2e30aa792530293c39f4a97a1b2c9060" \
       org.opencontainers.image.version="v2.11.7-hbcb.1" \
       org.opencontainers.image.base.name="caddy:2.11.7-alpine" \
-      org.opencontainers.image.base.digest="sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f" \
+      org.opencontainers.image.base.digest="sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f" \
       io.hbcb.caddy.source-archive.sha256="b430516910839fbaf35c0a9e9df80d1e2e30aa792530293c39f4a97a1b2c9060" \
       io.hbcb.caddy.cel-compatibility="upstream-interpretable-v2" \
       io.hbcb.caddy.go-version="1.26.8" \
