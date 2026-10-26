@@ -6,9 +6,9 @@
 # Checked-in go.mod/go.sum overlays make that transformation reviewable, and
 # read-only module builds fail closed if Go's selection changes.  This remains
 # a local compatibility fixture, not a production storage recommendation.
-FROM --platform=linux/amd64 debian:bookworm-20261005-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS minio-build
+FROM --platform=linux/amd64 debian:bookworm-20261020-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS minio-build
 
-ARG DEBIAN_SNAPSHOT=20261006T000000Z
+ARG DEBIAN_SNAPSHOT=20261021T000000Z
 ARG HBCB_MINIO_RECIPE_ID=unmeasured
 
 RUN set -eux; \
