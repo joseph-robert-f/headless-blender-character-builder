@@ -410,8 +410,8 @@ class RecoveryDrillTests(unittest.TestCase):
             r"(?ms)^  postgres:\n.*?^    user: \"70:70\"$",
         )
         self.assertIn(
-            "redis:8.2.10-alpine3.22@sha256:"
-            "b51665e66f00759be7c3152ad5ac3c66fb2f619c13ef62dea7cc1f9914524635",
+            "redis:8.2.11-alpine3.22@sha256:"
+            "3e6f5cab76a2cdcc5f61fb949a4f53e44e9972bd019bb0481ff5332b179f214e",
             text,
         )
         for policy in (
