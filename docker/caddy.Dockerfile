@@ -5,9 +5,9 @@
 # The artifact contains Caddy's upstream main.go, go.mod and go.sum. Verify
 # that module graph and vendor it again before compiling with pinned Go.
 # This image is linux/amd64 only until another toolchain/archive is reviewed.
-FROM --platform=linux/amd64 debian:bookworm-20261005-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS caddy-build
+FROM --platform=linux/amd64 debian:bookworm-20261020-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS caddy-build
 
-ARG DEBIAN_SNAPSHOT=20261006T000000Z
+ARG DEBIAN_SNAPSHOT=20261021T000000Z
 
 RUN set -eux; \
     sed -i \
