@@ -45,6 +45,14 @@ NAMESPACE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$")
 BUCKET = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{1,61}[a-z0-9])$")
 ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
+# Capture one-shot initializer exits first within the diagnostic budget.
+TARGET_START_SERVICES = ("minio-init", "database-init", "postgres", "redis", "minio")
+TARGET_STATE_FORMAT = (
+    '{"status":{{json .State.Status}},"exit_code":{{json .State.ExitCode}},'
+    '"oom_killed":{{json .State.OOMKilled}},'
+    '"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}}}'
+)
+COMPOSE_VERSION = re.compile(r"v?((?:0|[1-9][0-9]{0,3})(?:\.(?:0|[1-9][0-9]{0,3})){2})")
 
 SOURCE_REQUIRED_ENV = frozenset(
     {
@@ -233,6 +241,7 @@ def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
 @dataclass(frozen=True)
 class CommandResult:
     stdout: bytes
+    returncode: int = 0
 
 
 class CommandRunner:
@@ -310,7 +319,7 @@ class CommandRunner:
             raise GateInterrupted(_TERMINATION.received)
         if process.returncode != 0 and not allow_failure:
             raise GateError(label + "_failed")
-        return CommandResult(captured)
+        return CommandResult(captured, process.returncode)
 
 
 @dataclass
@@ -1173,6 +1182,91 @@ def _wait_source_service(context: DrillContext, service: str, *, healthy: bool) 
     raise GateError("source_restart_failed")
 
 
+def _diagnose_target_start(context: DrillContext, returncode: int) -> None:
+    """Print only bounded classifications; never expose raw Docker output."""
+    _TERMINATION.raise_if_pending()
+    deadline = time.monotonic() + 15.0
+    report: dict[str, Any] = {
+        "returncode": (
+            returncode if type(returncode) is int and -255 <= returncode <= 255
+            else "unavailable"
+        ),
+        "compose_version": "unavailable",
+        "services": {service: "unavailable" for service in TARGET_START_SERVICES},
+    }
+
+    def query(call: Any, *arguments: Any, **keywords: Any) -> str:
+        _TERMINATION.raise_if_pending()
+        # Reserve the runner's TERM grace and final reap timeout inside the
+        # shared deadline, including when a diagnostic child resists TERM.
+        reap_budget = TERMINATION_GRACE_SECONDS + max(1.0, TERMINATION_GRACE_SECONDS)
+        remaining = deadline - time.monotonic() - reap_budget
+        if remaining <= 0:
+            raise ValueError("unavailable")
+        result = call(
+            *arguments, **keywords, timeout=min(2.0, remaining), allow_failure=True
+        )
+        if result.returncode != 0 or len(result.stdout) > 512:
+            raise ValueError("unavailable")
+        return result.stdout.decode("ascii", "strict").strip()
+
+    def unique_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        fields = dict(pairs)
+        if len(fields) != len(pairs):
+            raise ValueError("unavailable")
+        return fields
+
+    for service in TARGET_START_SERVICES:
+        _TERMINATION.raise_if_pending()
+        try:
+            identifier = query(
+                context.target_compose, "ps", "--all", "--quiet", service,
+                label="target_diagnostic_status",
+            )
+            if HEX_64.fullmatch(identifier) is None:
+                continue
+            payload = query(
+                context.runner.run,
+                context.docker + (
+                    "inspect", "--type", "container", "--format",
+                    TARGET_STATE_FORMAT, identifier,
+                ),
+                label="target_diagnostic_inspect",
+            )
+            state = json.loads(payload, object_pairs_hook=unique_fields)
+            if not isinstance(state, dict) or set(state) != {
+                "status", "exit_code", "oom_killed", "health"
+            }:
+                continue
+            if (
+                state["status"] not in (
+                    "created", "running", "paused", "restarting", "removing", "exited", "dead"
+                )
+                or type(state["exit_code"]) is not int
+                or not 0 <= state["exit_code"] <= 255
+                or type(state["oom_killed"]) is not bool
+                or state["health"] not in (None, "starting", "healthy", "unhealthy")
+            ):
+                continue
+            report["services"][service] = state
+        except Exception:
+            pass
+    try:
+        version = query(
+            context.runner.run, context.compose + ("version", "--short"),
+            label="target_diagnostic_version",
+        )
+        # Publish a canonical numeric SemVer core only. Arbitrary pre-release
+        # or build metadata can carry private text and stays unavailable.
+        match = COMPOSE_VERSION.fullmatch(version)
+        if match is not None:
+            report["compose_version"] = match.group(1)
+    except Exception:
+        pass
+    _TERMINATION.raise_if_pending()
+    print("G8_RECOVERY_GATE: target_start_diagnostic=" + json.dumps(report, sort_keys=True))
+
+
 def _wait_target_initializers(context: DrillContext) -> None:
     """Wait for both one-shot initializers and require clean exits.
 
@@ -1335,7 +1429,7 @@ def execute_drill(context: DrillContext) -> Mapping[str, Any]:
 
         print("G8_RECOVERY_GATE: starting fresh internal-only restore target")
         target_touched = True
-        context.target_compose(
+        target_start = context.target_compose(
             "up",
             "--detach",
             "--wait",
@@ -1348,7 +1442,17 @@ def execute_drill(context: DrillContext) -> Mapping[str, Any]:
             "database-init",
             label="target_start",
             timeout=420,
+            allow_failure=True,
         )
+        if target_start.returncode != 0:
+            start_error = GateError("target_start_failed")
+            try:
+                _diagnose_target_start(context, target_start.returncode)
+            except BaseException:
+                # The known startup failure has priority, as in finally below.
+                # A probe signal stays pending while exact cleanup still runs.
+                pass
+            raise start_error
         _wait_target_initializers(context)
         _database_restore(context, database_path)
         if _snapshot(context, target=True) != source_snapshot:

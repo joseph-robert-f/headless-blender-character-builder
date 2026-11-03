@@ -539,6 +539,288 @@ class RecoveryDrillTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "probe_failed")
         self.assertNotIn("secret-canary", str(raised.exception))
 
+    def test_command_runner_returns_nonzero_code_only_when_allowed(self) -> None:
+        process = mock.Mock(
+            returncode=7, stdout=None, stderr=None,
+            communicate=mock.Mock(return_value=(b"private-output", b"private-error")),
+        )
+        with (
+            mock.patch.object(recovery.subprocess, "Popen", return_value=process),
+            mock.patch.object(recovery.signal, "pthread_sigmask", return_value=set()),
+            mock.patch("builtins.print") as printed,
+        ):
+            result = recovery.CommandRunner().run(
+                ("docker", "compose", "up"), label="target_start", allow_failure=True
+            )
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(result.stdout, b"private-output")
+        printed.assert_not_called()
+
+    def test_target_start_diagnostic_classifies_only_fixed_service_fields(self) -> None:
+        services = ("postgres", "redis", "minio", "minio-init", "database-init")
+        identifiers = {service: str(index) * 64 for index, service in enumerate(services, 1)}
+        states = {
+            "postgres": {"status": "running", "exit_code": 0, "oom_killed": False, "health": "unhealthy"},
+            "redis": {"status": "running", "exit_code": 0, "oom_killed": False, "health": "healthy"},
+            "minio": {"status": "exited", "exit_code": 137, "oom_killed": True, "health": None},
+            "minio-init": {"status": "exited", "exit_code": 0, "oom_killed": False, "health": None},
+            "database-init": {"status": "exited", "exit_code": 1, "oom_killed": False, "health": None},
+        }
+        calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+        def run(command: tuple[str, ...], **kwargs: object) -> object:
+            calls.append((command, kwargs))
+            if command[-2:] == ("version", "--short"):
+                return recovery.CommandResult(b"v2.40.3\n")
+            if kwargs["label"] == "target_diagnostic_status":
+                self.assertEqual(command[2:4], ("--project-name", "hbcb-g8-exact"))
+                self.assertEqual(command[-4:-1], ("ps", "--all", "--quiet"))
+                return recovery.CommandResult((identifiers[command[-1]] + "\n").encode("ascii"))
+            self.assertEqual(command[1:6], ("inspect", "--type", "container", "--format", recovery.TARGET_STATE_FORMAT))
+            service = next(name for name, value in identifiers.items() if value == command[-1])
+            return recovery.CommandResult(json.dumps(states[service]).encode("ascii"))
+
+        context = SimpleNamespace(
+            runner=SimpleNamespace(run=run), docker=("docker",), compose=("docker", "compose"),
+            project_name="hbcb-g8-exact", target_environment={"PRIVATE": "secret-canary"},
+        )
+        context.target_compose = lambda *args, **kwargs: recovery.DrillContext.target_compose(
+            context, *args, **kwargs
+        )
+        with mock.patch("builtins.print") as printed:
+            recovery._diagnose_target_start(context, 1)
+        output = printed.call_args.args[0]
+        report = json.loads(output.split("=", 1)[1])
+        self.assertEqual(report, {"returncode": 1, "compose_version": "2.40.3", "services": states})
+        self.assertEqual(len(calls), 11)
+        for _command, kwargs in calls:
+            self.assertTrue(kwargs["allow_failure"])
+            self.assertGreater(kwargs["timeout"], 0)
+            self.assertLessEqual(kwargs["timeout"], 2)
+        for forbidden in ("secret-canary", ".State}}", "Health.Log", ".Error", ".Config", *identifiers.values()):
+            self.assertNotIn(forbidden, output)
+            self.assertNotIn(forbidden, recovery.TARGET_STATE_FORMAT)
+
+    def test_target_start_diagnostic_rejects_private_or_malformed_metadata(self) -> None:
+        state = {"status": "exited", "exit_code": 0, "oom_killed": False, "health": None}
+        invalid_states = [
+            dict(state, status="secret-canary"), dict(state, exit_code=True),
+            dict(state, exit_code=-1), dict(state, exit_code=256),
+            dict(state, oom_killed=1), dict(state, health="secret-canary"),
+            dict(state, Error="secret-canary"),
+        ]
+        payloads = [json.dumps(value).encode("ascii") for value in invalid_states] + [
+            b"secret-canary", b"\xff", b"x" * 513,
+            b'{"status":"secret-canary","status":"exited","exit_code":0,"oom_killed":false,"health":null}',
+        ]
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                def run(command: tuple[str, ...], **_kwargs: object) -> object:
+                    if command[-2:] == ("version", "--short"):
+                        return recovery.CommandResult(b"2.40.3+secret-canary\n")
+                    return recovery.CommandResult(payload)
+
+                context = SimpleNamespace(
+                    runner=SimpleNamespace(run=run), docker=("docker",), compose=("docker", "compose"),
+                    target_compose=lambda *_args, **_kwargs: recovery.CommandResult(b"a" * 64 + b"\n"),
+                )
+                with mock.patch("builtins.print") as printed:
+                    recovery._diagnose_target_start(context, 1)
+                output = printed.call_args.args[0]
+                report = json.loads(output.split("=", 1)[1])
+                self.assertEqual(report["compose_version"], "unavailable")
+                self.assertEqual(set(report["services"].values()), {"unavailable"})
+                self.assertNotIn("secret-canary", output)
+
+    def test_target_start_diagnostic_requires_one_full_container_id(self) -> None:
+        for identifier in (b"", b"short-id", b"a" * 64 + b"\n" + b"b" * 64, b"secret-canary", b"\xff"):
+            with self.subTest(identifier=identifier):
+                run = mock.Mock(return_value=recovery.CommandResult(b"2.40.3\n"))
+                context = SimpleNamespace(
+                    runner=SimpleNamespace(run=run), docker=("docker",), compose=("docker", "compose"),
+                    target_compose=lambda *_args, **_kwargs: recovery.CommandResult(identifier),
+                )
+                with mock.patch("builtins.print") as printed:
+                    recovery._diagnose_target_start(context, 1)
+                run.assert_called_once()
+                output = printed.call_args.args[0]
+                self.assertEqual(set(json.loads(output.split("=", 1)[1])["services"].values()), {"unavailable"})
+                self.assertNotIn("secret-canary", output)
+
+    def test_target_start_diagnostic_rejects_output_from_failed_queries(self) -> None:
+        run = mock.Mock(return_value=recovery.CommandResult(b"2.40.3\n", 1))
+        context = SimpleNamespace(
+            runner=SimpleNamespace(run=run), docker=("docker",), compose=("docker", "compose"),
+            target_compose=lambda *_args, **_kwargs: recovery.CommandResult(b"a" * 64, 1),
+        )
+        with mock.patch("builtins.print") as printed:
+            recovery._diagnose_target_start(context, 1)
+        run.assert_called_once()
+        report = json.loads(printed.call_args.args[0].split("=", 1)[1])
+        self.assertEqual(report["compose_version"], "unavailable")
+        self.assertEqual(set(report["services"].values()), {"unavailable"})
+
+    def test_target_start_diagnostic_obeys_shared_deadline_and_pending_signal(self) -> None:
+        run = mock.Mock(return_value=recovery.CommandResult(b"2.40.3\n"))
+        compose = mock.Mock()
+        context = SimpleNamespace(
+            runner=SimpleNamespace(run=run), docker=("docker",), compose=("docker", "compose"),
+            target_compose=compose,
+        )
+        with (
+            mock.patch.object(recovery.time, "monotonic", side_effect=[0, 4, 6, 6, 6, 6, 6]),
+            mock.patch("builtins.print"),
+        ):
+            recovery._diagnose_target_start(context, 1)
+        compose.assert_called_once()
+        self.assertEqual(compose.call_args.args, ("ps", "--all", "--quiet", "minio-init"))
+        self.assertEqual(compose.call_args.kwargs["timeout"], 1)
+        run.assert_not_called()
+        compose.reset_mock()
+        with (
+            mock.patch.object(recovery._TERMINATION, "received", signal.SIGTERM),
+            self.assertRaises(recovery.GateInterrupted),
+        ):
+            recovery._diagnose_target_start(context, 1)
+        run.assert_not_called()
+        compose.assert_not_called()
+
+    def test_target_start_diagnostic_prioritizes_initializers_under_slow_queries(self) -> None:
+        clock = [0.0]
+        queried: list[tuple[str, str]] = []
+        services = ("minio-init", "database-init", "postgres", "redis", "minio")
+        identifiers = {service: str(index) * 64 for index, service in enumerate(services, 1)}
+        state = {"status": "exited", "exit_code": 0, "oom_killed": False, "health": None}
+
+        def compose(*args: str, timeout: float, **_kwargs: object) -> object:
+            self.assertGreaterEqual(timeout, 1)
+            clock[0] += 1
+            queried.append(("ps", args[-1]))
+            return recovery.CommandResult(identifiers[args[-1]].encode("ascii"))
+
+        def run(command: tuple[str, ...], timeout: float, **_kwargs: object) -> object:
+            self.assertGreaterEqual(timeout, 1)
+            clock[0] += 1
+            if command[-2:] == ("version", "--short"):
+                queried.append(("version", ""))
+                return recovery.CommandResult(b"2.40.3\n")
+            service = next(name for name, value in identifiers.items() if value == command[-1])
+            queried.append(("inspect", service))
+            return recovery.CommandResult(json.dumps(state).encode("ascii"))
+
+        context = SimpleNamespace(
+            runner=SimpleNamespace(run=run), docker=("docker",), compose=("docker", "compose"),
+            target_compose=compose,
+        )
+        with (
+            mock.patch.object(recovery.time, "monotonic", side_effect=lambda: clock[0]),
+            mock.patch("builtins.print") as printed,
+        ):
+            recovery._diagnose_target_start(context, 1)
+        report = json.loads(printed.call_args.args[0].split("=", 1)[1])
+        self.assertEqual(queried, [
+            ("ps", "minio-init"), ("inspect", "minio-init"),
+            ("ps", "database-init"), ("inspect", "database-init"), ("ps", "postgres"),
+        ])
+        self.assertEqual(set(report["services"]), set(services))
+        for service in ("minio-init", "database-init"):
+            self.assertEqual(report["services"][service], state)
+        for service in ("postgres", "redis", "minio"):
+            self.assertEqual(report["services"][service], "unavailable")
+        self.assertEqual(report["compose_version"], "unavailable")
+        self.assertEqual(clock[0], 5)
+
+    def test_target_start_diagnostics_preserve_primary_cleanup_and_success_path(self) -> None:
+        for mode in ("success", "query_failure", "probe_interruption", "internal_failure", "cleanup_failure"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                backup_root = root / "backups"
+                objects = backup_root / "source-objects"
+                objects.mkdir(parents=True)
+                source_inventory = inventory("source-version")
+                payload = json.dumps(source_inventory, sort_keys=True).encode("utf-8")
+                (objects / "inventory.json").write_bytes(payload)
+                events: list[tuple[str, ...]] = []
+                pending_during_cleanup: list[object] = []
+
+                def target_compose(*args: str, **kwargs: object) -> object:
+                    events.append(tuple(args))
+                    if args[0] == "up":
+                        self.assertTrue(kwargs["allow_failure"])
+                        return recovery.CommandResult(b"secret-canary", 0 if mode == "success" else 1)
+                    if args[0] == "down":
+                        pending_during_cleanup.append(recovery._TERMINATION.received)
+                        self.assertTrue(recovery._TERMINATION.cleanup_active)
+                        if mode == "cleanup_failure":
+                            raise recovery.GateError("cleanup_failed")
+                    if args[0] == "ps":
+                        if mode == "probe_interruption":
+                            return recovery.CommandResult(b"a" * 64)
+                        raise RuntimeError("secret-canary")
+                    return recovery.CommandResult(b"")
+
+                def source_compose(*args: str, **_kwargs: object) -> object:
+                    events.append(tuple(args))
+                    return recovery.CommandResult(b"")
+
+                def run(*_args: object, **_kwargs: object) -> object:
+                    events.append(("diagnostic-query",))
+                    if mode == "probe_interruption":
+                        recovery._TERMINATION._record(signal.SIGTERM, None)
+                    raise RuntimeError("secret-canary")
+
+                context = SimpleNamespace(
+                    source_compose=source_compose, target_compose=target_compose,
+                    backup_root=backup_root, work_root=root,
+                    compose=("docker", "compose"), docker=("docker",), runner=SimpleNamespace(run=run),
+                )
+                maintenance_result = {"artifacts": 1, "inventory_sha256": recovery.hashlib.sha256(payload).hexdigest()}
+                with (
+                    mock.patch.object(recovery, "_validate_target_topology"),
+                    mock.patch.object(recovery, "_source_container_running", return_value=True),
+                    mock.patch.object(recovery, "_source_network", return_value="source-network"),
+                    mock.patch.object(recovery, "_source_maintenance_environment", return_value=root / "source.env"),
+                    mock.patch.object(recovery, "_snapshot", return_value="a" * 64),
+                    mock.patch.object(recovery, "_source_maintenance", return_value=maintenance_result),
+                    mock.patch.object(recovery, "_validate_private_tree"),
+                    mock.patch.object(recovery, "_load_inventory", return_value=source_inventory),
+                    mock.patch.object(recovery, "_database_backup", return_value=(10, "b" * 64)),
+                    mock.patch.object(recovery, "_wait_target_initializers", side_effect=recovery.GateError("after_start_fixture")) as initializers,
+                    mock.patch.object(recovery, "_diagnose_target_start", wraps=recovery._diagnose_target_start) as diagnose,
+                    mock.patch.object(recovery, "_verify_target_removed") as verify_removed,
+                    mock.patch.object(recovery, "_wait_source_service") as wait_source,
+                    mock.patch.object(recovery, "_remove_work_root") as remove_work,
+                    mock.patch("builtins.print") as printed,
+                ):
+                    if mode == "internal_failure":
+                        diagnose.side_effect = RuntimeError("secret-canary")
+                    with self.assertRaises(recovery.GateError) as raised:
+                        with recovery._TerminationGuard():
+                            recovery.execute_drill(context)
+                expected = "after_start_fixture" if mode == "success" else "target_start_failed"
+                self.assertEqual(raised.exception.code, expected)
+                if mode == "success":
+                    diagnose.assert_not_called()
+                    initializers.assert_called_once_with(context)
+                else:
+                    diagnose.assert_called_once_with(context, 1)
+                    initializers.assert_not_called()
+                self.assertEqual([event[0] for event in events].count("down"), 1)
+                self.assertEqual(events[-2:], [("start", "worker"), ("start", "api")])
+                self.assertEqual(wait_source.call_args_list, [
+                    mock.call(context, "worker", healthy=False), mock.call(context, "api", healthy=True)
+                ])
+                self.assertEqual(pending_during_cleanup, [signal.SIGTERM if mode == "probe_interruption" else None])
+                if mode == "probe_interruption":
+                    self.assertEqual(
+                        [event for event in events if event[0] == "ps"],
+                        [("ps", "--all", "--quiet", "minio-init")],
+                    )
+                self.assertEqual(verify_removed.call_count, 0 if mode == "cleanup_failure" else 1)
+                remove_work.assert_called_once_with(root)
+                self.assertNotIn("secret-canary", str(printed.call_args_list))
+                self.assertIsNone(recovery._TERMINATION.received)
+
     def test_target_initializers_must_exit_cleanly_before_restore(self) -> None:
         states = {
             "database-init-id": iter(
