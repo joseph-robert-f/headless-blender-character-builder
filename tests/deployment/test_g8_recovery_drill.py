@@ -252,6 +252,149 @@ class RecoveryDrillTests(unittest.TestCase):
             self.assertTrue(any("down" in call for call in calls))
             verify_removed.assert_called_once_with(context)
 
+    def test_target_start_separates_initializer_wait_and_preserves_failure_cleanup(self) -> None:
+        cases = (
+            ("completed_initializer", 10.25),
+            ("core_failure", 10.25), ("initializer_failure", 10.25),
+            ("core_interruption", 10.25), ("initializer_interruption", 10.25),
+            ("budget_exhausted", 420.0), ("budget_negative", 421.0),
+            ("subsecond_budget", 419.5), ("budget_floor", 418.25),
+        )
+        first_up = ("up", "--detach", "--wait", "--wait-timeout", "300", "postgres", "redis", "minio")
+        second_up = ("up", "--detach", "minio-init", "database-init")
+        for mode, core_elapsed in cases:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                backup_root = root / "backups"
+                objects = backup_root / "source-objects"
+                objects.mkdir(parents=True)
+                source_inventory = inventory("source-version")
+                payload = json.dumps(source_inventory, sort_keys=True).encode("utf-8")
+                (objects / "inventory.json").write_bytes(payload)
+                clock = [50.0]
+                events: list[tuple[str, ...]] = []
+                starts: list[tuple[tuple[str, ...], dict[str, object]]] = []
+                startup_error = (
+                    recovery.GateInterrupted(signal.SIGHUP) if "interruption" in mode
+                    else recovery.GateError("target_start_failed")
+                )
+                restore_stop = recovery.GateError("restore_fixture_stop")
+                states = {
+                    "database-init": [{"Status": "exited", "Running": False, "ExitCode": 0}],
+                    "minio-init": [
+                        {"Status": "running", "Running": True, "ExitCode": 0},
+                        {"Status": "exited", "Running": False, "ExitCode": 0},
+                    ],
+                }
+
+                def source_compose(*args: str, **_kwargs: object) -> object:
+                    events.append(tuple(args))
+                    return recovery.CommandResult(b"")
+
+                def target_compose(*args: str, **kwargs: object) -> object:
+                    events.append(tuple(args))
+                    if args[0] == "up":
+                        starts.append((tuple(args), kwargs))
+                        # Model Compose rejecting an already completed initializer
+                        # when it is included in the running/healthy --wait set.
+                        if "--wait" in args and any(service in args for service in states):
+                            raise recovery.GateError("target_start_failed")
+                        if len(starts) == 1:
+                            self.assertEqual((tuple(args), kwargs), (first_up, {"label": "target_start", "timeout": 420}))
+                            clock[0] += core_elapsed
+                            if mode.startswith("core_"):
+                                raise startup_error
+                        else:
+                            self.assertEqual(tuple(args), second_up)
+                            self.assertEqual(kwargs, {"label": "target_start", "timeout": int(420 - core_elapsed)})
+                            self.assertGreater(kwargs["timeout"], 0)
+                            clock[0] += 1
+                            if mode.startswith("initializer_"):
+                                raise startup_error
+                    elif args[0] == "ps":
+                        return recovery.CommandResult((args[-1] + "-id\n").encode("ascii"))
+                    elif args[0] == "down":
+                        self.assertTrue(recovery._TERMINATION.cleanup_active)
+                    return recovery.CommandResult(b"")
+
+                def inspect(command: tuple[str, ...], **_kwargs: object) -> object:
+                    service = command[-1].removesuffix("-id")
+                    events.append(("inspect", service))
+                    return recovery.CommandResult(json.dumps(states[service].pop(0)).encode("ascii"))
+
+                context = SimpleNamespace(
+                    source_compose=source_compose, target_compose=target_compose,
+                    backup_root=backup_root, work_root=root,
+                    docker=("docker",), runner=SimpleNamespace(run=inspect),
+                )
+                real_waiter = recovery._wait_target_initializers
+
+                def wait_initializers(selected: object) -> None:
+                    events.append(("initializers",))
+                    real_waiter(selected)
+
+                def restore(*_args: object) -> None:
+                    self.assertTrue(all(not remaining for remaining in states.values()))
+                    events.append(("restore",))
+                    raise restore_stop
+
+                def advance(seconds: float) -> None:
+                    clock[0] += seconds
+
+                with (
+                    mock.patch.multiple(
+                        recovery,
+                        _validate_target_topology=mock.Mock(),
+                        _source_container_running=mock.Mock(return_value=True),
+                        _source_network=mock.Mock(return_value="source-network"),
+                        _source_maintenance_environment=mock.Mock(return_value=root / "source.env"),
+                        _snapshot=mock.Mock(return_value="a" * 64),
+                        _source_maintenance=mock.Mock(return_value={
+                            "artifacts": 1, "inventory_sha256": recovery.hashlib.sha256(payload).hexdigest(),
+                        }),
+                        _validate_private_tree=mock.Mock(),
+                        _load_inventory=mock.Mock(return_value=source_inventory),
+                        _database_backup=mock.Mock(return_value=(10, "b" * 64)),
+                    ),
+                    mock.patch.object(recovery, "_wait_target_initializers", side_effect=wait_initializers) as waiter,
+                    mock.patch.object(recovery, "_database_restore", side_effect=restore) as database_restore,
+                    mock.patch.object(recovery, "_verify_target_removed") as verify_removed,
+                    mock.patch.object(recovery, "_wait_source_service") as wait_source,
+                    mock.patch.object(recovery, "_remove_work_root") as remove_work,
+                    mock.patch.object(recovery.time, "monotonic", side_effect=lambda: clock[0]),
+                    mock.patch.object(recovery.time, "sleep", side_effect=advance),
+                    mock.patch("builtins.print"),
+                    self.assertRaises((recovery.GateError, recovery.GateInterrupted)) as raised,
+                ):
+                    recovery.execute_drill(context)
+                if mode in {"completed_initializer", "budget_floor"}:
+                    self.assertIs(raised.exception, restore_stop)
+                    waiter.assert_called_once_with(context)
+                    database_restore.assert_called_once_with(context, root / "database.dump")
+                    self.assertLess(events.index(("initializers",)), events.index(("restore",)))
+                    self.assertEqual(len(starts), 2)
+                    if mode == "budget_floor":
+                        self.assertEqual(starts[1][1]["timeout"], 1)
+                        self.assertGreater(clock[0], 50 + 420)
+                else:
+                    waiter.assert_not_called()
+                    database_restore.assert_not_called()
+                    if "budget" in mode:
+                        self.assertEqual(raised.exception.code, "target_start_unavailable")
+                    else:
+                        self.assertIs(raised.exception, startup_error)
+                    self.assertEqual(len(starts), 2 if mode.startswith("initializer_") else 1)
+                self.assertEqual(
+                    [event for event in events if event[0] == "down"],
+                    [("down", "--volumes", "--remove-orphans", "--timeout", "30")],
+                )
+                self.assertEqual(events[-2:], [("start", "worker"), ("start", "api")])
+                self.assertEqual(wait_source.call_args_list, [
+                    mock.call(context, "worker", healthy=False), mock.call(context, "api", healthy=True),
+                ])
+                verify_removed.assert_called_once_with(context)
+                remove_work.assert_called_once_with(root)
+
     def test_image_identity_uses_legacy_compatible_inspection_and_checks_platform(self) -> None:
         image_id = "sha256:" + "a" * 64
         calls: list[tuple[object, object, object]] = []
@@ -583,6 +726,22 @@ class RecoveryDrillTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(recovery.GateError, "target_initializer_failed"):
             recovery._wait_target_initializers(failing_context)
+
+        for identifiers, payload, error in (
+            (b"", b"", "target_initializer_missing"),
+            (b"fixture-id\n", b"{", "target_initializer_invalid"),
+            (b"fixture-id\n", b"[]", "target_initializer_invalid"),
+        ):
+            with self.subTest(error=error, payload=payload):
+                invalid_context = SimpleNamespace(
+                    target_compose=lambda *_args, **_kwargs: recovery.CommandResult(identifiers),
+                    docker=("docker",),
+                    runner=SimpleNamespace(
+                        run=lambda *_args, **_kwargs: recovery.CommandResult(payload)
+                    ),
+                )
+                with self.assertRaisesRegex(recovery.GateError, error):
+                    recovery._wait_target_initializers(invalid_context)
 
         script = SCRIPT.read_text(encoding="utf-8")
         self.assertLess(

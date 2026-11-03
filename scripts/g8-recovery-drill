@@ -1335,6 +1335,7 @@ def execute_drill(context: DrillContext) -> Mapping[str, Any]:
 
         print("G8_RECOVERY_GATE: starting fresh internal-only restore target")
         target_touched = True
+        startup_deadline = time.monotonic() + 420
         context.target_compose(
             "up",
             "--detach",
@@ -1344,10 +1345,16 @@ def execute_drill(context: DrillContext) -> Mapping[str, Any]:
             "postgres",
             "redis",
             "minio",
-            "minio-init",
-            "database-init",
             label="target_start",
             timeout=420,
+        )
+        startup_remaining = int(startup_deadline - time.monotonic())
+        if startup_remaining <= 0:
+            raise GateError("target_start_unavailable")
+        context.target_compose(
+            "up", "--detach", "minio-init", "database-init",
+            label="target_start",
+            timeout=startup_remaining,
         )
         _wait_target_initializers(context)
         _database_restore(context, database_path)
