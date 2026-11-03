@@ -74,9 +74,9 @@ ENTRYPOINT ["/opt/blender/4.5/python/bin/python3.11", "-m", "hbcb_service.worker
 
 # The HTTP/control-plane image deliberately contains no Blender executable.
 # Debian resolution is frozen to the same immutable snapshot as the G4 image.
-FROM --platform=linux/amd64 debian:bookworm-20261020-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS service-base
+FROM --platform=linux/amd64 debian:bookworm-20261027-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS service-base
 
-ARG DEBIAN_SNAPSHOT=20261021T000000Z
+ARG DEBIAN_SNAPSHOT=20261029T000000Z
 ARG HBCB_DISTRIBUTION_VERSION
 ARG HBCB_SOURCE_REVISION
 
