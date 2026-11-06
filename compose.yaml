@@ -45,7 +45,7 @@ services:
     cpus: 1.0
 
   redis:
-    image: redis:8.2.11-alpine3.22@sha256:3e6f5cab76a2cdcc5f61fb949a4f53e44e9972bd019bb0481ff5332b179f214e
+    image: redis:8.2.11-alpine3.22@sha256:489a769e0a54dc245896132a15c72d2bc7296719954da99398f43a3877e5f8eb
     platform: linux/amd64
     restart: unless-stopped
     labels:
