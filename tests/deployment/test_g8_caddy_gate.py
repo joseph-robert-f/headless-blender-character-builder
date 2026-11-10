@@ -40,12 +40,12 @@ class CaddySourceBuildTests(unittest.TestCase):
         for module, version in (
             ("github.com/caddyserver/caddy/v2", gate.CADDY_OCI_VERSION),
             ("cel.dev/cel-go", "v0.32.0"),
-            ("github.com/go-chi/chi/v5", "v5.3.2"),
+            ("github.com/go-chi/chi/v5", "v5.4.0"),
             ("github.com/klauspost/compress", "v1.20.1"),
             ("go.opentelemetry.io/otel", "v1.46.0"),
             ("go.opentelemetry.io/otel/sdk", "v1.46.0"),
             ("golang.org/x/crypto", "v0.57.0"),
-            ("golang.org/x/net", "v0.59.0"),
+            ("golang.org/x/net", "v0.60.0"),
             ("golang.org/x/text", "v0.42.0"),
             ("google.golang.org/grpc", "v1.83.2"),
         ):
@@ -230,14 +230,14 @@ class CaddyRuntimeIdentityTests(unittest.TestCase):
 
     def test_runtime_identity_mutations_fail_closed(self) -> None:
         invalid = (
-            b"v2.11.3\nv2.11.7 h1:ok\nLinux\nx86_64\n",
-            b"v2.11.7\nv2.11.3 h1:wrong\nLinux\nx86_64\n",
-            b"v2.11.7\n\nLinux\nx86_64\n",
-            b"v2.11.7\nv2.11.7 h1:ok\nDarwin\nx86_64\n",
-            b"v2.11.7\nv2.11.7 h1:ok\nLinux\naarch64\n",
-            b"v2.11.7\nv2.11.7 h1:ok\nLinux\n",
-            b"v2.11.7\nv2.11.7 h1:ok\nLinux\nx86_64\nextra\n",
-            b"\xff\nv2.11.7 h1:ok\nLinux\nx86_64\n",
+            b"v2.11.3\nv2.11.9 h1:ok\nLinux\nx86_64\n",
+            b"v2.11.9\nv2.11.3 h1:wrong\nLinux\nx86_64\n",
+            b"v2.11.9\n\nLinux\nx86_64\n",
+            b"v2.11.9\nv2.11.9 h1:ok\nDarwin\nx86_64\n",
+            b"v2.11.9\nv2.11.9 h1:ok\nLinux\naarch64\n",
+            b"v2.11.9\nv2.11.9 h1:ok\nLinux\n",
+            b"v2.11.9\nv2.11.9 h1:ok\nLinux\nx86_64\nextra\n",
+            b"\xff\nv2.11.9 h1:ok\nLinux\nx86_64\n",
         )
         for stdout in invalid:
             with self.subTest(stdout=stdout), mock.patch.object(
@@ -351,7 +351,7 @@ class CaddyCustomBuildTests(unittest.TestCase):
 
         def run(command: list[str], *, label: str, timeout: int = 120):
             if label == "custom Caddy version":
-                return completed(stdout=b"v2.11.7 h1:reviewed-runtime-hash\n")
+                return completed(stdout=b"v2.11.9 h1:reviewed-runtime-hash\n")
             if label == "custom Caddy binary provenance":
                 self.assertIn(image_id, command)
                 self.assertIn("sha256sum -c /usr/share/licenses/caddy/caddy.sha256", command)

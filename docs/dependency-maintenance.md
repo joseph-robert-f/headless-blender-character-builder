@@ -311,7 +311,7 @@ The dependency scan makes and scans the resulting image.
 It validates the Caddyfile with the custom image.
 
 The recipe verifies and vendors the reviewed upstream Go module graph.
-Caddy 2.11.7 includes the two CEL `NewCall` argument-slice fixes.
+Caddy 2.11.9 includes the two CEL `NewCall` argument-slice fixes.
 It uses `cel.dev/cel-go` 0.32.0.
 The recipe checks both fixed call sites and the new CEL import path.
 It rejects the old call sites and import path without changing the source.
@@ -320,15 +320,32 @@ The earlier module overrides and CEL source patch are no longer necessary.
 The recipe checks specified module versions and compiles only the verified vendor tree.
 
 The [Caddy 2.11.6 release notes](https://github.com/caddyserver/caddy/releases/tag/v2.11.6)
-list changes from 2.11.4 that also apply to 2.11.7.
+list changes from 2.11.4 that also apply to 2.11.9.
 The default request-header limit is 16 KiB.
 Idle request reads and response writes have a one-minute timeout.
 Header names with dots are dropped unless explicitly permitted.
 
 The [Caddy 2.11.7 release notes](https://github.com/caddyserver/caddy/releases/tag/v2.11.7)
 describe the related HTTP/2 and streaming-timeout corrections.
+The [Caddy 2.11.8 release notes](https://github.com/caddyserver/caddy/releases/tag/v2.11.8)
+describe more timeout corrections and stricter host, body-size, and configuration checks.
+The [Caddy 2.11.9 release notes](https://github.com/caddyserver/caddy/releases/tag/v2.11.9)
+describe related FastCGI and TLS policy corrections.
 Before deployment, test representative uploads, headers, and streaming responses.
-The pinned Go 1.26.8 toolchain meets the upstream Go 1.26 minimum.
+
+The upstream Caddy module has a Go 1.26 minimum.
+The official 2.11.9 buildable artifact has a generated main module with `go 1.27.3`.
+The recipe pins [Go 1.27.3](https://go.dev/doc/devel/release#go1.27.3) for that artifact.
+It verifies the official archive checksum and keeps `GOTOOLCHAIN=local`.
+It does not change the main module requirement or download another toolchain automatically.
+The final image retains the Go license at `/usr/share/licenses/caddy/GO-LICENSE`.
+
+The official 2.11.9 runtime base moves from Alpine 3.23.7 to 3.24.4.
+Its binary has a permitted-only binding capability. The custom recipe retains
+the project's existing `cap_net_bind_service=ep` after it replaces that binary.
+This refresh does not adopt the upstream capability change.
+Before a VPS deployment or rollback, examine stored certificates and configuration
+with the applicable backup, restore, and restart procedure.
 
 Update the source, Go modules, build recipe, runtime base, notice, and the two
 checks together. The build stage records the binary SHA-256.
