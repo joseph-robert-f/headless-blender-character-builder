@@ -37,7 +37,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = ROOT / "docker" / "postgres.Dockerfile"
 EXPECTED_BASE_IMAGE = (
     "postgres:16.15-alpine3.24@sha256:"
-    "0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab"
+    "aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139"
 )
 EXPECTED_RECIPE_ID = "postgres-16.15-alpine3.24-gosu-free-v1"
 EXPECTED_VERSION = "16.15-alpine3.24-hbcb.1"
