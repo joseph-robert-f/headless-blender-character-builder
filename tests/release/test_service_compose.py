@@ -265,7 +265,7 @@ class ServiceComposeTests(unittest.TestCase):
         )
         self.assertIn(
             "redis:8.2.11-alpine3.22@sha256:"
-            "489a769e0a54dc245896132a15c72d2bc7296719954da99398f43a3877e5f8eb",
+            "fe9daae35cd4fd6ec22416aa4fe0cf6b3e36741e06ff45b9986253fe2a81c041",
             compose,
         )
         postgres_dockerfile = (ROOT / "docker" / "postgres.Dockerfile").read_text(
