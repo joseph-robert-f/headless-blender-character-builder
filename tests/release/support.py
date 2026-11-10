@@ -221,8 +221,8 @@ def image_inspect(
                             "org.blender.download.sha256": "95e3a2dfedba3bd32ca54fc355eac6b15a11986954ccb02815a07535d0120a25",
                             "org.blender.download.url": "https://download.blender.org/release/Blender4.5/blender-4.5.12-linux-x64.tar.xz",
                             "org.blender.version": "4.5.12 LTS",
-                            "org.opencontainers.image.base.digest": "sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3",
-                            "org.opencontainers.image.base.name": "debian:bookworm-20261027-slim",
+                            "org.opencontainers.image.base.digest": "sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc",
+                            "org.opencontainers.image.base.name": "debian:bookworm-20261104-slim",
                             "org.opencontainers.image.description": "Deterministic, headless Blender 4.5 LTS character builder",
                             **(
                                 {"io.hbcb.builder.contract": "complete-v1"}
