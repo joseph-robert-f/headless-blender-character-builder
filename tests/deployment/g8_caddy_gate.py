@@ -17,12 +17,12 @@ from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 CADDYFILE = ROOT / "deploy" / "vps" / "Caddyfile"
-CADDY_VERSION = "2.11.7"
+CADDY_VERSION = "2.11.9"
 CADDY_TAG = f"{CADDY_VERSION}-alpine"
 CADDY_OCI_VERSION = f"v{CADDY_VERSION}"
 CADDY_CUSTOM_VERSION = f"v{CADDY_VERSION}-hbcb.1"
 CADDY_PLATFORM = "linux/amd64"
-CADDY_DIGEST = "e70b164da81ef698b3ad19af799ea6086ce6d9e48ed4079eb9fe26f6fbf14ee5"
+CADDY_DIGEST = "0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee"
 CADDY_REFERENCE = f"caddy:{CADDY_TAG}@sha256:{CADDY_DIGEST}"
 
 
