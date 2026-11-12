@@ -4,7 +4,7 @@
 # gosu before copying the filesystem into a clean image configuration.  The
 # scratch final stage is intentional: it prevents the inherited GOSU_VERSION
 # environment entry from advertising a binary that is no longer present.
-FROM --platform=linux/amd64 postgres:16.15-alpine3.24@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab AS postgres-sanitized
+FROM --platform=linux/amd64 postgres:16.15-alpine3.24@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139 AS postgres-sanitized
 
 RUN set -eux; \
     rm -f /usr/local/bin/gosu; \
@@ -22,7 +22,7 @@ LABEL org.opencontainers.image.title="PostgreSQL local service runtime (gosu-fre
       org.opencontainers.image.version="16.15-alpine3.24-hbcb.1" \
       org.opencontainers.image.revision="9d15534160ade17f2b6c455a39ee967c49b1937d" \
       org.opencontainers.image.base.name="postgres:16.15-alpine3.24" \
-      org.opencontainers.image.base.digest="sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab" \
+      org.opencontainers.image.base.digest="sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139" \
       io.hbcb.postgres.recipe-id="postgres-16.15-alpine3.24-gosu-free-v1" \
       io.hbcb.scope="local-service-and-digest-locked-vps"
 
